@@ -1,0 +1,20 @@
+# Dépendances
+node_modules/
+
+# Environnement (secrets) — seul .env.example est versionné
+.env
+.env.*
+!.env.example
+
+# Données locales de dev (bases SQLite, vidéos)
+.data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Builds frontend
+dist/
+
+# Divers
+*.log
+.DS_Store
