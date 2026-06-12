@@ -13,9 +13,16 @@ Ce fichier ne la duplique pas ; il fixe les règles de travail. En cas de doute 
 - `npm test -w @kapsule/core` — tests d'un seul workspace
 - `npm run dev:borne` / `npm run dev:hub` — serveurs en dev (jamais besoin de Docker en dev)
 
+## Outils agents (`.claude/`)
+
+- **`/suivant [tâche]`** — implémente la prochaine case non cochée de ROADMAP.md (ou celle indiquée) : relit la spec, code, teste, coche, committe.
+- **`/verif-spec`** — lance l'agent `kapsule-reviewer` sur le diff courant. **À faire avant chaque commit de sous-lot.**
+- **Agent `kapsule-reviewer`** — reviewer strict en lecture seule : vérifie le diff contre les règles de CLAUDE.md et les invariants de PROJET.md §11, rend un rapport (VERDICT + findings, ne modifie rien). Invocable directement via le tool Agent, ou via `/verif-spec`.
+
 ## Règles de travail
 
 - **Suivre [ROADMAP.md](ROADMAP.md)** : prendre les tâches dans l'ordre, cocher chaque case terminée, commiter à chaque sous-lot terminé (message `phase X.Y: …`).
+- **Faire relire chaque sous-lot par `kapsule-reviewer` (`/verif-spec`) avant de commiter** ; corriger les findings ❌ avant le commit.
 - **L'arborescence de PROJET.md §4 est contractuelle** : créer chaque fichier à l'emplacement et avec le rôle prévus. Ne pas inventer d'autres découpages.
 - **Stack figée (PROJET.md §3)** : ne pas ajouter de dépendance non listée sans demander. Pas de TypeScript, pas de framework CSS, pas de wrapper ffmpeg/cors.
 - **Un endpoint n'est terminé que testé** : chaque route backend a un test supertest (cas nominal + au moins un cas d'erreur) avant de passer à la suivante.
