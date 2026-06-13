@@ -1,0 +1,231 @@
+/* ── Reset minimal ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden; /* kiosque : pas de scroll page */
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Thème invité sombre par défaut */
+  --bg: #111;
+  --surface: #1e1e1e;
+  --text: #f0f0f0;
+  --text-muted: #888;
+  --text-error: #ff6b6b;
+  --accent: #e63946;
+  --accent-hover: #c1121f;
+  --btn-secondary-bg: #2d2d2d;
+  --btn-secondary-hover: #3a3a3a;
+  --input-bg: #2d2d2d;
+  --input-border: #444;
+  --input-border-focus: #e63946;
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+/* Thème admin clair (appliqué via .admin-login et .admin-dashboard) */
+.admin-login, .admin-dashboard {
+  --bg: #f5f5f7;
+  --surface: #fff;
+  --text: #1d1d1f;
+  --text-muted: #6e6e73;
+  --text-error: #c0392b;
+  --accent: #0071e3;
+  --accent-hover: #0058b0;
+  --btn-secondary-bg: #e5e5ea;
+  --btn-secondary-hover: #d1d1d6;
+  --input-bg: #fff;
+  --input-border: #ccc;
+  --input-border-focus: #0071e3;
+  background-color: var(--bg);
+  color: var(--text);
+  min-height: 100%;
+}
+
+/* ── Conteneurs d'écran ────────────────────────────────────────────────────── */
+.screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 2rem;
+}
+
+.screen--center {
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  text-align: center;
+}
+
+.screen--recap {
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 3rem;
+  gap: 1.5rem;
+  overflow-y: auto;
+}
+
+.screen--question {
+  align-items: center;
+  justify-content: space-between;
+  padding: 2rem;
+}
+
+/* ── Typographie ──────────────────────────────────────────────────────────── */
+.screen__title { font-size: 2rem; font-weight: 600; line-height: 1.2; }
+.text--muted   { color: var(--text-muted); font-size: 1rem; }
+.text--error   { color: var(--text-error); font-size: 0.95rem; }
+
+/* ── Idle screen ──────────────────────────────────────────────────────────── */
+.idle__title   { font-size: 3rem; font-weight: 700; margin-bottom: 1rem; }
+.idle__consent { max-width: 600px; color: var(--text-muted); font-size: 1.1rem; line-height: 1.6; }
+
+/* ── Boutons — touch targets ≥ 80px (PROJET.md iPad) ─────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-weight: 600;
+  padding: 0 2rem;
+  min-height: 80px;
+  min-width: 200px;
+  transition: background-color 0.15s ease, opacity 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+.btn--primary {
+  background-color: var(--accent);
+  color: #fff;
+}
+.btn--primary:not(:disabled):hover  { background-color: var(--accent-hover); }
+.btn--primary:not(:disabled):active { opacity: 0.85; }
+
+.btn--secondary {
+  background-color: var(--btn-secondary-bg);
+  color: var(--text);
+}
+.btn--secondary:not(:disabled):hover  { background-color: var(--btn-secondary-hover); }
+
+.btn--large {
+  min-height: 88px;
+  font-size: 1.35rem;
+  width: 100%;
+  max-width: 480px;
+}
+
+.btn--small {
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 1.2rem;
+  font-size: 0.95rem;
+  border-radius: 8px;
+}
+
+/* ── Formulaire nom ───────────────────────────────────────────────────────── */
+.name-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  max-width: 480px;
+}
+
+.name-form__input {
+  width: 100%;
+  padding: 1rem 1.25rem;
+  font-size: 1.3rem;
+  border: 2px solid var(--input-border);
+  border-radius: 12px;
+  background: var(--input-bg);
+  color: var(--text);
+  outline: none;
+  min-height: 72px;
+  -webkit-appearance: none;
+}
+.name-form__input:focus { border-color: var(--input-border-focus); }
+
+/* ── Questions ────────────────────────────────────────────────────────────── */
+.question__progress {
+  font-size: 1rem;
+  color: var(--text-muted);
+  align-self: flex-end;
+}
+
+.question__text {
+  font-size: 1.8rem;
+  font-weight: 600;
+  text-align: center;
+  max-width: 700px;
+  line-height: 1.3;
+}
+
+.question__recorder-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  border: 2px dashed var(--input-border);
+  border-radius: 16px;
+  margin: 1rem 0;
+}
+
+/* ── Récap ────────────────────────────────────────────────────────────────── */
+.recap__list { display: flex; flex-direction: column; gap: 1rem; width: 100%; max-width: 600px; }
+
+.recap__item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 1rem 1.25rem;
+}
+
+.recap__index {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.recap__question { font-size: 1.05rem; }
+
+/* ── Done screen ──────────────────────────────────────────────────────────── */
+.done__icon { font-size: 5rem; }
+
+/* ── Admin ────────────────────────────────────────────────────────────────── */
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--input-border);
+  background: var(--surface);
+}
+
+.admin-header__title { font-size: 1.25rem; font-weight: 700; }
+
+.admin-main {
+  flex: 1;
+  padding: 2rem;
+  overflow-y: auto;
+}

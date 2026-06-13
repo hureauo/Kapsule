@@ -27,7 +27,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 - [x] 1a.6 `routes/videos.js` (upload multer + sha256 + remplacement transactionnel, stream Range, stream invité par session, CSV avant `/:id`, download, delete) + tests
 
 ### 1b — Kiosque, parcours minimal
-- [ ] 1b.1 `api/client.js`, `App.jsx`, routes
+- [x] 1b.1 `api/client.js`, `App.jsx`, routes
 - [ ] 1b.2 `hooks/useMediaRecorder.js` (détection MIME Safari/webm, chunks 1 s, auto-stop)
 - [ ] 1b.3 Parcours `start → name (consentement RGPD) → questions → done` avec enregistrement + upload XHR
 
