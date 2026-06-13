@@ -3,12 +3,15 @@ import { statfs } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import { config } from './config.js';
 import { openRegistry, getActiveEvent } from './registry.js';
+import { makeAuthRouter, requireAdmin } from './middleware/auth.js';
 
-export function createApp(dataDir) {
+export function createApp(dataDir, cfg = config) {
   openRegistry(dataDir);
 
   const app = express();
   app.use(express.json());
+
+  app.post('/api/admin/login', makeAuthRouter(cfg));
 
   app.get('/api/health', async (req, res, next) => {
     try {
