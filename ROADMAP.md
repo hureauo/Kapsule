@@ -36,7 +36,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 - [x] 1c.2 État `answered` : relecture + « Refaire cette réponse » (remplacement)
 - [x] 1c.3 `RecapScreen` + `ThankYouScreen` (auto-retour 15 s)
 - [x] 1c.4 Timeout d'inactivité (`idle_timeout`, modale 30 s, jamais pendant rec/upload)
-- [ ] 1c.5 Reprise après reload (`sessionStorage`, « Reprendre la session de {prénom} ? »)
+- [x] 1c.5 Reprise après reload (`sessionStorage`, « Reprendre la session de {prénom} ? »)
 - [ ] 1c.6 Barre de progression d'upload réelle + retry 5× backoff + écran d'échec
 - [ ] 1c.7 Écran « événement terminé » si statut `closed`
 

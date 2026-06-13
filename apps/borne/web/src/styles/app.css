@@ -502,6 +502,14 @@ body {
 /* ── Done screen ──────────────────────────────────────────────────────────── */
 .done__icon { font-size: 5rem; }
 
+/* ── Écran de reprise de session ─────────────────────────────────────────── */
+.resume__actions {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 /* ── Modale d'inactivité ──────────────────────────────────────────────────── */
 .idle-modal-overlay {
   position: fixed;

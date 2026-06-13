@@ -6,6 +6,30 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 1c.5 — Reprise après reload / sessionStorage
+
+### `questionIndex` restauré sans vérification de borne
+
+**Fichier :** [GuestPage.jsx:156](apps/borne/web/src/pages/GuestPage.jsx#L156)
+
+**Observation :** à la restauration depuis `sessionStorage`, `questionIndex` est appliqué tel quel
+sans vérifier qu'il est dans les bornes de `questions`. Si la configuration de l'événement a changé
+entre le crash et le reload (questions désactivées ou supprimées, tableau `questions` plus court),
+`questions[questionIndex]` serait `undefined` et `q.id` lèverait une exception au rendu.
+
+**Pourquoi ce n'est pas un problème aujourd'hui :** le scénario requiert un rechargement de la SPA
+ET une modification simultanée des questions par l'admin — deux opérations rares simultanées. De
+plus le rendu `S.QUESTIONS` est gardé par `questions.length > 0` mais `questionIndex` hors borne
+passerait quand même.
+
+**Quand ça pourrait devenir un problème :** si un admin supprime des questions pendant qu'un invité
+a une session en cours (iPad crashé puis rechargé).
+
+**À ne pas corriger maintenant.** Si ce bug se manifeste, appliquer
+`Math.min(saved.questionIndex, questions.length - 1)` à la ligne de restauration (~156).
+
+---
+
 ## Phase 1c.4 — Timeout d'inactivité / modale IdleModal
 
 ### `idleModalVisible` non remis à `false` à la sortie de IDLE_SCREENS

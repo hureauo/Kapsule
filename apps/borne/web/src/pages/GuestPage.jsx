@@ -8,6 +8,26 @@ import RecordingScreen from '../components/guest/RecordingScreen.jsx';
 import RecapScreen from '../components/guest/RecapScreen.jsx';
 import ThankYouScreen from '../components/guest/ThankYouScreen.jsx';
 
+// ── sessionStorage : reprise après crash/reload (spec §8) ────────────────────
+const SESSION_KEY = 'kapsule_session';
+
+function saveSession(sessionId, guestName, questionIndex) {
+  try {
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ sessionId, guestName, questionIndex }));
+  } catch { /* stockage indisponible — non bloquant */ }
+}
+
+function loadSavedSession() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function clearSavedSession() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch { /* */ }
+}
+
 // ── Écrans utilitaires ────────────────────────────────────────────────────────
 
 function LoadingScreen() {
@@ -40,8 +60,27 @@ function ClosedScreen() {
   );
 }
 
-// Modale d'inactivité : compte à rebours 30 s puis retour accueil.
-// La session abandonnée reste en base (spec §8).
+// Écran de reprise : proposé quand une session non complétée est trouvée
+// en sessionStorage au rechargement (spec §8).
+function ResumeScreen({ guestName, onResume, onRestart }) {
+  return (
+    <div className="screen screen--center">
+      <h2 className="screen__title">Reprendre la session de {guestName} ?</h2>
+      <p className="text--muted">Vous aviez commencé à répondre. Voulez-vous continuer ?</p>
+      <div className="resume__actions">
+        <button className="btn btn--secondary btn--large" onClick={onRestart}>
+          Recommencer
+        </button>
+        <button className="btn btn--primary btn--large" onClick={onResume}>
+          Reprendre ▶
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Modale d'inactivité : compte à rebours 30 s puis retour accueil (spec §8).
+// La session abandonnée reste en base.
 const IDLE_MODAL_S = 30;
 
 function IdleModal({ onStay, onLeave }) {
@@ -69,17 +108,18 @@ function IdleModal({ onStay, onLeave }) {
 }
 
 // ── Machine à états principale ────────────────────────────────────────────────
-// États : loading | error | closed | start | name | questions | recap | thanks
+// États : loading | error | closed | resume | start | name | questions | recap | thanks
 
 const S = {
   LOADING: 'loading', ERROR: 'error', CLOSED: 'closed',
+  RESUME: 'resume',
   START: 'start', NAME: 'name', QUESTIONS: 'questions',
   RECAP: 'recap', THANKS: 'thanks',
 };
 
 // Écrans sur lesquels le timeout d'inactivité est actif.
 // QUESTIONS est exclu : rec/upload y vivent et ne doivent jamais être interrompus.
-const IDLE_SCREENS = new Set([S.START, S.NAME, S.RECAP, S.THANKS]);
+const IDLE_SCREENS = new Set([S.RESUME, S.START, S.NAME, S.RECAP, S.THANKS]);
 
 export default function GuestPage() {
   const [screen, setScreen] = useState(S.LOADING);
@@ -91,7 +131,7 @@ export default function GuestPage() {
   const [sessionId, setSessionId] = useState(null);
   const [guestName, setGuestName] = useState('');
   const [questionIndex, setQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState([]); // réponses connues du serveur
+  const [answers, setAnswers] = useState([]);
 
   const idleTimerRef = useRef(null);
 
@@ -102,7 +142,23 @@ export default function GuestPage() {
       const [evtData, qData] = await Promise.all([api.getEvent(), api.getQuestions()]);
       setEvent(evtData);
       setQuestions(qData.filter((q) => q.enabled));
-      setScreen(evtData.status === 'closed' ? S.CLOSED : S.START);
+
+      if (evtData.status === 'closed') {
+        setScreen(S.CLOSED);
+        return;
+      }
+
+      // Reprise après reload : si une session est sauvegardée, proposer de reprendre
+      const saved = loadSavedSession();
+      if (saved?.sessionId) {
+        setSessionId(saved.sessionId);
+        setGuestName(saved.guestName ?? '');
+        setQuestionIndex(saved.questionIndex ?? 0);
+        setAnswers([]);
+        setScreen(S.RESUME);
+      } else {
+        setScreen(S.START);
+      }
     } catch (e) {
       setErrorMsg(e.message);
       setScreen(S.ERROR);
@@ -117,14 +173,10 @@ export default function GuestPage() {
     try {
       const data = await api.getAnswers(sessionId);
       setAnswers(data ?? []);
-    } catch {
-      // non bloquant
-    }
+    } catch { /* non bloquant */ }
   }, [sessionId]);
 
   // ── Timeout d'inactivité (spec §8) ───────────────────────────────────────────
-  // Actif uniquement sur les écrans IDLE_SCREENS (jamais sur QUESTIONS).
-  // Après idle_timeout s sans interaction → modale 30 s → retour accueil.
   const idleMs = (event?.idle_timeout ?? DEFAULTS.IDLE_TIMEOUT_S) * 1000;
 
   const resetIdleTimer = useCallback(() => {
@@ -134,7 +186,6 @@ export default function GuestPage() {
 
   useEffect(() => {
     if (!IDLE_SCREENS.has(screen)) {
-      // Hors écrans idle : annuler tout timer en cours
       if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
       return;
     }
@@ -157,13 +208,16 @@ export default function GuestPage() {
     setGuestName(name);
     setQuestionIndex(0);
     setAnswers([]);
+    saveSession(sid, name, 0);
     setScreen(S.QUESTIONS);
   }
 
   function handleQuestionNext() {
     refreshAnswers();
     if (questionIndex < questions.length - 1) {
-      setQuestionIndex((i) => i + 1);
+      const next = questionIndex + 1;
+      saveSession(sessionId, guestName, next);
+      setQuestionIndex(next);
     } else {
       refreshAnswers();
       setScreen(S.RECAP);
@@ -172,30 +226,47 @@ export default function GuestPage() {
 
   function handleQuestionBack() {
     refreshAnswers();
-    if (questionIndex > 0) setQuestionIndex((i) => i - 1);
-    else setScreen(S.NAME); // retour au formulaire nom (sans recréer de session)
+    if (questionIndex > 0) {
+      const prev = questionIndex - 1;
+      saveSession(sessionId, guestName, prev);
+      setQuestionIndex(prev);
+    } else {
+      setScreen(S.NAME);
+    }
   }
 
   function handleGoQuestion(i) {
     if (i >= 0 && i < questions.length) {
       refreshAnswers();
+      saveSession(sessionId, guestName, i);
       setQuestionIndex(i);
     }
   }
 
   function handleRecapGo(i) {
+    saveSession(sessionId, guestName, i);
     setQuestionIndex(i);
     setScreen(S.QUESTIONS);
   }
 
-  function handleRecapFinish() { setScreen(S.THANKS); }
+  function handleRecapFinish() {
+    clearSavedSession(); // session complétée → nettoyage (spec §8)
+    setScreen(S.THANKS);
+  }
 
   function handleRestart() {
+    clearSavedSession(); // timeout d'inactivité → nettoyage (spec §8)
     setSessionId(null);
     setGuestName('');
     setQuestionIndex(0);
     setAnswers([]);
     loadEvent();
+  }
+
+  // Reprise : l'utilisateur accepte de reprendre sa session sauvegardée
+  function handleResume() {
+    refreshAnswers();
+    setScreen(S.QUESTIONS);
   }
 
   // ── Rendu ─────────────────────────────────────────────────────────────────────
@@ -211,6 +282,14 @@ export default function GuestPage() {
         <IdleModal
           onStay={() => { setIdleModalVisible(false); resetIdleTimer(); }}
           onLeave={handleRestart}
+        />
+      )}
+
+      {screen === S.RESUME && (
+        <ResumeScreen
+          guestName={guestName}
+          onResume={handleResume}
+          onRestart={handleRestart}
         />
       )}
 
@@ -235,7 +314,7 @@ export default function GuestPage() {
               answers={answers}
               onGo={handleGoQuestion}
             />
-            {/* key=questionIndex force le remount complet à chaque changement de question */}
+            {/* key force le remount complet à chaque changement de question */}
             <RecordingScreen
               key={`${sessionId}-q${questionIndex}`}
               question={q}
