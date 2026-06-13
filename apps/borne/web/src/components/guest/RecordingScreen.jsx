@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import useMediaRecorder, { REC_STATUS } from '../../hooks/useMediaRecorder.js';
-import { uploadVideo } from '../../api/client.js';
+import { uploadVideo, guestVideoUrl } from '../../api/client.js';
 
 // Sous-états internes de l'écran d'enregistrement
 const S = {
@@ -129,7 +129,15 @@ export default function RecordingScreen({
       <div className="screen screen--recording">
         {renderHeader()}
         <h2 className="rec__question">{question.text}</h2>
-        <p className="text--muted">Vous avez déjà répondu à cette question.</p>
+        <div className="rec__preview-wrap">
+          {/* Lecture de la réponse enregistrée — Range-aware côté serveur → scrubbing */}
+          <video
+            className="rec__blob-video"
+            src={guestVideoUrl(sessionId, question.id)}
+            controls
+            playsInline
+          />
+        </div>
         <div className="rec__actions">
           <button className="btn btn--secondary" onClick={() => {
             recorder.resetRecording();

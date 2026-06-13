@@ -126,12 +126,16 @@ export default function GuestPage() {
   }
 
   function handleQuestionBack() {
+    refreshAnswers();
     if (questionIndex > 0) setQuestionIndex((i) => i - 1);
     else setScreen(S.NAME); // retour au formulaire nom (sans recréer de session)
   }
 
   function handleGoQuestion(i) {
-    if (i >= 0 && i < questions.length) setQuestionIndex(i);
+    if (i >= 0 && i < questions.length) {
+      refreshAnswers();
+      setQuestionIndex(i);
+    }
   }
 
   function handleRecapGo(i) {

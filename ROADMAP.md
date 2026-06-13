@@ -32,7 +32,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 - [x] 1b.3 Parcours `start → name (consentement RGPD) → questions → done` avec enregistrement + upload XHR
 
 ### 1c — Kiosque, robustesse
-- [ ] 1c.1 `QuestionNav` (navigation libre, pastilles répondu/non répondu via `/answers`)
+- [x] 1c.1 `QuestionNav` (navigation libre, pastilles répondu/non répondu via `/answers`)
 - [ ] 1c.2 État `answered` : relecture + « Refaire cette réponse » (remplacement)
 - [ ] 1c.3 `RecapScreen` + `ThankYouScreen` (auto-retour 15 s)
 - [ ] 1c.4 Timeout d'inactivité (`idle_timeout`, modale 30 s, jamais pendant rec/upload)
