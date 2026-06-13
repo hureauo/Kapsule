@@ -6,6 +6,42 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 1c.4 — Timeout d'inactivité / modale IdleModal
+
+### `idleModalVisible` non remis à `false` à la sortie de IDLE_SCREENS
+
+**Fichier :** [GuestPage.jsx:135-149](apps/borne/web/src/pages/GuestPage.jsx#L135)
+
+**Observation :** l'effet qui quitte `IDLE_SCREENS` (entrée dans `QUESTIONS`) annule le timer
+mais ne remet pas `idleModalVisible` à `false`. Si la modale était visible au moment de la transition,
+elle resterait affichée sur QUESTIONS.
+
+**Pourquoi ce n'est pas un problème aujourd'hui :** la modale est plein écran (z-index 100) et bloque
+toute interaction sous-jacente. Il est donc impossible de déclencher `handleSession` (qui mène à
+QUESTIONS) tant que la modale est affichée — la transition NAME→QUESTIONS ne peut pas se produire
+avec la modale ouverte.
+
+**Quand ça pourrait devenir un problème :** si on ajoute une transition automatique (ex. redirection
+après login) ou si on retire l'overlay full-screen de la modale.
+
+**À ne pas corriger maintenant.** Si ce bug se manifeste, ajouter `setIdleModalVisible(false)` dans
+la branche `!IDLE_SCREENS.has(screen)` de l'effet (ligne ~137).
+
+---
+
+### Pattern compte-à-rebours dupliqué entre `IdleModal` et `ThankYouScreen`
+
+**Fichiers :** [GuestPage.jsx:50-65](apps/borne/web/src/pages/GuestPage.jsx#L50),
+[ThankYouScreen.jsx:9-13](apps/borne/web/src/components/guest/ThankYouScreen.jsx#L9)
+
+**Observation :** les deux composants implémentent le même pattern `setTimeout/remaining--` inline.
+Candidat à un hook `useCountdown(seconds, onExpire)` si le motif réapparaît une troisième fois.
+
+**À ne pas extraire maintenant** (deux occurrences, la règle « three similar lines » de CLAUDE.md
+n'est pas atteinte).
+
+---
+
 ## Phase 1c.1 — QuestionNav / navigation entre questions
 
 ### `refreshAnswers()` sans `await` avant `setQuestionIndex`

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client.js';
 import { DEFAULTS } from '@kapsule/core';
 import StartScreen from '../components/guest/StartScreen.jsx';
@@ -40,6 +40,34 @@ function ClosedScreen() {
   );
 }
 
+// Modale d'inactivité : compte à rebours 30 s puis retour accueil.
+// La session abandonnée reste en base (spec §8).
+const IDLE_MODAL_S = 30;
+
+function IdleModal({ onStay, onLeave }) {
+  const [remaining, setRemaining] = useState(IDLE_MODAL_S);
+
+  useEffect(() => {
+    if (remaining <= 0) { onLeave(); return; }
+    const t = setTimeout(() => setRemaining((r) => r - 1), 1000);
+    return () => clearTimeout(t);
+  }, [remaining, onLeave]);
+
+  return (
+    <div className="idle-modal-overlay">
+      <div className="idle-modal">
+        <h2 className="idle-modal__title">Tu es toujours là ?</h2>
+        <p className="text--muted idle-modal__countdown">
+          Retour à l'accueil dans {remaining} s…
+        </p>
+        <button className="btn btn--primary btn--large" onClick={onStay}>
+          Oui, je continue
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Machine à états principale ────────────────────────────────────────────────
 // États : loading | error | closed | start | name | questions | recap | thanks
 
@@ -49,18 +77,26 @@ const S = {
   RECAP: 'recap', THANKS: 'thanks',
 };
 
+// Écrans sur lesquels le timeout d'inactivité est actif.
+// QUESTIONS est exclu : rec/upload y vivent et ne doivent jamais être interrompus.
+const IDLE_SCREENS = new Set([S.START, S.NAME, S.RECAP, S.THANKS]);
+
 export default function GuestPage() {
   const [screen, setScreen] = useState(S.LOADING);
   const [event, setEvent] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [errorMsg, setErrorMsg] = useState('');
+  const [idleModalVisible, setIdleModalVisible] = useState(false);
 
   const [sessionId, setSessionId] = useState(null);
   const [guestName, setGuestName] = useState('');
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState([]); // réponses connues du serveur
 
+  const idleTimerRef = useRef(null);
+
   const loadEvent = useCallback(async () => {
+    setIdleModalVisible(false);
     setScreen(S.LOADING);
     try {
       const [evtData, qData] = await Promise.all([api.getEvent(), api.getQuestions()]);
@@ -86,22 +122,31 @@ export default function GuestPage() {
     }
   }, [sessionId]);
 
-  // Timeout d'inactivité (§8) : hors rec/upload, retour idle après idle_timeout s
-  // Désactivé sur questions (RecordingScreen gère son propre cycle) pour ne pas
-  // interrompre un enregistrement ou un upload.
+  // ── Timeout d'inactivité (spec §8) ───────────────────────────────────────────
+  // Actif uniquement sur les écrans IDLE_SCREENS (jamais sur QUESTIONS).
+  // Après idle_timeout s sans interaction → modale 30 s → retour accueil.
   const idleMs = (event?.idle_timeout ?? DEFAULTS.IDLE_TIMEOUT_S) * 1000;
+
+  const resetIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => setIdleModalVisible(true), idleMs);
+  }, [idleMs]);
+
   useEffect(() => {
-    if (screen !== S.NAME) return; // uniquement sur name pour l'instant
-    let timer = setTimeout(() => loadEvent(), idleMs);
-    const reset = () => { clearTimeout(timer); timer = setTimeout(() => loadEvent(), idleMs); };
-    window.addEventListener('touchstart', reset);
-    window.addEventListener('mousemove', reset);
+    if (!IDLE_SCREENS.has(screen)) {
+      // Hors écrans idle : annuler tout timer en cours
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      return;
+    }
+    resetIdleTimer();
+    window.addEventListener('touchstart', resetIdleTimer);
+    window.addEventListener('mousemove', resetIdleTimer);
     return () => {
-      clearTimeout(timer);
-      window.removeEventListener('touchstart', reset);
-      window.removeEventListener('mousemove', reset);
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      window.removeEventListener('touchstart', resetIdleTimer);
+      window.removeEventListener('mousemove', resetIdleTimer);
     };
-  }, [screen, idleMs, loadEvent]);
+  }, [screen, resetIdleTimer]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -158,68 +203,71 @@ export default function GuestPage() {
   if (screen === S.LOADING) return <LoadingScreen />;
   if (screen === S.ERROR)   return <ErrorScreen message={errorMsg} onRetry={loadEvent} />;
   if (screen === S.CLOSED)  return <ClosedScreen />;
-  if (screen === S.START)   return <StartScreen event={event} onStart={handleStart} />;
 
-  if (screen === S.NAME) {
-    return (
-      <NameInput
-        event={event}
-        onSession={handleSession}
-        onBack={() => setScreen(S.START)}
-      />
-    );
-  }
+  return (
+    <>
+      {/* Modale d'inactivité — superposée à tout écran IDLE_SCREENS */}
+      {idleModalVisible && (
+        <IdleModal
+          onStay={() => { setIdleModalVisible(false); resetIdleTimer(); }}
+          onLeave={handleRestart}
+        />
+      )}
 
-  if (screen === S.QUESTIONS && questions.length > 0) {
-    const q = questions[questionIndex];
-    const existingAnswer = answers.find((a) => (a.question_id ?? a) === q.id);
-    return (
-      <div className="questions-layout">
-        <QuestionNav
+      {screen === S.START && <StartScreen event={event} onStart={handleStart} />}
+
+      {screen === S.NAME && (
+        <NameInput
+          event={event}
+          onSession={handleSession}
+          onBack={() => setScreen(S.START)}
+        />
+      )}
+
+      {screen === S.QUESTIONS && questions.length > 0 && (() => {
+        const q = questions[questionIndex];
+        const existingAnswer = answers.find((a) => (a.question_id ?? a) === q.id);
+        return (
+          <div className="questions-layout">
+            <QuestionNav
+              questions={questions}
+              currentIndex={questionIndex}
+              answers={answers}
+              onGo={handleGoQuestion}
+            />
+            {/* key=questionIndex force le remount complet à chaque changement de question */}
+            <RecordingScreen
+              key={`${sessionId}-q${questionIndex}`}
+              question={q}
+              questionIndex={questionIndex}
+              totalQuestions={questions.length}
+              sessionId={sessionId}
+              existingVideoId={existingAnswer?.video_id ?? null}
+              onNext={handleQuestionNext}
+              onBack={handleQuestionBack}
+            />
+          </div>
+        );
+      })()}
+
+      {screen === S.QUESTIONS && questions.length === 0 && (
+        <div className="screen screen--center">
+          <p className="text--muted">Aucune question configurée pour cet événement.</p>
+          <button className="btn btn--primary" onClick={() => setScreen(S.RECAP)}>Terminer</button>
+        </div>
+      )}
+
+      {screen === S.RECAP && (
+        <RecapScreen
           questions={questions}
-          currentIndex={questionIndex}
           answers={answers}
-          onGo={handleGoQuestion}
-        />
-        {/* key=questionIndex force le remount complet à chaque changement de question */}
-        <RecordingScreen
-          key={`${sessionId}-q${questionIndex}`}
-          question={q}
-          questionIndex={questionIndex}
-          totalQuestions={questions.length}
           sessionId={sessionId}
-          existingVideoId={existingAnswer?.video_id ?? null}
-          onNext={handleQuestionNext}
-          onBack={handleQuestionBack}
+          onGo={handleRecapGo}
+          onFinish={handleRecapFinish}
         />
-      </div>
-    );
-  }
+      )}
 
-  if (screen === S.QUESTIONS && questions.length === 0) {
-    return (
-      <div className="screen screen--center">
-        <p className="text--muted">Aucune question configurée pour cet événement.</p>
-        <button className="btn btn--primary" onClick={() => setScreen(S.RECAP)}>Terminer</button>
-      </div>
-    );
-  }
-
-  if (screen === S.RECAP) {
-    return (
-      <RecapScreen
-        questions={questions}
-        answers={answers}
-        sessionId={sessionId}
-        onGo={handleRecapGo}
-        onFinish={handleRecapFinish}
-      />
-    );
-  }
-
-  if (screen === S.THANKS) {
-    return <ThankYouScreen onRestart={handleRestart} />;
-  }
-
-  return null;
+      {screen === S.THANKS && <ThankYouScreen onRestart={handleRestart} />}
+    </>
+  );
 }

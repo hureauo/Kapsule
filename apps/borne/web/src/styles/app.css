@@ -502,6 +502,33 @@ body {
 /* ── Done screen ──────────────────────────────────────────────────────────── */
 .done__icon { font-size: 5rem; }
 
+/* ── Modale d'inactivité ──────────────────────────────────────────────────── */
+.idle-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.idle-modal {
+  background: var(--surface);
+  border-radius: 20px;
+  padding: 2.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+}
+
+.idle-modal__title    { font-size: 2rem; font-weight: 700; }
+.idle-modal__countdown { font-size: 1.1rem; }
+
 /* ── Admin ────────────────────────────────────────────────────────────────── */
 .admin-header {
   display: flex;
