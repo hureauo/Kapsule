@@ -6,6 +6,28 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 2.4 — routes/events.js Hub
+
+### Dossier orphelin si insertEvent échoue après mkdirSync
+
+**Fichier :** [events.js:42-46](apps/hub/server/src/routes/events.js#L42)
+
+**Observation :** si `insertEvent` lève (ex. contrainte UNIQUE sur l'id uuid — quasi impossible, mais théorique), le dossier `events/<id>/` reste orphelin sur le disque.
+
+**À ne pas corriger maintenant.** Les UUIDs v4 ne collisionnent pas en pratique. Si ce bug se manifeste, ajouter un `rmSync(eventDir, { recursive: true, force: true })` dans le `catch` avant de propager l'erreur.
+
+---
+
+### Gel d'édition non testé sur PUT /:eventId (metadata)
+
+**Fichier :** [events.test.js](apps/hub/server/test/events.test.js)
+
+**Observation :** le gel 409 (statut ≥ live) est testé sur `PUT /status` mais pas sur `PUT /` (name/consent_text). Le code `events.js:66` le gère correctement mais sans test direct.
+
+**À ne pas corriger maintenant.** La logique `isFrozen` est la même fonction dans les deux handlers.
+
+---
+
 ## Phase 2.3 — eventStore.js
 
 ### Seed automatique à surveiller au push (phase 3)

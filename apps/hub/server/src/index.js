@@ -2,9 +2,9 @@ import express from 'express';
 import { statfs } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import { config } from './config.js';
-import { openRegistry, getDb, listEvents } from './registry.js';
+import { openRegistry } from './registry.js';
 import { makeAuthRouter } from './routes/auth.js';
-import { requireUser, requireOwner } from './middleware/auth.js';
+import { makeEventsRouter } from './routes/events.js';
 
 export function createApp(dataDir) {
   openRegistry(dataDir);
@@ -13,15 +13,7 @@ export function createApp(dataDir) {
   app.use(express.json());
 
   app.use('/api/auth', makeAuthRouter());
-
-  // Stubs protégés — seront complétés en phase 2.4
-  app.get('/api/events', requireUser, (req, res) => {
-    const db = getDb();
-    res.json(listEvents(db, { userId: req.user.sub, role: req.user.role }));
-  });
-  app.get('/api/events/:eventId', requireUser, requireOwner, (req, res) => {
-    res.json(req.event);
-  });
+  app.use('/api/events', makeEventsRouter(dataDir));
 
   app.get('/api/health', async (req, res, next) => {
     try {
