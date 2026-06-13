@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { createEventDb } from '@kapsule/core';
+import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 
 let _cached = null; // { id, db }
 

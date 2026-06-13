@@ -3,7 +3,8 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { statfs } from 'node:fs/promises';
 import { v4 as uuidv4 } from 'uuid';
-import { createEventDb, DEFAULTS, LIMITS } from '@kapsule/core';
+import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
+import { DEFAULTS, LIMITS } from '@kapsule/core';
 import {
   getActiveEvent, listEvents, insertEvent, setActiveEvent, updateEventStatus,
 } from '../registry.js';
