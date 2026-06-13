@@ -57,7 +57,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 ## Phase 2 — Hub minimal
 
 - [x] 2.1 `registry.js` Hub (users, boxes, events, jobs, sync_log) + script `create-admin`
-- [ ] 2.2 Auth : login argon2 + JWT, **rate-limit 10/15 min/IP**, `requireUser`, `requireOwner` + tests de cloisonnement (2 comptes)
+- [x] 2.2 Auth : login argon2 + JWT, **rate-limit 10/15 min/IP**, `requireUser`, `requireOwner` + tests de cloisonnement (2 comptes)
 - [ ] 2.3 `eventStore.js` (cache LRU ~10 handles + `closeEventDb()`) + tests
 - [ ] 2.4 `routes/events.js` (CRUD, transitions draft↔ready, assign, purge RGPD avec `{confirm: name}`) + tests
 - [ ] 2.5 `routes/questions.js` + règle de gel d'édition (409 si statut ≥ `live`) + tests
