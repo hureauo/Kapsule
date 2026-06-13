@@ -6,6 +6,28 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 2.3 — eventStore.js
+
+### Seed automatique à surveiller au push (phase 3)
+
+**Fichier :** [eventStore.js:34](apps/hub/server/src/eventStore.js#L34)
+
+**Observation :** `openEventDb` appelle `createEventDb` qui seede 4 questions par défaut si la table est vide. Côté Hub, si `openEventDb` est appelé avant réception/écrasement du `db.sqlite` au push, le Hub crée une base parasitée à 4 questions de mariage. Le `closeEventDb` doit impérativement précéder l'écrasement du fichier (invariant §11.11) — et `openEventDb` ne doit pas être appelé avant que le vrai `db.sqlite` soit en place.
+
+**À ne pas corriger maintenant.** À vérifier au câblage de `PUT /api/sync/events/:id/db` en phase 3 : l'ordre doit être `closeEventDb(id)` → écrasement fichier → `openEventDb(id)` si nécessaire.
+
+---
+
+### `openEventDb` ne crée pas le répertoire `events/<id>/`
+
+**Fichier :** [eventStore.js:21](apps/hub/server/src/eventStore.js#L21)
+
+**Observation :** `better-sqlite3` lève si le dossier parent n'existe pas. Les appelants (création d'événement Hub) doivent garantir l'existence du dossier avant le premier appel.
+
+**À ne pas corriger maintenant.** Contrat à vérifier au câblage de `routes/events.js` (phase 2.4) : `mkdirSync` avant `openEventDb`.
+
+---
+
 ## Phase 2.1 — registry.js Hub + create-admin
 
 ### Mot de passe en clair dans create-admin
