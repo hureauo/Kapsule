@@ -7,6 +7,7 @@ import { makeAuthRouter, requireAdmin } from './middleware/auth.js';
 import { makeEventsRouter } from './routes/events.js';
 import { makeQuestionsRouter } from './routes/questions.js';
 import { makeSessionsRouter } from './routes/sessions.js';
+import { makeVideosRouter } from './routes/videos.js';
 
 export function createApp(dataDir, cfg = config) {
   openRegistry(dataDir);
@@ -19,6 +20,7 @@ export function createApp(dataDir, cfg = config) {
   app.use('/api', makeEventsRouter(dataDir, routerCfg));
   app.use('/api', makeQuestionsRouter(dataDir, routerCfg));
   app.use('/api', makeSessionsRouter(dataDir, routerCfg));
+  app.use('/api', makeVideosRouter(dataDir, routerCfg));
 
   app.get('/api/health', async (req, res, next) => {
     try {
