@@ -1,0 +1,42 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: apps/borne/server/Dockerfile
+    environment:
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - JWT_SECRET=${JWT_SECRET:-change-me}
+      - HUB_URL=${HUB_URL:-}
+      - BOX_TOKEN=${BOX_TOKEN:-}
+      - DATA_DIR=/app/data
+      - PORT=3001
+      - PULL_INTERVAL_MS=${PULL_INTERVAL_MS:-300000}
+    volumes:
+      - borne_data:/app/data
+    networks:
+      - internal
+    restart: unless-stopped
+
+  frontend:
+    # Build multi-stage : Vite → nginx:alpine + openssl (sera complété en phase 1b)
+    build:
+      context: .
+      dockerfile: apps/borne/web/Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - borne_certs:/etc/nginx/certs
+    depends_on:
+      - backend
+    networks:
+      - internal
+    restart: unless-stopped
+
+volumes:
+  borne_data:
+  borne_certs:
+
+networks:
+  internal:
+    driver: bridge

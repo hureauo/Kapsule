@@ -1,0 +1,56 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: apps/hub/server/Dockerfile
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-change-me}
+      - DATA_DIR=/app/data
+      - PORT=3001
+      - ALLOW_REGISTER=${ALLOW_REGISTER:-false}
+    volumes:
+      - hub_data:/app/data
+    networks:
+      - internal
+    restart: unless-stopped
+
+  worker:
+    # Même image que backend, commande différente (ffmpeg installé dans le Dockerfile)
+    build:
+      context: .
+      dockerfile: apps/hub/server/Dockerfile
+    command: ["node", "src/worker/index.js"]
+    environment:
+      - JWT_SECRET=${JWT_SECRET:-change-me}
+      - DATA_DIR=/app/data
+    volumes:
+      - hub_data:/app/data
+    networks:
+      - internal
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  frontend:
+    # Build multi-stage : Vite → nginx:alpine (sera complété en phase 2)
+    build:
+      context: .
+      dockerfile: apps/hub/web/Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Monter les certificats Let's Encrypt (ou cert manuel) depuis l'hôte
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - backend
+    networks:
+      - internal
+    restart: unless-stopped
+
+volumes:
+  hub_data:
+
+networks:
+  internal:
+    driver: bridge

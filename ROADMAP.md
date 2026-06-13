@@ -11,7 +11,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 - [x] 0.3 Tests unitaires core : `createEventDb` idempotent + seed 4 questions, `sha256File`, validations
 - [x] 0.4 Squelette serveur Borne : `index.js`, `config.js`, error handler, `GET /api/health` (statfs + activeEvent)
 - [x] 0.5 Squelette serveur Hub : idem
-- [ ] 0.6 Dockerfiles, `docker-compose.borne.yml` / `docker-compose.hub.yml`, confs Nginx, `borne-entrypoint.sh`
+- [x] 0.6 Dockerfiles, `docker-compose.borne.yml` / `docker-compose.hub.yml`, confs Nginx, `borne-entrypoint.sh`
 - [ ] 🧑 0.7 `docker compose up` sur chaque fichier → `/api/health` répond (vérifiable ici si Docker dispo, sinon humain)
 
 **Terminé quand** : `npm test` passe ; les deux `/api/health` répondent.
