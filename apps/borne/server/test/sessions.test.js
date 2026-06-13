@@ -91,6 +91,19 @@ describe('POST /api/sessions', () => {
     assert.equal(res.status, 400);
   });
 
+  test('retourne 409 si l\'événement est clôturé (closed)', async () => {
+    // Passage en live puis clôture
+    await request(ctx.app).post('/api/sessions').send({ guest_name: 'Alice', consent: true });
+    await request(ctx.app)
+      .put(`/api/events/${ctx.eventId}/close`)
+      .set('Authorization', `Bearer ${ctx.token}`);
+    const res = await request(ctx.app)
+      .post('/api/sessions')
+      .send({ guest_name: 'Bob', consent: true });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error, 'event_closed');
+  });
+
   test('retourne 404 si aucun événement actif', async () => {
     // Nouveau contexte sans événement actif
     const dir2 = mkdtempSync(join(tmpdir(), 'borne-sess-noact-'));

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { api } from '../../api/client.js';
 import { LIMITS } from '@kapsule/core';
 
-export default function NameInput({ event, onSession, onBack }) {
+export default function NameInput({ event, onSession, onBack, onClosed }) {
   const [name, setName] = useState('');
   const [consented, setConsented] = useState(false); // non pré-cochée (RGPD obligatoire)
   const [error, setError] = useState('');
@@ -27,6 +27,8 @@ export default function NameInput({ event, onSession, onBack }) {
       const session = await api.createSession(trimmed); // envoie consent: true
       onSession(session.id, trimmed);
     } catch (err) {
+      // 409 event_closed : l'admin a clôturé pendant que l'invité remplissait son prénom
+      if (err.status === 409 && onClosed) { onClosed(); return; }
       setError(err.message ?? 'Erreur lors de la création de la session.');
     } finally {
       setLoading(false);

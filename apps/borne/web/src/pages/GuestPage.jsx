@@ -300,6 +300,7 @@ export default function GuestPage() {
           event={event}
           onSession={handleSession}
           onBack={() => setScreen(S.START)}
+          onClosed={() => setScreen(S.CLOSED)}
         />
       )}
 

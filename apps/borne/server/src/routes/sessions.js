@@ -27,6 +27,11 @@ export function makeSessionsRouter(dataDir, cfg) {
 
       const { guest_name, consent } = req.body;
 
+      // Événement clôturé : plus de nouvelles sessions (spec §8, §6)
+      if (active.status === 'closed') {
+        return res.status(409).json({ error: 'event_closed', message: "L'événement est terminé" });
+      }
+
       // Invariant RGPD : consent doit être exactement true (booléen)
       if (consent !== true) {
         return res.status(400).json({ error: 'Le consentement est obligatoire' });
