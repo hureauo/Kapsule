@@ -9,13 +9,18 @@ Ce fichier ne la duplique pas ; il fixe les règles de travail. En cas de doute 
 
 Olivier, niveau master en informatique (concepts généraux solides). Il utilise ce projet comme support d'apprentissage. **Expliquer le *pourquoi* des choix techniques** (architecture, patterns non-évidents, contraintes) plutôt que le *quoi*.
 
+## Environnement de développement
+
+**Tout s'exécute dans Docker — aucune dépendance (Node, npm…) n'est installée en local.**
+Les commandes ci-dessous sont à lancer via `docker compose run` ou des scripts wrapper, jamais directement sur la machine hôte.
+
 ## Commandes
 
 > À compléter au fil des phases — maintenir cette section à jour dès qu'un script existe.
 
-- `npm test` — tous les tests (runner natif `node:test`), à lancer après toute modification backend
-- `npm test -w @kapsule/core` — tests d'un seul workspace
-- `npm run dev:borne` / `npm run dev:hub` — serveurs en dev (jamais besoin de Docker en dev)
+- `docker compose run --rm dev npm test` — tous les tests (runner natif `node:test`)
+- `docker compose run --rm dev npm test -w @kapsule/core` — tests d'un seul workspace
+- `docker compose up dev:borne` / `docker compose up dev:hub` — serveurs en dev
 
 ## Outils agents (`.claude/`)
 

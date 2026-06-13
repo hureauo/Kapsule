@@ -1,0 +1,12 @@
+{
+  "name": "@kapsule/core",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": "./src/index.js",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3"
+  }
+}
