@@ -1,0 +1,290 @@
+import React, { useEffect, useRef, useState } from 'react';
+import useMediaRecorder, { REC_STATUS } from '../../hooks/useMediaRecorder.js';
+import { uploadVideo } from '../../api/client.js';
+
+// Sous-états internes de l'écran d'enregistrement
+const S = {
+  INTRO: 'intro',
+  COUNTDOWN: 'countdown',
+  RECORDING: 'recording',
+  PREVIEW: 'preview',
+  UPLOADING: 'uploading',
+  ANSWERED: 'answered', // question déjà répondue (remontée depuis le parent)
+};
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function formatDuration(s) { return `${pad2(Math.floor(s / 60))}:${pad2(s % 60)}`; }
+
+// Backoff exponentiel : min(2000·2^(n-1), 30000) ms (n commence à 1)
+function retryDelay(attempt) { return Math.min(2000 * Math.pow(2, attempt - 1), 30000); }
+
+// ── Composant principal ───────────────────────────────────────────────────────
+// Keyé par questionIndex dans le parent → remount forcé à chaque question.
+export default function RecordingScreen({
+  question,
+  questionIndex,
+  totalQuestions,
+  sessionId,
+  existingVideoId,   // id si déjà répondue → sous-état ANSWERED
+  onNext,
+  onBack,
+}) {
+  const [subState, setSubState] = useState(existingVideoId ? S.ANSWERED : S.INTRO);
+  const [countdown, setCountdown] = useState(question.countdown ?? 3);
+  const [uploadProgress, setUploadProgress] = useState(0);   // 0-1
+  const [uploadError, setUploadError] = useState(null);
+  const [uploadAttempt, setUploadAttempt] = useState(0);
+
+  const videoPreviewRef = useRef(null); // <video> pour le preview caméra (intro)
+  const videoBlobRef    = useRef(null); // <video> pour le preview blob (preview)
+  const retryTimerRef   = useRef(null);
+
+  const recorder = useMediaRecorder({ maxDuration: question.max_duration ?? 60 });
+
+  // ── Intro : attacher le preview caméra ──────────────────────────────────────
+  useEffect(() => {
+    if (subState === S.INTRO && recorder.status === REC_STATUS.IDLE) {
+      recorder.requestPermission();
+    }
+  }, [subState]);
+
+  useEffect(() => {
+    if (subState === S.INTRO && recorder.status === REC_STATUS.READY && videoPreviewRef.current) {
+      recorder.attachPreview(videoPreviewRef.current);
+    }
+  }, [subState, recorder.status]);
+
+  // ── Countdown → démarrer l'enregistrement ───────────────────────────────────
+  useEffect(() => {
+    if (subState !== S.COUNTDOWN) return;
+    if (countdown <= 0) {
+      recorder.startRecording();
+      setSubState(S.RECORDING);
+      return;
+    }
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [subState, countdown]);
+
+  // ── Enregistrement terminé (auto-stop ou stop manuel) → preview ─────────────
+  useEffect(() => {
+    if (subState === S.RECORDING && recorder.status === REC_STATUS.STOPPED) {
+      setSubState(S.PREVIEW);
+    }
+  }, [subState, recorder.status]);
+
+  // ── Upload avec retry backoff ────────────────────────────────────────────────
+  async function startUpload(attempt = 1) {
+    setUploadAttempt(attempt);
+    setUploadError(null);
+    setUploadProgress(0);
+    setSubState(S.UPLOADING);
+
+    try {
+      await uploadVideo({
+        sessionId,
+        questionId: question.id,
+        questionText: question.text,
+        blob: recorder.blob,
+        mimeType: recorder.mimeType,
+        onProgress: setUploadProgress,
+      });
+      onNext(); // succès → question suivante
+    } catch (err) {
+      if (attempt < 5) {
+        const delay = retryDelay(attempt);
+        retryTimerRef.current = setTimeout(() => startUpload(attempt + 1), delay);
+        setUploadError(`Tentative ${attempt}/5 échouée. Nouvel essai dans ${Math.round(delay / 1000)} s…`);
+      } else {
+        setUploadError('L\'upload a échoué après 5 tentatives.');
+      }
+    }
+  }
+
+  // Nettoyage timer retry au démontage
+  useEffect(() => {
+    return () => { if (retryTimerRef.current) clearTimeout(retryTimerRef.current); };
+  }, []);
+
+  // ── Rendu selon sous-état ────────────────────────────────────────────────────
+
+  function renderHeader() {
+    return (
+      <div className="rec__header">
+        <span className="rec__progress-label">
+          Question {questionIndex + 1} sur {totalQuestions}
+        </span>
+        <div className="rec__progress-bar">
+          <div
+            className="rec__progress-fill"
+            style={{ width: `${((questionIndex + 1) / totalQuestions) * 100}%` }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (subState === S.ANSWERED) {
+    return (
+      <div className="screen screen--recording">
+        {renderHeader()}
+        <h2 className="rec__question">{question.text}</h2>
+        <p className="text--muted">Vous avez déjà répondu à cette question.</p>
+        <div className="rec__actions">
+          <button className="btn btn--secondary" onClick={() => {
+            recorder.resetRecording();
+            setSubState(S.INTRO);
+          }}>
+            Refaire cette réponse
+          </button>
+          <button className="btn btn--primary" onClick={onNext}>
+            Garder ✓
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (subState === S.INTRO) {
+    const cameraReady = recorder.status === REC_STATUS.READY;
+    return (
+      <div className="screen screen--recording">
+        {renderHeader()}
+        <h2 className="rec__question">{question.text}</h2>
+        <p className="text--muted rec__duration-hint">
+          Durée max : {question.max_duration ?? 60} s
+        </p>
+        {/* Preview caméra miroir (transform scaleX(-1) dans le CSS) */}
+        <div className="rec__camera-wrap">
+          {recorder.error ? (
+            <p className="text--error">{recorder.error}</p>
+          ) : (
+            <video
+              ref={videoPreviewRef}
+              className="rec__camera-preview"
+              muted
+              autoPlay
+              playsInline
+            />
+          )}
+        </div>
+        <div className="rec__actions">
+          <button className="btn btn--ghost" onClick={onBack}>← Retour</button>
+          <button
+            className="btn btn--record btn--large"
+            onClick={() => {
+              setCountdown(question.countdown ?? 3);
+              setSubState(S.COUNTDOWN);
+            }}
+            disabled={!cameraReady}
+          >
+            ● Commencer
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (subState === S.COUNTDOWN) {
+    return (
+      <div className="screen screen--center">
+        <h2 className="rec__question">{question.text}</h2>
+        <div className="countdown__number" aria-live="assertive">{countdown || '▶'}</div>
+        <p className="text--muted">Préparez-vous…</p>
+      </div>
+    );
+  }
+
+  if (subState === S.RECORDING) {
+    const progress = (recorder.duration / (question.max_duration ?? 60));
+    return (
+      <div className="screen screen--recording">
+        {renderHeader()}
+        <h2 className="rec__question">{question.text}</h2>
+        <div className="rec__live-indicator" aria-live="polite">
+          <span className="rec__dot rec__dot--blink" aria-hidden="true" /> REC
+          &nbsp;&nbsp;{formatDuration(recorder.duration)}
+        </div>
+        <div className="rec__progress-bar rec__progress-bar--recording">
+          <div className="rec__progress-fill" style={{ width: `${progress * 100}%` }} />
+        </div>
+        <button className="btn btn--stop btn--large" onClick={() => recorder.stopRecording()}>
+          ■ Stop
+        </button>
+      </div>
+    );
+  }
+
+  if (subState === S.PREVIEW) {
+    return (
+      <div className="screen screen--recording">
+        {renderHeader()}
+        <h2 className="rec__question">{question.text}</h2>
+        <div className="rec__preview-wrap">
+          {/* playsInline obligatoire pour Safari — invariant §11.5 */}
+          <video
+            ref={videoBlobRef}
+            className="rec__blob-video"
+            src={recorder.blobUrl}
+            controls
+            playsInline
+          />
+        </div>
+        <div className="rec__actions">
+          <button className="btn btn--secondary" onClick={() => {
+            recorder.resetRecording();
+            setSubState(S.INTRO);
+          }}>
+            Recommencer
+          </button>
+          <button className="btn btn--primary btn--large" onClick={() => startUpload(1)}>
+            Parfait ✓
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (subState === S.UPLOADING) {
+    const pct = Math.round(uploadProgress * 100);
+    const isFinalError = uploadError && uploadAttempt >= 5;
+    return (
+      <div className="screen screen--center">
+        <h2 className="rec__question">{question.text}</h2>
+        {!isFinalError ? (
+          <>
+            <p className="text--muted">
+              {uploadAttempt > 1 ? uploadError : `Envoi en cours… ${pct} %`}
+            </p>
+            <div className="upload-progress">
+              <div className="upload-progress__bar">
+                <div
+                  className="upload-progress__fill"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className="upload-progress__label">{pct} %</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text--error">{uploadError}</p>
+            <div className="rec__actions">
+              <button className="btn btn--secondary" onClick={() => {
+                recorder.resetRecording();
+                setSubState(S.INTRO);
+              }}>
+                Recommencer
+              </button>
+              <button className="btn btn--primary" onClick={() => startUpload(1)}>
+                Réessayer l'upload
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  return null;
+}
