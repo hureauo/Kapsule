@@ -93,6 +93,30 @@ se monter (ex. via un état `answersReady`).
 
 ---
 
+## Phase 1d.4 — QuestionManager
+
+### `onDragEnd` : stale closure potentielle sur `questions`
+
+**Fichier :** [QuestionManager.jsx:158](apps/borne/web/src/components/admin/QuestionManager.jsx#L158)
+
+**Observation :** `onDragEnd` lit `questions` par closure. `onDragEnter` met à jour `questions` via `setQuestions` fonctionnel, mais la closure de `onDragEnd` peut capturer l'état précédant la dernière réorganisation. L'ordre envoyé à `reorderQuestions` peut alors être stale si plusieurs `onDragEnter` se déclenchent rapidement avant `onDragEnd`.
+
+**Quand ça pourrait devenir un problème :** drag très rapide avec plusieurs survols successifs. Le rollback `await load()` en cas d'erreur rattraperait visuellement.
+
+**À ne pas corriger maintenant.** Si ce bug se manifeste, utiliser un ref partagé (ex. `orderedRef.current = questions` mis à jour dans `setQuestions`) pour que `onDragEnd` lise toujours le dernier ordre.
+
+---
+
+### Drag HTML5 natif non supporté par touch iOS Safari
+
+**Fichier :** [QuestionManager.jsx](apps/borne/web/src/components/admin/QuestionManager.jsx)
+
+**Observation :** les événements `dragstart`/`dragenter` HTML5 ne se déclenchent pas sur iOS Safari (touch). Si l'admin opère depuis l'iPad, le drag-reorder sera inopérant — il faudra réordonner depuis un desktop ou implémenter un fallback touch (`touchstart`/`touchmove`/`touchend`).
+
+**À ne pas corriger maintenant.** Le spec dit « HTML5 natif » et l'admin peut utiliser un autre appareil. À documenter si un opérateur remonte ce problème.
+
+---
+
 ## Phase 1d.3 — PreflightPanel
 
 ### Deux `useEffect` sur `cameraStream` pourraient être fusionnés

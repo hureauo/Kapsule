@@ -206,6 +206,55 @@ describe('PUT /api/questions/:id', () => {
   });
 });
 
+// ── GET /api/questions/all (admin) ───────────────────────────────────────────
+
+describe('GET /api/questions/all', () => {
+  let ctx;
+  beforeEach(async () => { ctx = await setup(); });
+  afterEach(() => teardown(ctx.dir));
+
+  test('retourne toutes les questions y compris désactivées', async () => {
+    // Désactiver la première question
+    const listRes = await request(ctx.app).get('/api/questions');
+    const q = listRes.body[0];
+    await request(ctx.app)
+      .put(`/api/questions/${q.id}`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ enabled: 0 });
+    // /all doit retourner les 4 (y compris la désactivée)
+    const res = await request(ctx.app)
+      .get('/api/questions/all')
+      .set('Authorization', `Bearer ${ctx.token}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.length, 4);
+    const disabled = res.body.find((x) => x.id === q.id);
+    assert.ok(disabled);
+    assert.equal(disabled.enabled, 0);
+  });
+
+  test('retourne 401 sans token', async () => {
+    const res = await request(ctx.app).get('/api/questions/all');
+    assert.equal(res.status, 401);
+  });
+
+  test('retourne 404 si aucun événement actif', async () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'borne-q-all-noact-'));
+    closeEventDb(); closeRegistry();
+    try {
+      const app2 = createApp(dir2, { ...TEST_CFG, dataDir: dir2 });
+      const loginRes2 = await request(app2).post('/api/admin/login').send({ password: 'test' });
+      const res = await request(app2)
+        .get('/api/questions/all')
+        .set('Authorization', `Bearer ${loginRes2.body.token}`);
+      assert.equal(res.status, 404);
+    } finally {
+      closeEventDb(); closeRegistry();
+      rmSync(dir2, { recursive: true });
+      ctx.app = createApp(ctx.dir, { ...TEST_CFG, dataDir: ctx.dir });
+    }
+  });
+});
+
 // ── DELETE /api/questions/:id ─────────────────────────────────────────────────
 
 describe('DELETE /api/questions/:id', () => {

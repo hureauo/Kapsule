@@ -33,8 +33,21 @@ export function makeQuestionsRouter(dataDir, cfg) {
 
   // ── Routes admin ──────────────────────────────────────────────────────────
 
-  // IMPORTANT : /reorder/batch déclaré AVANT /:id (invariant §11.1 — sinon Express
-  // interprète 'reorder' comme un :id)
+  // IMPORTANT : routes à segment fixe (/all, /reorder/batch) déclarées AVANT /:id
+  // (invariant §11.1 — sinon Express interprète le segment comme un :id)
+  router.get('/questions/all', auth, (req, res, next) => {
+    try {
+      const db = requireActiveDb(req, res);
+      if (!db) return;
+      const questions = db
+        .prepare('SELECT * FROM questions ORDER BY order_index, id')
+        .all();
+      res.json(questions);
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.put('/questions/reorder/batch', auth, (req, res, next) => {
     try {
       const db = requireActiveDb(req, res);

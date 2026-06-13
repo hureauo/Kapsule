@@ -74,6 +74,7 @@ export const api = {
 
   // Questions
   listQuestions: () => apiFetch('/api/questions'),
+  listAllQuestions: () => apiFetch('/api/questions/all'),
   createQuestion: (data) =>
     apiFetch('/api/questions', { method: 'POST', body: JSON.stringify(data) }),
   updateQuestion: (id, data) =>
