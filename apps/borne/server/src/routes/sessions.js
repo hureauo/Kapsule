@@ -1,0 +1,117 @@
+import { Router } from 'express';
+import { v4 as uuidv4 } from 'uuid';
+import { validateGuestName } from '@kapsule/core';
+import { getActiveEvent, updateEventStatus } from '../registry.js';
+import { getActiveEventDb } from '../eventDb.js';
+
+export function makeSessionsRouter(dataDir, cfg) {
+  const router = Router();
+  const auth = cfg.requireAdmin;
+
+  function requireActiveDb(res) {
+    const active = getActiveEvent();
+    if (!active) {
+      res.status(404).json({ error: 'Aucun événement actif' });
+      return null;
+    }
+    return { active, db: getActiveEventDb(dataDir, active) };
+  }
+
+  // ── Routes publiques ──────────────────────────────────────────────────────
+
+  router.post('/sessions', (req, res, next) => {
+    try {
+      const ctx = requireActiveDb(res);
+      if (!ctx) return;
+      const { active, db } = ctx;
+
+      const { guest_name, consent } = req.body;
+
+      // Invariant RGPD : consent doit être exactement true (booléen)
+      if (consent !== true) {
+        return res.status(400).json({ error: 'Le consentement est obligatoire' });
+      }
+
+      const nameErr = validateGuestName(guest_name);
+      if (nameErr) return res.status(400).json({ error: nameErr });
+
+      // Passage live si c'est la première session
+      const sessionCount = db.prepare('SELECT COUNT(*) as n FROM sessions').get().n;
+      if (sessionCount === 0 && active.status === 'loaded') {
+        updateEventStatus(active.id, 'live');
+      }
+
+      const id = uuidv4();
+      db.prepare(
+        'INSERT INTO sessions (id, guest_name, consent_at) VALUES (?, ?, CURRENT_TIMESTAMP)'
+      ).run(id, guest_name.trim());
+
+      const session = db.prepare('SELECT * FROM sessions WHERE id=?').get(id);
+      res.status(201).json(session);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Le UUID de session fait office de capability token — pas besoin d'auth supplémentaire
+  router.get('/sessions/:id/answers', (req, res, next) => {
+    try {
+      const ctx = requireActiveDb(res);
+      if (!ctx) return;
+      const { db } = ctx;
+      const { id } = req.params;
+
+      const session = db.prepare('SELECT id FROM sessions WHERE id=?').get(id);
+      if (!session) return res.status(404).json({ error: 'Session introuvable' });
+
+      const answers = db.prepare(
+        'SELECT question_id, id as video_id, recorded_at FROM videos WHERE session_id=?'
+      ).all(id);
+      res.json(answers);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.put('/sessions/:id/complete', (req, res, next) => {
+    try {
+      const ctx = requireActiveDb(res);
+      if (!ctx) return;
+      const { db } = ctx;
+      const { id } = req.params;
+
+      const session = db.prepare('SELECT id FROM sessions WHERE id=?').get(id);
+      if (!session) return res.status(404).json({ error: 'Session introuvable' });
+
+      db.prepare(
+        'UPDATE sessions SET completed_at=CURRENT_TIMESTAMP WHERE id=?'
+      ).run(id);
+      res.json(db.prepare('SELECT * FROM sessions WHERE id=?').get(id));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── Route admin ────────────────────────────────────────────────────────────
+
+  router.get('/sessions', auth, (req, res, next) => {
+    try {
+      const ctx = requireActiveDb(res);
+      if (!ctx) return;
+      const { db } = ctx;
+
+      const sessions = db.prepare(`
+        SELECT s.*, COUNT(v.id) as video_count
+        FROM sessions s
+        LEFT JOIN videos v ON v.session_id = s.id
+        GROUP BY s.id
+        ORDER BY s.started_at DESC
+      `).all();
+      res.json(sessions);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  return router;
+}
