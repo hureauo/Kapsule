@@ -1,0 +1,19 @@
+{
+  "name": "kapsule",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*/server",
+    "apps/*/web"
+  ],
+  "scripts": {
+    "test": "if find packages apps -maxdepth 3 -name 'package.json' -not -path '*/node_modules/*' 2>/dev/null | grep -q .; then npm test --workspaces --if-present; fi",
+    "dev:borne": "npm run dev --workspace=apps/borne/server",
+    "dev:hub": "npm run dev --workspace=apps/hub/server"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
