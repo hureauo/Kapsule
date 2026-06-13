@@ -46,7 +46,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 - [x] 1d.3 `PreflightPanel` (config, test caméra local, disque, horloge `?client_time=`)
 - [x] 1d.4 `QuestionManager` (form + table + drag-reorder HTML5 natif, mise à jour optimiste)
 - [x] 1d.5 `VideoList` (filtre session, modal lecture Range, download, delete, export CSV)
-- [ ] 1d.6 `styles/app.css` (thème invité sombre tactile ≥ 80 px / admin clair)
+- [x] 1d.6 `styles/app.css` (thème invité sombre tactile ≥ 80 px / admin clair)
 
 ### Vérifications humaines phase 1
 - [ ] 🧑 Parcours invité complet sur iPad Safari réel (caméra, HTTPS auto-signé approuvé, codecs mp4)

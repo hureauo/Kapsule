@@ -10,6 +10,9 @@ html, body, #root {
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* Kiosque : désactiver la sélection de texte hors inputs pour éviter les sélections accidentelles */
+  user-select: none;
+  -webkit-user-select: none;
   /* Thème invité sombre par défaut */
   --bg: #111;
   --surface: #1e1e1e;
@@ -25,6 +28,12 @@ body {
   --input-border-focus: #e63946;
   background-color: var(--bg);
   color: var(--text);
+}
+
+/* Réactiver la sélection dans les champs de saisie */
+input, textarea, [contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Thème admin clair (appliqué via .admin-login et .admin-layout) */
@@ -44,6 +53,15 @@ body {
   background-color: var(--bg);
   color: var(--text);
   min-height: 100%;
+  /* Admin : réactiver la sélection pour copier/coller */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Focus ring visible dans le thème admin (accessibilité) */
+.admin-layout :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* ── Conteneurs d'écran ────────────────────────────────────────────────────── */

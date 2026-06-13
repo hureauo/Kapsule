@@ -93,6 +93,18 @@ se monter (ex. via un état `answersReady`).
 
 ---
 
+## Phase 1d.6 — Styles
+
+### `body` sans `-moz-user-select`
+
+**Fichier :** [app.css](apps/borne/web/src/styles/app.css)
+
+**Observation :** `user-select: none` sur `body` ne porte pas le préfixe `-moz-`. Non bloquant : cible iPad Safari uniquement, `-webkit-user-select` suffit.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 1d.5 — VideoList
 
 ### Échec silencieux de `loadSessions`
