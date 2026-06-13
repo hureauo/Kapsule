@@ -6,6 +6,28 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 2.5 — routes/questions.js Hub
+
+### GET questions Hub : questions disabled non testées explicitement
+
+**Fichier :** [questions.test.js](apps/hub/server/test/questions.test.js)
+
+**Observation :** contrairement à la Borne (filtre `WHERE enabled=1`), le Hub retourne toutes les questions (enabled ou non) pour l'éditeur. Aucun test ne couvre ce comportement explicitement.
+
+**À ne pas corriger maintenant.** Si une régression introduit un filtre `enabled=1`, un test nominal suffit (créer une question disabled, vérifier qu'elle apparaît dans GET Hub).
+
+---
+
+### reorder/batch : pas de vérification de l'ordre persisté
+
+**Fichier :** [questions.test.js](apps/hub/server/test/questions.test.js)
+
+**Observation :** le test `reorder/batch` vérifie seulement `{ ok: true }`, pas que `order_index` est bien persisté après le PUT.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 2.4 — routes/events.js Hub
 
 ### Dossier orphelin si insertEvent échoue après mkdirSync
