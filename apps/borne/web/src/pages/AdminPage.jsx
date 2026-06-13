@@ -3,6 +3,7 @@ import { isAuthenticated } from '../api/client.js';
 import AdminLogin from '../components/admin/AdminLogin.jsx';
 import AdminLayout from '../components/admin/AdminLayout.jsx';
 import EventPanel from '../components/admin/EventPanel.jsx';
+import PreflightPanel from '../components/admin/PreflightPanel.jsx';
 
 function PanelPlaceholder({ name }) {
   return (
@@ -23,7 +24,7 @@ export default function AdminPage() {
   function renderPanel() {
     switch (activeTab) {
       case 'event':     return <EventPanel />;
-      case 'preflight': return <PanelPlaceholder name="Préflight" />;
+      case 'preflight': return <PreflightPanel />;
       case 'questions': return <PanelPlaceholder name="Questions" />;
       case 'videos':    return <PanelPlaceholder name="Vidéos" />;
       case 'sync':      return <PanelPlaceholder name="Synchro" />;

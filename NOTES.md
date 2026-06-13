@@ -93,6 +93,18 @@ se monter (ex. via un état `answersReady`).
 
 ---
 
+## Phase 1d.3 — PreflightPanel
+
+### Deux `useEffect` sur `cameraStream` pourraient être fusionnés
+
+**Fichier :** [PreflightPanel.jsx:53-57](apps/borne/web/src/components/admin/PreflightPanel.jsx#L53)
+
+**Observation :** cleanup (arrêt tracks) et branchement `srcObject` sont dans deux effets séparés dépendant de `cameraStream`. Fusionnable, mais la séparation actuelle est lisible et correcte — aucune fuite.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 1d.2 — EventPanel
 
 ### Erreur de chargement remplace tout le panneau

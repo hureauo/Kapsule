@@ -43,7 +43,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 ### 1d — Admin Borne
 - [x] 1d.1 `AdminLogin` + `AdminLayout` (onglets, indicateur disque permanent, rouge < 10 Go)
 - [x] 1d.2 `EventPanel` (création locale, activation, clôture avec confirmation par saisie du nom)
-- [ ] 1d.3 `PreflightPanel` (config, test caméra local, disque, horloge `?client_time=`)
+- [x] 1d.3 `PreflightPanel` (config, test caméra local, disque, horloge `?client_time=`)
 - [ ] 1d.4 `QuestionManager` (form + table + drag-reorder HTML5 natif, mise à jour optimiste)
 - [ ] 1d.5 `VideoList` (filtre session, modal lecture Range, download, delete, export CSV)
 - [ ] 1d.6 `styles/app.css` (thème invité sombre tactile ≥ 80 px / admin clair)
