@@ -93,6 +93,18 @@ se monter (ex. via un état `answersReady`).
 
 ---
 
+## Phase 1d.5 — VideoList
+
+### Échec silencieux de `loadSessions`
+
+**Fichier :** [VideoList.jsx:38](apps/borne/web/src/components/admin/VideoList.jsx#L38)
+
+**Observation :** `loadSessions` absorbe toute erreur silencieusement. L'admin n'a aucun retour si la liste des sessions échoue (le filtre sera vide mais les vidéos s'affichent). Non critique.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 1d.4 — QuestionManager
 
 ### `onDragEnd` : stale closure potentielle sur `questions`

@@ -5,6 +5,7 @@ import AdminLayout from '../components/admin/AdminLayout.jsx';
 import EventPanel from '../components/admin/EventPanel.jsx';
 import PreflightPanel from '../components/admin/PreflightPanel.jsx';
 import QuestionManager from '../components/admin/QuestionManager.jsx';
+import VideoList from '../components/admin/VideoList.jsx';
 
 function PanelPlaceholder({ name }) {
   return (
@@ -27,7 +28,7 @@ export default function AdminPage() {
       case 'event':     return <EventPanel />;
       case 'preflight': return <PreflightPanel />;
       case 'questions': return <QuestionManager />;
-      case 'videos':    return <PanelPlaceholder name="Vidéos" />;
+      case 'videos':    return <VideoList />;
       case 'sync':      return <PanelPlaceholder name="Synchro" />;
       default:          return null;
     }
