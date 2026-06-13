@@ -5,6 +5,10 @@ Borne vidéo d'événements : une **Borne** (Raspberry Pi, kiosque iPad 100% off
 **La spécification complète et auto-suffisante est [PROJET.md](PROJET.md) — c'est la source de vérité.**
 Ce fichier ne la duplique pas ; il fixe les règles de travail. En cas de doute sur un comportement, relire la section concernée de PROJET.md avant de coder.
 
+## Profil développeur
+
+Olivier, niveau master en informatique (concepts généraux solides). Il utilise ce projet comme support d'apprentissage. **Expliquer le *pourquoi* des choix techniques** (architecture, patterns non-évidents, contraintes) plutôt que le *quoi*.
+
 ## Commandes
 
 > À compléter au fil des phases — maintenir cette section à jour dès qu'un script existe.
