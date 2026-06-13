@@ -21,7 +21,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 ### 1a — Backend Borne
 - [x] 1a.1 `registry.js` (local_events, push_state) + `eventDb.js` (cache BD événement actif)
 - [x] 1a.2 `middleware/auth.js` (login, JWT 24h, `?token=`) + tests
-- [ ] 1a.3 `routes/events.js` (liste, création locale, activate, close, `GET /api/event` public, preflight) + tests
+- [x] 1a.3 `routes/events.js` (liste, création locale, activate, close, `GET /api/event` public, preflight) + tests
 - [ ] 1a.4 `routes/questions.js` (CRUD + reorder batch transactionnel) + tests
 - [ ] 1a.5 `routes/sessions.js` (création avec consentement obligatoire → 400 sinon, passage `live`, answers, complete, liste admin) + tests
 - [ ] 1a.6 `routes/videos.js` (upload multer + sha256 + remplacement transactionnel, stream Range, stream invité par session, CSV avant `/:id`, download, delete) + tests

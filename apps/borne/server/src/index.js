@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { config } from './config.js';
 import { openRegistry, getActiveEvent } from './registry.js';
 import { makeAuthRouter, requireAdmin } from './middleware/auth.js';
+import { makeEventsRouter } from './routes/events.js';
 
 export function createApp(dataDir, cfg = config) {
   openRegistry(dataDir);
@@ -12,6 +13,7 @@ export function createApp(dataDir, cfg = config) {
   app.use(express.json());
 
   app.post('/api/admin/login', makeAuthRouter(cfg));
+  app.use('/api', makeEventsRouter(dataDir, { ...cfg, requireAdmin: requireAdmin(cfg) }));
 
   app.get('/api/health', async (req, res, next) => {
     try {
