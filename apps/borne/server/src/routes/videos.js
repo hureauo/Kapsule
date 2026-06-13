@@ -4,7 +4,8 @@ import { stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
-import { sha256File, LIMITS } from '@kapsule/core';
+import { sha256File } from '@kapsule/core/src/checksum.js';
+import { LIMITS } from '@kapsule/core';
 import { getActiveEvent } from '../registry.js';
 import { getActiveEventDb } from '../eventDb.js';
 

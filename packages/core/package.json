@@ -2,7 +2,10 @@
   "name": "@kapsule/core",
   "version": "0.0.1",
   "type": "module",
-  "exports": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./src/checksum.js": "./src/checksum.js"
+  },
   "scripts": {
     "test": "node --test test/*.test.js"
   },
