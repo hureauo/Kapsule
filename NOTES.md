@@ -93,6 +93,28 @@ se monter (ex. via un état `answersReady`).
 
 ---
 
+## Phase 1d.2 — EventPanel
+
+### Erreur de chargement remplace tout le panneau
+
+**Fichier :** [EventPanel.jsx:104](apps/borne/web/src/components/admin/EventPanel.jsx#L104)
+
+**Observation :** sur erreur transitoire de `listEvents`, le rendu d'erreur remplace l'intégralité du panneau — l'opérateur perd l'accès au formulaire de création. Une bannière d'erreur non-bloquante (contenu conservé) serait mieux.
+
+**À ne pas corriger maintenant.** Rare en pratique (même réseau que le backend).
+
+---
+
+### Modale de clôture : pas de fermeture à l'overlay ni Échap
+
+**Fichier :** [EventPanel.jsx:189](apps/borne/web/src/components/admin/EventPanel.jsx#L189)
+
+**Observation :** mineur pour une borne tactile.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 1d.1 — AdminLogin + AdminLayout
 
 ### Simplification possible de `intervalRef` dans `AdminLayout`

@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { isAuthenticated } from '../api/client.js';
 import AdminLogin from '../components/admin/AdminLogin.jsx';
 import AdminLayout from '../components/admin/AdminLayout.jsx';
+import EventPanel from '../components/admin/EventPanel.jsx';
 
-// Placeholders pour les panels implémentés en 1d.2–1d.5
 function PanelPlaceholder({ name }) {
   return (
     <div className="panel-placeholder">
@@ -22,7 +22,7 @@ export default function AdminPage() {
 
   function renderPanel() {
     switch (activeTab) {
-      case 'event':     return <PanelPlaceholder name="Événement" />;
+      case 'event':     return <EventPanel />;
       case 'preflight': return <PanelPlaceholder name="Préflight" />;
       case 'questions': return <PanelPlaceholder name="Questions" />;
       case 'videos':    return <PanelPlaceholder name="Vidéos" />;
