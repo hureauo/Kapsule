@@ -2,8 +2,11 @@ import express from 'express';
 import { statfs } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import { config } from './config.js';
+import { openRegistry, getActiveEvent } from './registry.js';
 
 export function createApp(dataDir) {
+  openRegistry(dataDir);
+
   const app = express();
   app.use(express.json());
 
@@ -12,9 +15,8 @@ export function createApp(dataDir) {
       const stats = await statfs(dataDir);
       const free_bytes = stats.bfree * stats.bsize;
       const total_bytes = stats.blocks * stats.bsize;
-
-      // Événement actif : sera enrichi quand registry.js existera (phase 1a.1)
-      res.json({ ok: true, activeEvent: null, disk: { free_bytes, total_bytes } });
+      const activeEvent = getActiveEvent();
+      res.json({ ok: true, activeEvent: activeEvent?.id ?? null, disk: { free_bytes, total_bytes } });
     } catch (err) {
       next(err);
     }
