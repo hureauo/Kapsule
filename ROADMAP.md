@@ -9,8 +9,8 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 - [x] 0.1 `package.json` racine (npm workspaces), `.gitignore`, `.env.example`
 - [x] 0.2 `@kapsule/core` : `constants.js`, `validate.js`, `checksum.js` (stream), `eventDbSchema.js` + `createEventDb()`, `index.js`
 - [x] 0.3 Tests unitaires core : `createEventDb` idempotent + seed 4 questions, `sha256File`, validations
-- [ ] 0.4 Squelette serveur Borne : `index.js`, `config.js`, error handler, `GET /api/health` (statfs + activeEvent)
-- [ ] 0.5 Squelette serveur Hub : idem
+- [x] 0.4 Squelette serveur Borne : `index.js`, `config.js`, error handler, `GET /api/health` (statfs + activeEvent)
+- [x] 0.5 Squelette serveur Hub : idem
 - [ ] 0.6 Dockerfiles, `docker-compose.borne.yml` / `docker-compose.hub.yml`, confs Nginx, `borne-entrypoint.sh`
 - [ ] 🧑 0.7 `docker compose up` sur chaque fichier → `/api/health` répond (vérifiable ici si Docker dispo, sinon humain)
 

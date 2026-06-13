@@ -1,0 +1,20 @@
+{
+  "name": "@kapsule/borne-server",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@kapsule/core": "*",
+    "better-sqlite3": "^9.4.3",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.0.0"
+  }
+}
