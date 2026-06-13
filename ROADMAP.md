@@ -61,7 +61,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 - [x] 2.3 `eventStore.js` (cache LRU ~10 handles + `closeEventDb()`) + tests
 - [x] 2.4 `routes/events.js` (CRUD, transitions draft↔ready, assign, purge RGPD avec `{confirm: name}`) + tests
 - [x] 2.5 `routes/questions.js` + règle de gel d'édition (409 si statut ≥ `live`) + tests
-- [ ] 2.6 Frontend : `LoginPage`, `EventsPage`, `EventDetailPage` (onglet Questions : éditeur + consent_text + idle_timeout + bandeaux gel/« modifs non récupérées »)
+- [x] 2.6 Frontend : `LoginPage`, `EventsPage`, `EventDetailPage` (onglet Questions : éditeur + consent_text + idle_timeout + bandeaux gel/« modifs non récupérées »)
 
 **Terminé quand** : deux comptes ne voient que leurs événements ; questions éditables en ligne.
 

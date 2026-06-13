@@ -6,6 +6,32 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 2.6 — Frontend Hub
+
+### consent_text/idle_timeout : pré-remplissage par défaut, pas par la valeur réelle
+
+**Fichier :** [EventDetailPage.jsx:42-49](apps/hub/web/src/pages/EventDetailPage.jsx#L42)
+
+**Observation :** `consentText` et `idleTimeout` sont initialisés aux `DEFAULTS` au montage, jamais à la valeur stockée dans `event_meta`. Si l'utilisateur ouvre un événement déjà configuré et clique « Sauvegarder » sans rien toucher, il **écrase le texte RGPD personnalisé par le texte par défaut** silencieusement.
+
+**Cause racine :** `GET /api/events/:id` lit uniquement le registre, pas `event_meta` du `db.sqlite` événement. L'exposer nécessite un appel à `openEventDb` dans cette route.
+
+**À ne pas corriger maintenant.** Deux corrections possibles en phase 2.4+ :
+1. Enrichir `GET /api/events/:id` pour lire `event_meta` via `openEventDb`.
+2. N'envoyer dans le `PUT` que les champs effectivement modifiés par l'utilisateur (state dirty).
+
+---
+
+### QuestionEditor : erreurs d'API avalées silencieusement
+
+**Fichier :** [QuestionEditor.jsx:75](apps/hub/web/src/components/QuestionEditor.jsx#L75)
+
+**Observation :** les `catch {}` sur `handleAdd`/`handleEdit`/`onDragEnd` n'affichent rien à l'utilisateur. Un 409 de gel d'édition ou un 403 passera inaperçu.
+
+**À ne pas corriger maintenant.** Ajouter un state `error` et un message visible si le comportement est rapporté.
+
+---
+
 ## Phase 2.5 — routes/questions.js Hub
 
 ### GET questions Hub : questions disabled non testées explicitement

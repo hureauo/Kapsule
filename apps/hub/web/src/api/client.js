@@ -1,0 +1,46 @@
+const TOKEN_KEY = 'hub_token';
+
+export function getToken() { return localStorage.getItem(TOKEN_KEY); }
+export function saveToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+export function isAuthenticated() { return !!getToken(); }
+
+async function apiFetch(path, opts = {}) {
+  const token = getToken();
+  const headers = { ...(opts.headers ?? {}) };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+    opts = { ...opts, body: JSON.stringify(opts.body) };
+  }
+  const res = await fetch(`/api${path}`, { ...opts, headers });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw Object.assign(new Error(data.error ?? `HTTP ${res.status}`), { status: res.status });
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+export const api = {
+  login: (email, password) => apiFetch('/auth/login', { method: 'POST', body: { email, password } }),
+
+  listEvents: () => apiFetch('/events'),
+  createEvent: (name, event_date) => apiFetch('/events', { method: 'POST', body: { name, event_date } }),
+  getEvent: (id) => apiFetch(`/events/${id}`),
+  updateEvent: (id, fields) => apiFetch(`/events/${id}`, { method: 'PUT', body: fields }),
+  setEventStatus: (id, status) => apiFetch(`/events/${id}/status`, { method: 'PUT', body: { status } }),
+  assignBox: (id, box_id) => apiFetch(`/events/${id}/assign`, { method: 'PUT', body: { box_id } }),
+  deleteEvent: (id, confirm) => apiFetch(`/events/${id}`, { method: 'DELETE', body: { confirm } }),
+
+  listQuestions: (eventId) => apiFetch(`/events/${eventId}/questions`),
+  createQuestion: (eventId, q) => apiFetch(`/events/${eventId}/questions`, { method: 'POST', body: q }),
+  updateQuestion: (eventId, id, fields) => apiFetch(`/events/${eventId}/questions/${id}`, { method: 'PUT', body: fields }),
+  deleteQuestion: (eventId, id) => apiFetch(`/events/${eventId}/questions/${id}`, { method: 'DELETE' }),
+  reorderQuestions: (eventId, order) => apiFetch(`/events/${eventId}/questions/reorder/batch`, { method: 'PUT', body: { order } }),
+
+  // URL directe avec ?token= pour téléchargements (invariant §11.2)
+  videoStreamUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/file?token=${getToken()}`,
+  videoDownloadUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/download?token=${getToken()}`,
+  csvExportUrl: (eventId) => `/api/events/${eventId}/videos/export/csv?token=${getToken()}`,
+};
