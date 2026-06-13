@@ -91,6 +91,23 @@ se monter (ex. via un état `answersReady`).
 
 ---
 
+---
+
+## Phase 1d.1 — AdminLogin + AdminLayout
+
+### Simplification possible de `intervalRef` dans `AdminLayout`
+
+**Fichier :** [AdminLayout.jsx:40-41](apps/borne/web/src/components/admin/AdminLayout.jsx#L40)
+
+**Observation :** l'intervalle de polling disque est stocké dans `intervalRef` mais `fetchDisk` est
+mémoïsé (`useCallback` deps vides), donc l'effet ne se re-déclenche pas — correct. On pourrait
+simplifier en supprimant `intervalRef` au profit d'une variable locale capturée par le cleanup,
+sans changement de comportement.
+
+**À ne pas corriger maintenant.** L'état actuel est correct et plus explicite pour la lisibilité.
+
+---
+
 ### `guestVideoUrl` sans cache-buster sur la `<video>` en état `ANSWERED`
 
 **Fichier :** [RecordingScreen.jsx:135](apps/borne/web/src/components/guest/RecordingScreen.jsx#L135)
