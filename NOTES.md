@@ -6,6 +6,28 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 2.1 — registry.js Hub + create-admin
+
+### Mot de passe en clair dans create-admin
+
+**Fichier :** [create-admin.js](apps/hub/server/src/scripts/create-admin.js)
+
+**Observation :** `readline` affiche le mot de passe en clair pendant la saisie (pas de masquage). Conforme à la spec (« prompt email/mdp »), mais un prompt masqué (`process.stdin.setRawMode` ou `process.stdout.write('\x1b[?25l')`) serait plus sûr.
+
+**À ne pas corriger maintenant.** Script utilisé une fois par déploiement, en accès shell direct au conteneur.
+
+---
+
+### `updateEvent` recompute deux fois le filtre des champs
+
+**Fichier :** [registry.js:125-130](apps/hub/server/src/registry.js#L125)
+
+**Observation :** `Object.keys(fields).filter(k => allowed.includes(k))` est évalué deux fois (une pour `updates`, une pour `values`). Sans incidence fonctionnelle — les tests couvrent l'anti-injection et l'ignorance des champs inconnus.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 1c.5 — Reprise après reload / sessionStorage
 
 ### `questionIndex` restauré sans vérification de borne

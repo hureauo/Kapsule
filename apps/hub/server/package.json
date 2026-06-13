@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "create-admin": "node src/scripts/create-admin.js"
   },
   "dependencies": {
     "@kapsule/core": "*",

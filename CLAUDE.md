@@ -21,6 +21,7 @@ Les commandes ci-dessous sont à lancer via `docker compose run` ou des scripts 
 - `docker compose run --rm dev npm test` — tous les tests (runner natif `node:test`)
 - `docker compose run --rm dev npm test -w @kapsule/core` — tests d'un seul workspace
 - `docker compose up dev:borne` / `docker compose up dev:hub` — serveurs en dev
+- `docker compose -f docker-compose.hub.yml run --rm backend npm run create-admin` — crée le premier compte admin Hub (prompt interactif email/mdp)
 
 ## Outils agents (`.claude/`)
 

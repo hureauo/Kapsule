@@ -1,0 +1,159 @@
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  openRegistry, closeRegistry,
+  insertUser, getUserByEmail, getUserById,
+  insertEvent, getEvent, listEvents, updateEvent, deleteEvent,
+  insertBox, listBoxes, getBoxByTokenHash, updateBoxSeen, deleteBox,
+  insertSyncLog,
+} from '../src/registry.js';
+
+let dir;
+let db;
+
+before(() => {
+  dir = mkdtempSync(join(tmpdir(), 'kapsule-hub-reg-'));
+  db = openRegistry(dir);
+});
+
+after(() => {
+  closeRegistry();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+describe('openRegistry', () => {
+  it('est idempotent (second appel retourne le même handle)', () => {
+    const db2 = openRegistry(dir);
+    assert.strictEqual(db, db2);
+  });
+
+  it('crée les tables users, boxes, events, jobs, sync_log', () => {
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
+    assert.ok(tables.includes('users'));
+    assert.ok(tables.includes('boxes'));
+    assert.ok(tables.includes('events'));
+    assert.ok(tables.includes('jobs'));
+    assert.ok(tables.includes('sync_log'));
+  });
+});
+
+describe('users', () => {
+  it('insère et retrouve un user par email', () => {
+    insertUser(db, { email: 'alice@example.com', password_hash: 'hash1', name: 'Alice', role: 'admin' });
+    const user = getUserByEmail(db, 'alice@example.com');
+    assert.equal(user.email, 'alice@example.com');
+    assert.equal(user.role, 'admin');
+    assert.equal(user.name, 'Alice');
+  });
+
+  it('retourne undefined pour un email inconnu', () => {
+    assert.strictEqual(getUserByEmail(db, 'nope@example.com'), undefined);
+  });
+
+  it('retourne undefined pour un id inconnu', () => {
+    assert.strictEqual(getUserById(db, 9999), undefined);
+  });
+
+  it('refuse un email en double (UNIQUE)', () => {
+    assert.throws(() =>
+      insertUser(db, { email: 'alice@example.com', password_hash: 'hash2' })
+    );
+  });
+
+  it('refuse un role invalide (CHECK)', () => {
+    assert.throws(() =>
+      insertUser(db, { email: 'bad@example.com', password_hash: 'h', role: 'superuser' })
+    );
+  });
+});
+
+describe('events', () => {
+  let userId;
+
+  before(() => {
+    userId = getUserByEmail(db, 'alice@example.com').id;
+  });
+
+  it('insère et retrouve un événement', () => {
+    insertEvent(db, { id: 'evt-001', owner_id: userId, name: 'Mariage Alice', event_date: '2026-09-01' });
+    const ev = getEvent(db, 'evt-001');
+    assert.equal(ev.name, 'Mariage Alice');
+    assert.equal(ev.status, 'draft');
+    assert.equal(ev.owner_id, userId);
+  });
+
+  it('listEvents retourne les événements du user', () => {
+    const evs = listEvents(db, { userId, role: 'client' });
+    assert.equal(evs.length, 1);
+    assert.equal(evs[0].id, 'evt-001');
+  });
+
+  it('listEvents admin retourne tous les événements', () => {
+    insertUser(db, { email: 'bob@example.com', password_hash: 'hashbob' });
+    const bob = getUserByEmail(db, 'bob@example.com');
+    insertEvent(db, { id: 'evt-002', owner_id: bob.id, name: 'Anniversaire Bob' });
+
+    const all = listEvents(db, { userId, role: 'admin' });
+    assert.ok(all.length >= 2);
+  });
+
+  it('updateEvent modifie les champs autorisés', () => {
+    updateEvent(db, 'evt-001', { name: 'Mariage Alice & Bob', status: 'ready' });
+    const ev = getEvent(db, 'evt-001');
+    assert.equal(ev.name, 'Mariage Alice & Bob');
+    assert.equal(ev.status, 'ready');
+  });
+
+  it('updateEvent ignore les champs inconnus', () => {
+    updateEvent(db, 'evt-001', { injected: 'DROP TABLE users' });
+    const ev = getEvent(db, 'evt-001');
+    assert.equal(ev.status, 'ready');
+  });
+
+  it('deleteEvent supprime l\'événement', () => {
+    deleteEvent(db, 'evt-002');
+    assert.strictEqual(getEvent(db, 'evt-002'), undefined);
+  });
+});
+
+describe('boxes', () => {
+  it('insère et retrouve une box par token_hash', () => {
+    insertBox(db, { name: 'Borne Salle A', token_hash: 'abc123hash' });
+    const box = getBoxByTokenHash(db, 'abc123hash');
+    assert.equal(box.name, 'Borne Salle A');
+    assert.equal(box.last_seen_at, null);
+  });
+
+  it('listBoxes retourne toutes les boxes', () => {
+    const boxes = listBoxes(db);
+    assert.ok(boxes.length >= 1);
+  });
+
+  it('updateBoxSeen met à jour last_seen_at', () => {
+    const box = getBoxByTokenHash(db, 'abc123hash');
+    updateBoxSeen(db, box.id);
+    const updated = getBoxByTokenHash(db, 'abc123hash');
+    assert.ok(updated.last_seen_at !== null);
+  });
+
+  it('deleteBox supprime la box', () => {
+    const box = getBoxByTokenHash(db, 'abc123hash');
+    deleteBox(db, box.id);
+    assert.strictEqual(getBoxByTokenHash(db, 'abc123hash'), undefined);
+  });
+});
+
+describe('sync_log', () => {
+  it('insère une ligne de log sans erreur', () => {
+    const result = insertSyncLog(db, { event_id: 'evt-001', action: 'pull', detail: { version: 1 } });
+    assert.ok(result.lastInsertRowid > 0);
+  });
+
+  it('insère une ligne sans event_id ni box_id', () => {
+    const result = insertSyncLog(db, { action: 'finalize' });
+    assert.ok(result.lastInsertRowid > 0);
+  });
+});
