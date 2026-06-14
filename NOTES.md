@@ -6,6 +6,30 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 3.5 — autoPull.js (Borne)
+
+### Test "lastPull reste null si le pull échoue" sans vraie assertion
+
+**Fichier :** [sync.autoPull.test.js:211-224](apps/borne/server/test/sync.autoPull.test.js#L211)
+
+**Observation :** le test n'asserte rien sur `getLastPull()` — il fait `assert.doesNotReject(async () => {})` qui est toujours vrai. `_lastPull` étant un état module-level partagé entre suites, la valeur peut être polluée par le test précédent. Le cas erreur n'est pas réellement couvert.
+
+**Alternative à envisager :** exposer un `resetLastPull()` pour les tests, ou exporter `runCycle` et l'`await` directement (supprimerait aussi la dépendance aux `setTimeout(50ms)`).
+
+**À ne pas corriger maintenant.** Le comportement silencieux du pull échoué est bien testé indirectement (le cycle ne plante pas).
+
+---
+
+### Heartbeat : headers `Content-Type` redondants
+
+**Fichier :** [autoPull.js:27](apps/borne/server/src/sync/autoPull.js#L27)
+
+**Observation :** `hubFetch` pose déjà `Content-Type: application/json` si `body` est une string (hubClient.js:27-29). Le `headers` explicite dans `sendHeartbeats` est redondant mais inoffensif.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 3.3 — Hub push endpoints (manifest/files/db/finalize)
 
 ### Nettoyage WAL/SHM avant remplacement de db.sqlite
