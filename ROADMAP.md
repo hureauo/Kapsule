@@ -91,6 +91,37 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 
 **Terminé quand** : après un push, le client voit ses vidéos avec miniatures et télécharge le ZIP ; supprimer l'événement efface tout.
 
+## Phase S — Sécurité (durcissement)
+
+Plan de mitigation issu de l'audit [SECURITY.md](SECURITY.md) (2026-06-14). Ordre par
+priorité décroissante ; chaque case référence le finding correspondant. Mêmes règles que les
+autres phases : un correctif backend n'est terminé que **testé** (cas nominal + cas d'attaque
+bloqué), relu par `kapsule-reviewer`, committé en sous-lot.
+
+### S1 — Path traversal synchro Hub (H1, 🔴)
+- [ ] S1.1 Middleware `validateUuidParams` (regex UUID stricte sur `:id`/`:videoId` → 400) monté **avant** multer dans `routes/sync.js` ; test : `..`/`%2e%2e` rejeté avant toute écriture disque, UUID valide accepté
+
+### S2 — Secrets par défaut refusés au démarrage (M3, 🟠)
+- [ ] S2.1 Hub : refus de booter si `JWT_SECRET` vaut `change-me` ou < N caractères, **hors tests** (garde dans `index.js`/`config.js`) + test
+- [ ] S2.2 Borne : même garde sur `JWT_SECRET` et `ADMIN_PASSWORD` (`admin123`) + test
+- [ ] 🧑 S2.3 Vérifier qu'un déploiement prod sans `.env` correct échoue explicitement (message clair)
+
+### S3 — Limites d'upload + DoS disque Hub (M2, 🟠)
+- [ ] S3.1 `limits: { fileSize, files: 1 }` sur `uploadVideo` et `uploadDbFile` (`routes/sync.js`) + test (413/400 au-delà de la limite)
+
+### S4 — Injection de formule CSV (M1, 🟠)
+- [ ] S4.1 Neutralisation des préfixes `= + - @ \t \r` dans l'échappement CSV (borne `videos.js` ET hub `gallery.js`) + test (prénom `=cmd…` exporté inerte)
+
+### S5 — Durcissements défense en profondeur (L1–L3, 🟡)
+- [ ] S5.1 Épingler `algorithms: ['HS256']` dans tous les `jwt.verify` (hub + borne) + test
+- [ ] S5.2 Login admin Borne : `crypto.timingSafeEqual` + petit rate-limit + refus du défaut `admin123` (couvert par S2.2) + test
+- [ ] S5.3 Error handler : message générique pour les 500 côté client, détail loggé serveur (hub + borne) + test (pas de fuite de chemin/erreur SQL)
+
+> **L4** (JWT en `?token=` dans les logs Nginx) : risque **accepté**, déjà tracé PROJET.md §13.
+> À réévaluer si un token média court (5 min) est introduit — hors périmètre de cette phase.
+
+**Terminé quand** : H1 et M1–M3 corrigés et testés ; le tableau de suivi de SECURITY.md est à jour (statut « Corrigé » + n° de commit).
+
 ## Phase 5 — Évolutions (au fil de l'eau)
 
 Machine de capture dédiée, job `chromakey`, portail invités, mode point d'accès Wi-Fi (hostapd).
