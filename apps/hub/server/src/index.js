@@ -7,6 +7,7 @@ import { makeAuthRouter } from './routes/auth.js';
 import { makeEventsRouter } from './routes/events.js';
 import { makeQuestionsRouter } from './routes/questions.js';
 import { makeAdminRouter } from './routes/admin.js';
+import { makeSyncRouter } from './routes/sync.js';
 
 export function createApp(dataDir) {
   openRegistry(dataDir);
@@ -18,6 +19,7 @@ export function createApp(dataDir) {
   app.use('/api/events', makeEventsRouter(dataDir));
   app.use('/api/events/:eventId/questions', makeQuestionsRouter(dataDir));
   app.use('/api/admin', makeAdminRouter());
+  app.use('/api/sync', makeSyncRouter(dataDir));
 
   app.get('/api/health', async (req, res, next) => {
     try {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { getDb, getBoxByTokenHash, updateBoxSeen, insertSyncLog } from '../registry.js';
+import { getDb, getBoxByTokenHash, updateBoxSeen } from '../registry.js';
 
 export function requireBox(req, res, next) {
   const raw = req.headers['x-box-token'];
@@ -11,8 +11,7 @@ export function requireBox(req, res, next) {
   if (!box) return res.status(401).json({ error: 'Token borne invalide' });
 
   updateBoxSeen(db, box.id);
-  insertSyncLog(db, { box_id: box.id, action: req._syncLogAction ?? 'heartbeat', detail: null });
-
+  // Pas de sync_log ici — chaque route pose son propre log avec l'action précise
   req.box = box;
   next();
 }
