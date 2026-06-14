@@ -85,6 +85,14 @@ export async function pushEvent(eventId, dataDir) {
     );
   }
 
+  // Marquer running immédiatement (synchrone) avant tout await,
+  // pour que GET /sync/status et le 2ème POST /push voient l'état correct dès le lancement.
+  _state.running = true;
+  _state.total = 0;
+  _state.done = 0;
+  _state.currentFile = null;
+
+  try {
   const eventDir = join(dataDir, 'events', eventId);
   const videosDir = join(eventDir, 'videos');
   const dbPath = join(eventDir, 'db.sqlite');
@@ -127,12 +135,9 @@ export async function pushEvent(eventId, dataDir) {
   `);
   for (const v of videos) upsertState.run(eventId, v.id, v.checksum);
 
-  _state.running = true;
   _state.total = missing.length;
-  _state.done = 0;
-  _state.currentFile = null;
 
-  try {
+  {
     for (const videoId of missing) {
       const video = videos.find(v => v.id === videoId);
       if (!video) continue;
@@ -169,6 +174,8 @@ export async function pushEvent(eventId, dataDir) {
     ).run(eventId);
 
     _state.currentFile = null;
+  }
+
   } finally {
     _state.running = false;
   }

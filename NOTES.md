@@ -6,6 +6,30 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 3.7 — routes/sync.js (Borne)
+
+### `online` reflète la présence de hubUrl, pas la connectivité réelle
+
+**Fichier :** [routes/sync.js:17](apps/borne/server/src/routes/sync.js#L17)
+
+**Observation :** `online = !!(cfg.hubUrl)` vaut toujours `true` si un Hub est configuré, même si le réseau est coupé. Le SyncPanel (3.8) affiche « online/offline » — ce champ donnera une information trompeuse si le Hub est temporairement injoignable.
+
+**Alternative :** dériver `online` du résultat du dernier appel réussi (stocker un timestamp dans `autoPull`).
+
+**À ne pas corriger maintenant.** Pour 3.8, documenter que `online` signifie « Hub configuré ». Une vraie détection de connectivité peut être ajoutée si le retour terrain le demande.
+
+---
+
+### push en tâche de fond sans propagation d'erreur vers le client
+
+**Fichier :** [routes/sync.js:53](apps/borne/server/src/routes/sync.js#L53)
+
+**Observation :** `pushEvent(...).catch(() => {})` avale toute erreur silencieusement. Un push qui échoue (401 token révoqué, erreur réseau…) est indistinguable d'un push réussi dans `GET /sync/status`. Le SyncPanel ne peut pas afficher l'erreur token (§11.13).
+
+**À ne pas corriger maintenant.** Pour 3.8 : ajouter un champ `lastError` dans `_state` de `push.js`, populé en cas d'échec, et l'exposer dans `getPushState()`.
+
+---
+
 ## Phase 3.6 — push.js (Borne)
 
 ### uploadFileWithRetry charge tout le fichier en mémoire
