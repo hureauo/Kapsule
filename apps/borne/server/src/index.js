@@ -40,6 +40,10 @@ export function createApp(dataDir, cfg = config) {
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
     const status = err.status ?? err.statusCode ?? 500;
+    if (status >= 500) {
+      console.error(`[borne] ${req.method} ${req.path} →`, err);
+      return res.status(status).json({ error: 'Erreur interne du serveur' });
+    }
     res.status(status).json({ error: err.message ?? 'Erreur interne' });
   });
 

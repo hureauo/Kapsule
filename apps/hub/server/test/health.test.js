@@ -22,10 +22,13 @@ describe('GET /api/health', () => {
     }
   });
 
-  test('retourne 500 si dataDir inexistant', async () => {
+  test('retourne 500 si dataDir inexistant, message générique sans fuite de détail', async () => {
+    // /api/health tente statfs('/tmp/hub-inexistant-xyz-99') → ENOENT avec le chemin interne
     const app = createApp('/tmp/hub-inexistant-xyz-99');
     const res = await request(app).get('/api/health');
     assert.equal(res.status, 500);
-    assert.ok(res.body.error);
+    // Le message générique est renvoyé, pas le chemin système
+    assert.equal(res.body.error, 'Erreur interne du serveur');
+    assert.ok(!res.body.error.includes('/tmp/hub-inexistant'), 'Le chemin interne ne doit pas fuiter');
   });
 });

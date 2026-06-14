@@ -18,7 +18,7 @@ describe('GET /api/health', () => {
 
   afterEach(() => {
     closeRegistry();
-    rmSync(dir, { recursive: true });
+    rmSync(dir, { recursive: true, force: true });
   });
 
   test('retourne 200 avec la structure attendue', async () => {
@@ -38,5 +38,15 @@ describe('GET /api/health', () => {
     const res = await request(app).get('/api/health');
     assert.equal(res.status, 200);
     assert.equal(res.body.activeEvent, 'evt-health-1');
+  });
+
+  test('error handler 500 retourne message générique sans fuite de détail', async () => {
+    // Supprime le dataDir → statfs lève ENOENT, mais le client ne voit que le message générique
+    rmSync(dir, { recursive: true, force: true });
+    const res = await request(app).get('/api/health');
+    assert.equal(res.status, 500);
+    assert.equal(res.body.error, 'Erreur interne du serveur');
+    assert.ok(!res.body.error.includes(dir), 'Le chemin interne ne doit pas fuiter');
+    // afterEach utilise force:true, pas besoin de recréer le dir
   });
 });

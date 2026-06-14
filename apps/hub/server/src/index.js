@@ -43,6 +43,10 @@ export function createApp(dataDir, opts = {}) {
       return res.status(status).json({ error: `Upload refusé : ${err.message}` });
     }
     const status = err.status ?? err.statusCode ?? 500;
+    if (status >= 500) {
+      console.error(`[hub] ${req.method} ${req.path} →`, err);
+      return res.status(status).json({ error: 'Erreur interne du serveur' });
+    }
     res.status(status).json({ error: err.message ?? 'Erreur interne' });
   });
 
