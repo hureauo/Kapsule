@@ -10,7 +10,7 @@ import { makeAdminRouter } from './routes/admin.js';
 import { makeSyncRouter } from './routes/sync.js';
 import { makeGalleryRouter } from './routes/gallery.js';
 
-export function createApp(dataDir) {
+export function createApp(dataDir, opts = {}) {
   openRegistry(dataDir);
 
   const app = express();
@@ -20,7 +20,7 @@ export function createApp(dataDir) {
   app.use('/api/events', makeEventsRouter(dataDir));
   app.use('/api/events/:eventId/questions', makeQuestionsRouter(dataDir));
   app.use('/api/admin', makeAdminRouter(dataDir));
-  app.use('/api/sync', makeSyncRouter(dataDir));
+  app.use('/api/sync', makeSyncRouter(dataDir, opts.sync));
   app.use('/api/events/:eventId', makeGalleryRouter(dataDir));
 
   app.get('/api/health', async (req, res, next) => {
@@ -37,6 +37,11 @@ export function createApp(dataDir) {
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
+    // Erreurs multer (ex. fichier trop volumineux §S3/M2) → statut explicite plutôt que 500
+    if (err.name === 'MulterError') {
+      const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+      return res.status(status).json({ error: `Upload refusé : ${err.message}` });
+    }
     const status = err.status ?? err.statusCode ?? 500;
     res.status(status).json({ error: err.message ?? 'Erreur interne' });
   });

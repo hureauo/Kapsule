@@ -632,3 +632,44 @@ describe('validateUuidParams — rejet des params non-UUID avant tout accès dis
     assert.notEqual(res.status, 400);
   });
 });
+
+// ── Limite de taille d'upload (SECURITY.md M2 / S3.1) ─────────────────────────
+
+describe('limite de taille d\'upload sync (anti-DoS disque)', () => {
+  let smallApp, smallEventId;
+  const MAX = 1024; // 1 Ko : plafond minuscule injecté pour le test
+
+  before(async () => {
+    // Même DATA_DIR / même registre (singleton), mais multer plafonné à 1 Ko
+    smallApp = supertest(createApp(dir, { sync: { maxUploadBytes: MAX } }));
+    smallEventId = await makeClosedEvent(smallApp, tokenClient, tokenAdmin, boxToken, boxId, 'Upload limit test');
+    await smallApp.post(`/api/sync/events/${smallEventId}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({ files: [], db: { size: 0, checksum: 'x' } });
+  });
+
+  it('rejette une vidéo dépassant la limite (413)', async () => {
+    const tooBig = randomBytes(MAX + 512); // > 1 Ko
+    const res = await smallApp.put(`/api/sync/events/${smallEventId}/files/${uuidv4()}`)
+      .set('X-Box-Token', boxToken)
+      .attach('file', tooBig, 'big.mp4');
+    assert.equal(res.status, 413);
+    assert.match(res.body.error, /Upload refusé/);
+  });
+
+  it('rejette un db.sqlite dépassant la limite (413)', async () => {
+    const tooBig = randomBytes(MAX + 512);
+    const res = await smallApp.put(`/api/sync/events/${smallEventId}/db`)
+      .set('X-Box-Token', boxToken)
+      .attach('file', tooBig, 'db.sqlite');
+    assert.equal(res.status, 413);
+  });
+
+  it('accepte un fichier sous la limite', async () => {
+    const ok = randomBytes(256); // < 1 Ko
+    const res = await smallApp.put(`/api/sync/events/${smallEventId}/files/${uuidv4()}`)
+      .set('X-Box-Token', boxToken)
+      .attach('file', ok, 'small.mp4');
+    assert.equal(res.status, 200);
+  });
+});

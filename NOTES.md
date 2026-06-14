@@ -569,6 +569,16 @@ causes que par parsing du message d'erreur.
 
 ---
 
+## Phase S — S3 : err?.name vs err.name dans le handler MulterError
+
+**Fichier :** [index.js:41](apps/hub/server/src/index.js#L41)
+
+**Observation :** `err.name === 'MulterError'` suppose `err` non-nul/objet. Un rejet non-objet ferait planter le handler avant le fallback. En pratique Express n'invoque ce handler qu'avec une vraie erreur, donc risque théorique ; `err?.name` serait marginalement plus robuste.
+
+**À ne pas corriger maintenant.** Express garantit que `err` est l'argument passé à `next(err)`, toujours un objet dans les routes actuelles.
+
+---
+
 ## Phase S — S1 : regex UUID v4 stricte vs permissive
 
 **Fichier :** [validateParams.js:9](apps/hub/server/src/middleware/validateParams.js#L9)

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, renameSync, writeFileSync, readFileSync, readdir
 import { join, extname } from 'node:path';
 import multer from 'multer';
 import { sha256File } from '@kapsule/core/src/checksum.js';
+import { LIMITS } from '@kapsule/core';
 import { getDb, getEvent, updateEvent, insertSyncLog } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { requireBox } from '../middleware/boxAuth.js';
@@ -35,11 +36,15 @@ async function videoAlreadyReceived(videosDir, videoId, expectedChecksum) {
   return actual === expectedChecksum;
 }
 
-export function makeSyncRouter(dataDir) {
+export function makeSyncRouter(dataDir, opts = {}) {
+  // maxUploadBytes surchargeable pour les tests (défaut = plafond de production)
+  const maxUploadBytes = opts.maxUploadBytes ?? LIMITS.VIDEO_MAX_BYTES;
   const router = Router();
   router.use(requireBox);
 
   // multer pour les fichiers vidéo (un fichier par requête PUT /files/:videoId)
+  // limits (§S3/M2) : borne le débit d'une borne malveillante pour éviter de saturer le
+  // disque du VPS (données mutualisées). Même plafond que l'upload Borne (LIMITS.VIDEO_MAX_BYTES).
   const uploadVideo = multer({
     storage: multer.diskStorage({
       destination(req, file, cb) {
@@ -52,6 +57,7 @@ export function makeSyncRouter(dataDir) {
         cb(null, `${req.params.videoId}${ext}`);
       },
     }),
+    limits: { fileSize: maxUploadBytes, files: 1 },
   });
 
   // multer pour le db.sqlite (reçu en tant que fichier temporaire)
@@ -64,6 +70,7 @@ export function makeSyncRouter(dataDir) {
         cb(null, 'db.sqlite.incoming');
       },
     }),
+    limits: { fileSize: maxUploadBytes, files: 1 },
   });
 
   // ── GET /api/sync/assigned ────────────────────────────────────────────────
