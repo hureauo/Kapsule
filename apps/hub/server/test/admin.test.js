@@ -158,3 +158,56 @@ describe('boxAuth — middleware', () => {
     assert.equal(box.name, 'Borne boxAuth test');
   });
 });
+
+// ── GET /api/admin/overview ───────────────────────────────────────────────────
+
+describe('GET /api/admin/overview', () => {
+  it('retourne 401 sans token', async () => {
+    const res = await request.get('/api/admin/overview');
+    assert.equal(res.status, 401);
+  });
+
+  it('retourne 403 pour un client', async () => {
+    const res = await request.get('/api/admin/overview')
+      .set('Authorization', `Bearer ${tokenClient}`);
+    assert.equal(res.status, 403);
+  });
+
+  it('retourne 200 avec events, disk, failed_jobs, boxes (admin)', async () => {
+    const db = getDb();
+
+    // Ajoute un job failed pour vérifier le champ
+    db.prepare(`
+      INSERT INTO jobs (event_id, type, status, error, finished_at)
+      VALUES ('ev-overview', 'probe', 'failed', 'test error', CURRENT_TIMESTAMP)
+    `).run();
+
+    const res = await request.get('/api/admin/overview')
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+
+    assert.equal(res.status, 200);
+
+    // Structure attendue
+    assert.ok(Array.isArray(res.body.events), 'events doit être un tableau');
+    assert.ok(typeof res.body.disk?.free_bytes === 'number', 'disk.free_bytes doit être un nombre');
+    assert.ok(typeof res.body.disk?.total_bytes === 'number', 'disk.total_bytes doit être un nombre');
+    assert.ok(Array.isArray(res.body.failed_jobs), 'failed_jobs doit être un tableau');
+    assert.ok(Array.isArray(res.body.boxes), 'boxes doit être un tableau');
+
+    // Le job failed apparaît
+    const failed = res.body.failed_jobs.find((j) => j.error === 'test error');
+    assert.ok(failed, 'le job failed doit apparaître dans overview');
+    assert.equal(failed.type, 'probe');
+
+    // Les bornes ont last_seen_at
+    assert.ok(res.body.boxes.length >= 1, 'au moins une borne en base');
+    assert.ok('last_seen_at' in res.body.boxes[0]);
+
+    // Les events ont disk_bytes
+    // (pas d'événement créé dans ce test, mais la structure est vérifiée)
+    for (const ev of res.body.events) {
+      assert.ok(typeof ev.disk_bytes === 'number', 'disk_bytes doit être un nombre');
+      assert.ok(!('token_hash' in ev), 'token_hash ne doit pas fuiter');
+    }
+  });
+});

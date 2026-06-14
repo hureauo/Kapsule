@@ -19,7 +19,7 @@ export function createApp(dataDir) {
   app.use('/api/auth', makeAuthRouter());
   app.use('/api/events', makeEventsRouter(dataDir));
   app.use('/api/events/:eventId/questions', makeQuestionsRouter(dataDir));
-  app.use('/api/admin', makeAdminRouter());
+  app.use('/api/admin', makeAdminRouter(dataDir));
   app.use('/api/sync', makeSyncRouter(dataDir));
   app.use('/api/events/:eventId', makeGalleryRouter(dataDir));
 
