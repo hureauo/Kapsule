@@ -6,6 +6,38 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 3.9 — Tests d'intégration du protocole
+
+### Heartbeat `closed` envoyé par `push.js` peut sauter la phase `live` sur le Hub
+
+**Fichier :** [push.js:126-129](apps/borne/server/src/sync/push.js#L126)
+
+**Observation :** avant d'envoyer le manifest, `pushEvent` envoie un heartbeat `POST /status {closed}` best-effort. Si la Borne est restée offline pendant l'événement (pas de heartbeat `live`), le Hub verra l'event passer directement de `loaded` à `closed`. La transition est autorisée par `statusRank` (loaded=2 → closed=4), mais le bandeau Hub "événement en cours" ne se sera jamais affiché. PROJET.md ne l'interdit pas.
+
+**À ne pas corriger maintenant.**
+
+---
+
+### `.catch(() => {})` sur le heartbeat avale les 401
+
+**Fichier :** [push.js:130](apps/borne/server/src/sync/push.js#L130)
+
+**Observation :** si le token borne est révoqué, le heartbeat retourne 401 mais l'erreur est silencieuse. Le manifest suivant lèvera aussi une 401 et sera capturé par le `catch` global avec le message « Token borne révoqué ». L'erreur n'est donc pas perdue — simplement diagnostiquée au prochain appel. Un commentaire dans le code le préciserait.
+
+**À ne pas corriger maintenant.**
+
+---
+
+### Patch global de `setTimeout` dans le test de coupure
+
+**Fichier :** [integration.sync.test.js:373](apps/hub/server/test/integration.sync.test.js#L373)
+
+**Observation :** `globalThis.setTimeout = (fn) => { fn(); return 0; }` est restauré ligne 393 mais reste global pendant la coupure. Si `node:test` parallélise des suites un jour (aujourd'hui elles sont séquentielles car elles partagent `eventId`), ce patch pourrait perturber d'autres tests.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 3.8 — SyncPanel Borne + onglet Synchro Hub
 
 ### `online` signifie « Hub configuré » et non « Hub joignable »

@@ -121,6 +121,13 @@ export async function pushEvent(eventId, dataDir) {
     db: { size: dbSize, checksum: dbChecksum },
   };
 
+  // Signale au Hub que l'événement est clôturé (best effort — ignore si déjà closed/pushed).
+  // Nécessaire pour que le Hub accepte le manifest (qui exige status closed ou pushed).
+  await hubFetchJson(`/api/sync/events/${eventId}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status: 'closed' }),
+  }).catch(() => { /* best effort */ });
+
   const { missing } = await hubFetchJson(`/api/sync/events/${eventId}/manifest`, {
     method: 'POST',
     body: JSON.stringify(manifest),
