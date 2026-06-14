@@ -101,20 +101,20 @@ bloqué), relu par `kapsule-reviewer`, committé en sous-lot.
 ### S1 — Path traversal synchro Hub (H1, 🔴)
 - [x] S1.1 Middleware `validateUuidParams` (regex UUID stricte sur `:id`/`:videoId` → 400) monté **avant** multer dans `routes/sync.js` ; test : `..`/`%2e%2e` rejeté avant toute écriture disque, UUID valide accepté
 
-### S2 — Secrets par défaut refusés au démarrage (M3, 🟠)
+### S2 — Secrets par défaut refusés au démarrage (M3, 🟠) — ⏸ REPORTÉ EN FIN DE PROJET
+> Décision : non prioritaire (durcissement de déploiement). À reprendre à la toute fin.
 - [ ] S2.1 Hub : refus de booter si `JWT_SECRET` vaut `change-me` ou < N caractères, **hors tests** (garde dans `index.js`/`config.js`) + test
 - [ ] S2.2 Borne : même garde sur `JWT_SECRET` et `ADMIN_PASSWORD` (`admin123`) + test
 - [ ] 🧑 S2.3 Vérifier qu'un déploiement prod sans `.env` correct échoue explicitement (message clair)
 
 ### S3 — Limites d'upload + DoS disque Hub (M2, 🟠)
-- [ ] S3.1 `limits: { fileSize, files: 1 }` sur `uploadVideo` et `uploadDbFile` (`routes/sync.js`) + test (413/400 au-delà de la limite)
+- [x] S3.1 `limits: { fileSize, files: 1 }` sur `uploadVideo` et `uploadDbFile` (`routes/sync.js`) + test (413/400 au-delà de la limite)
 
 ### S4 — Injection de formule CSV (M1, 🟠)
 - [ ] S4.1 Neutralisation des préfixes `= + - @ \t \r` dans l'échappement CSV (borne `videos.js` ET hub `gallery.js`) + test (prénom `=cmd…` exporté inerte)
 
 ### S5 — Durcissements défense en profondeur (L1–L3, 🟡)
 - [ ] S5.1 Épingler `algorithms: ['HS256']` dans tous les `jwt.verify` (hub + borne) + test
-- [ ] S5.2 Login admin Borne : `crypto.timingSafeEqual` + petit rate-limit + refus du défaut `admin123` (couvert par S2.2) + test
 - [ ] S5.3 Error handler : message générique pour les 500 côté client, détail loggé serveur (hub + borne) + test (pas de fuite de chemin/erreur SQL)
 
 > **L4** (JWT en `?token=` dans les logs Nginx) : risque **accepté**, déjà tracé PROJET.md §13.

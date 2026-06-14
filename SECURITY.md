@@ -176,8 +176,8 @@ Mitigation possible : token média court (5 min) ou `log_format` sans query stri
 |---|---|---|---|
 | H1 | 🔴 Élevé | ✅ Corrigé | S1.1 — `validateUuidParams` avant multer (`middleware/validateParams.js`) |
 | M1 | 🟠 Moyen | À corriger | |
-| M2 | 🟠 Moyen | À corriger | |
-| M3 | 🟠 Moyen | À corriger | |
+| M2 | 🟠 Moyen | ✅ Corrigé | S3.1 — `limits: { fileSize, files: 1 }` sur les deux multer + MulterError → 413 (`3c5047a`) |
+| M3 | 🟠 Moyen | ⏸ Reporté | À traiter en fin de projet (durcissement déploiement, non prioritaire) |
 | L1 | 🟡 Faible | À corriger | |
 | L2 | 🟡 Faible | À corriger | Atténué (LAN offline) |
 | L3 | 🟡 Faible | À corriger | |
