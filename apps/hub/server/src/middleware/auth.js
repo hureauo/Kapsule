@@ -13,7 +13,7 @@ export function requireUser(req, res, next) {
   const token = extractToken(req);
   if (!token) return res.status(401).json({ error: 'Token manquant' });
   try {
-    req.user = jwt.verify(token, config.jwtSecret);
+    req.user = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
     next();
   } catch {
     res.status(401).json({ error: 'Token invalide ou expiré' });

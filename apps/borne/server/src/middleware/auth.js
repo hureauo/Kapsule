@@ -28,7 +28,7 @@ export function requireAdmin(config) {
       return res.status(401).json({ error: 'Token manquant' });
     }
     try {
-      const payload = jwt.verify(token, config.jwtSecret);
+      const payload = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
       if (payload.role !== 'admin') {
         return res.status(403).json({ error: 'Accès refusé' });
       }

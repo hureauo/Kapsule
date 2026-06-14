@@ -108,6 +108,17 @@ describe('requireAdmin middleware', () => {
     assert.equal(res.status, 401);
   });
 
+  test('retourne 401 pour un token alg:none (§S5.1/L1)', async () => {
+    // Forge un JWT avec alg:none pour tester que l'épinglage algorithms rejet bien ce cas
+    const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ role: 'admin', iat: Math.floor(Date.now() / 1000) })).toString('base64url');
+    const noneToken = `${header}.${payload}.`;
+    const res = await request(app)
+      .get('/api/admin/ping')
+      .set('Authorization', `Bearer ${noneToken}`);
+    assert.equal(res.status, 401);
+  });
+
   test('retourne 403 si le rôle n\'est pas admin', async () => {
     const token = makeToken({ role: 'user' });
     const res = await request(app)

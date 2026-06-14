@@ -120,6 +120,15 @@ describe('requireUser (via GET /api/events)', () => {
     assert.equal(res.status, 401);
   });
 
+  it('retourne 401 pour un token alg:none (§S5.1/L1)', async () => {
+    const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ sub: 1, role: 'client', iat: Math.floor(Date.now() / 1000) })).toString('base64url');
+    const noneToken = `${header}.${payload}.`;
+    const res = await request.get('/api/events')
+      .set('Authorization', `Bearer ${noneToken}`);
+    assert.equal(res.status, 401);
+  });
+
   it('accepte le token en header Authorization et retourne 200', async () => {
     const res = await request.get('/api/events')
       .set('Authorization', `Bearer ${tokenAlice}`);
