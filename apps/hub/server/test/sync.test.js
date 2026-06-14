@@ -1,16 +1,16 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import supertest from 'supertest';
 import argon2 from 'argon2';
 import { createApp } from '../src/index.js';
 import {
   getDb, closeRegistry, insertUser, insertBox, getBoxByTokenHash, getEvent,
 } from '../src/registry.js';
-import { closeAllEventDbs } from '../src/eventStore.js';
+import { closeAllEventDbs, openEventDb, cacheSize } from '../src/eventStore.js';
 
 let dir, request;
 let tokenAdmin, tokenClient;
@@ -299,5 +299,289 @@ describe('POST /api/sync/events/:id/status (heartbeat)', () => {
     const rows = db.prepare('SELECT * FROM sync_log WHERE event_id = ? ORDER BY id DESC').all(ev5.body.id);
     assert.ok(rows.length > countBefore, 'une ligne sync_log doit être insérée');
     assert.equal(rows[0].action, 'status', 'l\'action doit être "status", pas "heartbeat"');
+  });
+});
+
+// ── Helpers pour les tests push ───────────────────────────────────────────────
+
+// Prépare un événement en état 'closed' assigné à la borne (via heartbeat)
+async function makeClosedEvent(req, tokenClient, tokenAdmin, boxToken, boxId, name) {
+  const ev = await req.post('/api/events')
+    .set('Authorization', `Bearer ${tokenClient}`)
+    .send({ name });
+  const id = ev.body.id;
+  await req.put(`/api/events/${id}/status`).set('Authorization', `Bearer ${tokenClient}`).send({ status: 'ready' });
+  await req.put(`/api/events/${id}/assign`).set('Authorization', `Bearer ${tokenAdmin}`).send({ box_id: boxId });
+  await req.get(`/api/sync/events/${id}/bundle`).set('X-Box-Token', boxToken);  // loaded
+  await req.post(`/api/sync/events/${id}/status`).set('X-Box-Token', boxToken).send({ status: 'live' });
+  await req.post(`/api/sync/events/${id}/status`).set('X-Box-Token', boxToken).send({ status: 'closed' });
+  return id;
+}
+
+// ── POST /api/sync/events/:id/manifest ──────────────────────────────────────
+
+describe('POST /api/sync/events/:id/manifest', () => {
+  let manifestEventId;
+
+  before(async () => {
+    manifestEventId = await makeClosedEvent(request, tokenClient, tokenAdmin, boxToken, boxId, 'Push manifest test');
+  });
+
+  it('retourne { missing: [] } si aucun fichier annoncé', async () => {
+    const res = await request.post(`/api/sync/events/${manifestEventId}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({ files: [], db: { size: 1000, checksum: 'abc' } });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.missing, []);
+  });
+
+  it('retourne les video_id manquants', async () => {
+    const res = await request.post(`/api/sync/events/${manifestEventId}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({
+        files: [
+          { video_id: 'vid-001', filename: 'vid-001.mp4', size: 100, checksum: 'aaa' },
+          { video_id: 'vid-002', filename: 'vid-002.mp4', size: 200, checksum: 'bbb' },
+        ],
+        db: { size: 1000, checksum: 'ccc' },
+      });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.missing.sort(), ['vid-001', 'vid-002']);
+  });
+
+  it('ne retourne pas un fichier déjà présent avec le bon checksum', async () => {
+    // Créer un fichier vidéo factice avec un checksum connu
+    const content = randomBytes(32);
+    const hash = createHash('sha256').update(content).digest('hex');
+    const videosDir = join(dir, 'events', manifestEventId, 'videos');
+    mkdirSync(videosDir, { recursive: true });
+    writeFileSync(join(videosDir, 'vid-existing.mp4'), content);
+
+    const res = await request.post(`/api/sync/events/${manifestEventId}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({
+        files: [
+          { video_id: 'vid-existing', filename: 'vid-existing.mp4', size: content.length, checksum: hash },
+          { video_id: 'vid-missing', filename: 'vid-missing.mp4', size: 100, checksum: 'xxx' },
+        ],
+        db: { size: 100, checksum: 'yyy' },
+      });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.missing, ['vid-missing']);
+  });
+
+  it('retourne 409 si statut n\'est pas closed/pushed', async () => {
+    // Utilise un événement en statut 'loaded'
+    const evLoaded = await request.post('/api/events')
+      .set('Authorization', `Bearer ${tokenClient}`)
+      .send({ name: 'Loaded event' });
+    await request.put(`/api/events/${evLoaded.body.id}/status`)
+      .set('Authorization', `Bearer ${tokenClient}`).send({ status: 'ready' });
+    await request.put(`/api/events/${evLoaded.body.id}/assign`)
+      .set('Authorization', `Bearer ${tokenAdmin}`).send({ box_id: boxId });
+    await request.get(`/api/sync/events/${evLoaded.body.id}/bundle`).set('X-Box-Token', boxToken);
+
+    const res = await request.post(`/api/sync/events/${evLoaded.body.id}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({ files: [], db: { size: 0, checksum: 'x' } });
+    assert.equal(res.status, 409);
+  });
+
+  it('retourne 400 si body invalide', async () => {
+    const res = await request.post(`/api/sync/events/${manifestEventId}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({ files: [] }); // db manquant
+    assert.equal(res.status, 400);
+  });
+});
+
+// ── PUT /api/sync/events/:id/files/:videoId ──────────────────────────────────
+
+describe('PUT /api/sync/events/:id/files/:videoId', () => {
+  let uploadEventId;
+
+  before(async () => {
+    uploadEventId = await makeClosedEvent(request, tokenClient, tokenAdmin, boxToken, boxId, 'Upload vidéo test');
+    // Prépare le manifest
+    await request.post(`/api/sync/events/${uploadEventId}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({ files: [], db: { size: 0, checksum: 'x' } });
+  });
+
+  it('accepte un fichier vidéo et retourne son checksum', async () => {
+    const content = randomBytes(64);
+    const res = await request.put(`/api/sync/events/${uploadEventId}/files/vid-upload-1`)
+      .set('X-Box-Token', boxToken)
+      .attach('file', content, 'vid-upload-1.mp4');
+    assert.equal(res.status, 200);
+    assert.ok(res.body.ok);
+    assert.equal(res.body.video_id, 'vid-upload-1');
+    assert.ok(res.body.checksum, 'checksum doit être présent');
+  });
+
+  it('retourne 422 si checksum mismatch', async () => {
+    // Prépare un manifest avec un mauvais checksum
+    const wrongChecksum = 'a'.repeat(64);
+    const evMismatch = await makeClosedEvent(request, tokenClient, tokenAdmin, boxToken, boxId, 'Checksum mismatch');
+    await request.post(`/api/sync/events/${evMismatch}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({ files: [{ video_id: 'bad-vid', filename: 'bad-vid.mp4', size: 10, checksum: wrongChecksum }], db: { size: 0, checksum: 'x' } });
+
+    const content = randomBytes(64);
+    const res = await request.put(`/api/sync/events/${evMismatch}/files/bad-vid`)
+      .set('X-Box-Token', boxToken)
+      .attach('file', content, 'bad-vid.mp4');
+    assert.equal(res.status, 422);
+  });
+
+  it('retourne 400 si aucun fichier joint', async () => {
+    const res = await request.put(`/api/sync/events/${uploadEventId}/files/vid-nofile`)
+      .set('X-Box-Token', boxToken);
+    assert.equal(res.status, 400);
+  });
+});
+
+// ── PUT /api/sync/events/:id/db ──────────────────────────────────────────────
+
+describe('PUT /api/sync/events/:id/db', () => {
+  let dbUploadEventId;
+
+  before(async () => {
+    dbUploadEventId = await makeClosedEvent(request, tokenClient, tokenAdmin, boxToken, boxId, 'Upload db test');
+  });
+
+  it('écrase db.sqlite et ferme le handle LRU (§11.11)', async () => {
+    // Force l'ouverture du handle eventDb AVANT le PUT pour s'assurer qu'il est en cache
+    openEventDb(dbUploadEventId, dir);
+    const sizeBefore = cacheSize();
+    assert.ok(sizeBefore >= 1, 'le handle doit être en cache avant le PUT');
+
+    // Crée un mini db.sqlite factice (contenu quelconque — pas un vrai SQLite)
+    const content = randomBytes(64);
+    const hash = createHash('sha256').update(content).digest('hex');
+
+    // Enregistre le manifest avec le bon checksum db
+    await request.post(`/api/sync/events/${dbUploadEventId}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({ files: [], db: { size: content.length, checksum: hash } });
+
+    const res = await request.put(`/api/sync/events/${dbUploadEventId}/db`)
+      .set('X-Box-Token', boxToken)
+      .attach('file', content, 'db.sqlite');
+    assert.equal(res.status, 200);
+    assert.ok(res.body.ok);
+    assert.equal(res.body.checksum, hash);
+
+    // §11.11 : le handle doit avoir été retiré du cache
+    assert.equal(cacheSize(), sizeBefore - 1, 'closeEventDb doit avoir retiré le handle du cache');
+
+    // Le fichier doit exister sur le disque
+    const dbPath = join(dir, 'events', dbUploadEventId, 'db.sqlite');
+    assert.ok(existsSync(dbPath), 'db.sqlite doit exister après PUT /db');
+  });
+
+  it('retourne 422 si checksum db mismatch', async () => {
+    const evDbMismatch = await makeClosedEvent(request, tokenClient, tokenAdmin, boxToken, boxId, 'DB mismatch');
+    const wrongHash = 'b'.repeat(64);
+    await request.post(`/api/sync/events/${evDbMismatch}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({ files: [], db: { size: 10, checksum: wrongHash } });
+
+    const content = randomBytes(64);
+    const res = await request.put(`/api/sync/events/${evDbMismatch}/db`)
+      .set('X-Box-Token', boxToken)
+      .attach('file', content, 'db.sqlite');
+    assert.equal(res.status, 422);
+  });
+});
+
+// ── POST /api/sync/events/:id/finalize ───────────────────────────────────────
+
+describe('POST /api/sync/events/:id/finalize', () => {
+  let finalizeEventId;
+
+  before(async () => {
+    finalizeEventId = await makeClosedEvent(request, tokenClient, tokenAdmin, boxToken, boxId, 'Finalize test');
+
+    // Upload 2 vidéos fictives + db.sqlite
+    const vid1 = randomBytes(32);
+    const vid2 = randomBytes(32);
+    const dbContent = randomBytes(32);
+    const h1 = createHash('sha256').update(vid1).digest('hex');
+    const h2 = createHash('sha256').update(vid2).digest('hex');
+    const hdb = createHash('sha256').update(dbContent).digest('hex');
+
+    // Manifest
+    await request.post(`/api/sync/events/${finalizeEventId}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({
+        files: [
+          { video_id: 'f-vid1', filename: 'f-vid1.mp4', size: vid1.length, checksum: h1 },
+          { video_id: 'f-vid2', filename: 'f-vid2.mp4', size: vid2.length, checksum: h2 },
+        ],
+        db: { size: dbContent.length, checksum: hdb },
+      });
+
+    // Uploads vidéos
+    await request.put(`/api/sync/events/${finalizeEventId}/files/f-vid1`)
+      .set('X-Box-Token', boxToken).attach('file', vid1, 'f-vid1.mp4');
+    await request.put(`/api/sync/events/${finalizeEventId}/files/f-vid2`)
+      .set('X-Box-Token', boxToken).attach('file', vid2, 'f-vid2.mp4');
+
+    // Upload db
+    await request.put(`/api/sync/events/${finalizeEventId}/db`)
+      .set('X-Box-Token', boxToken).attach('file', dbContent, 'db.sqlite');
+  });
+
+  it('passe l\'événement en pushed et enfile les jobs', async () => {
+    const res = await request.post(`/api/sync/events/${finalizeEventId}/finalize`)
+      .set('X-Box-Token', boxToken);
+    assert.equal(res.status, 200);
+    assert.ok(res.body.ok);
+    assert.equal(res.body.jobs, 5, '2 probe + 2 thumbnail + 1 archive = 5 jobs');
+
+    const db = getDb();
+    const event = getEvent(db, finalizeEventId);
+    assert.equal(event.status, 'pushed');
+    assert.ok(event.pushed_at);
+
+    const jobs = db.prepare('SELECT * FROM jobs WHERE event_id = ?').all(finalizeEventId);
+    assert.equal(jobs.length, 5);
+    const types = jobs.map(j => j.type).sort();
+    assert.deepEqual(types, ['archive', 'probe', 'probe', 'thumbnail', 'thumbnail']);
+  });
+
+  it('retourne 409 si des fichiers sont encore manquants', async () => {
+    const evPartial = await makeClosedEvent(request, tokenClient, tokenAdmin, boxToken, boxId, 'Partial push');
+    await request.post(`/api/sync/events/${evPartial}/manifest`)
+      .set('X-Box-Token', boxToken)
+      .send({ files: [{ video_id: 'missing-vid', filename: 'missing.mp4', size: 10, checksum: 'z'.repeat(64) }], db: { size: 0, checksum: 'z'.repeat(64) } });
+    // Ne fait pas les uploads
+
+    const res = await request.post(`/api/sync/events/${evPartial}/finalize`)
+      .set('X-Box-Token', boxToken);
+    assert.equal(res.status, 409);
+    assert.ok(res.body.missing || res.body.error);
+  });
+
+  it('retourne 409 si manifest absent', async () => {
+    const evNoManifest = await makeClosedEvent(request, tokenClient, tokenAdmin, boxToken, boxId, 'No manifest');
+    const res = await request.post(`/api/sync/events/${evNoManifest}/finalize`)
+      .set('X-Box-Token', boxToken);
+    assert.equal(res.status, 409);
+  });
+
+  it('est idempotent : pushed→pushed ne ré-insère pas les jobs', async () => {
+    const db = getDb();
+    const jobsBefore = db.prepare('SELECT COUNT(*) as n FROM jobs WHERE event_id = ?').get(finalizeEventId).n;
+
+    const res = await request.post(`/api/sync/events/${finalizeEventId}/finalize`)
+      .set('X-Box-Token', boxToken);
+    assert.equal(res.status, 200);
+    assert.ok(res.body.ok);
+    assert.ok(res.body.alreadyPushed, 'doit indiquer alreadyPushed=true');
+
+    const jobsAfter = db.prepare('SELECT COUNT(*) as n FROM jobs WHERE event_id = ?').get(finalizeEventId).n;
+    assert.equal(jobsAfter, jobsBefore, 'aucun job supplémentaire ne doit être inséré');
   });
 });

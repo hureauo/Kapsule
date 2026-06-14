@@ -6,6 +6,18 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 3.3 — Hub push endpoints (manifest/files/db/finalize)
+
+### Nettoyage WAL/SHM avant remplacement de db.sqlite
+
+**Fichier :** [sync.js](apps/hub/server/src/routes/sync.js) — PUT /db
+
+**Observation :** après `closeEventDb`, un `db.sqlite-wal` ou `db.sqlite-shm` résiduel (laissé par un crash antérieur) pourrait être rejoué par SQLite par-dessus la nouvelle base au prochain `openEventDb`. La correction appliquée : `unlink` best-effort de `dest + '-wal'` et `dest + '-shm'` avant `renameSync`.
+
+**Résolu en 3.3.**
+
+---
+
 ## Phase 3.1 — boxAuth.js + routes/admin.js Hub
 
 ### boxAuth : branches critiques non couvertes par les tests en 3.1
