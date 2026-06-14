@@ -52,6 +52,14 @@ describe('POST /api/admin/login', () => {
       .send({});
     assert.equal(res.status, 401);
   });
+
+  test('retourne 401 pour un mot de passe de longueur différente (§S5.2/L2)', async () => {
+    // timingSafeEqual lève si longueurs différentes — safeCompare doit gérer ce cas
+    const res = await request(app)
+      .post('/api/admin/login')
+      .send({ password: 'motdepasse-test-beaucoup-plus-long' });
+    assert.equal(res.status, 401);
+  });
 });
 
 describe('requireAdmin middleware', () => {

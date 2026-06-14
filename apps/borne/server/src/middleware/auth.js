@@ -1,10 +1,19 @@
 import jwt from 'jsonwebtoken';
+import { timingSafeEqual } from 'node:crypto';
+
+// Comparaison à temps constant pour résister aux attaques par timing (§S5.2/L2)
+function safeCompare(a, b) {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
 
 export function makeAuthRouter(config) {
   return async function loginHandler(req, res, next) {
     try {
       const { password } = req.body;
-      if (!password || password !== config.adminPassword) {
+      if (!password || !safeCompare(password, config.adminPassword)) {
         return res.status(401).json({ error: 'Mot de passe incorrect' });
       }
       const token = jwt.sign({ role: 'admin' }, config.jwtSecret, { expiresIn: '24h' });

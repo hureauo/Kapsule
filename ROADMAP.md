@@ -114,7 +114,8 @@ bloqué), relu par `kapsule-reviewer`, committé en sous-lot.
 - [x] S4.1 Neutralisation des préfixes `= + - @ \t \r` dans l'échappement CSV (borne `videos.js` ET hub `gallery.js`) + test (prénom `=cmd…` exporté inerte)
 
 ### S5 — Durcissements défense en profondeur (L1–L3, 🟡)
-- [ ] S5.1 Épingler `algorithms: ['HS256']` dans tous les `jwt.verify` (hub + borne) + test
+- [x] S5.1 Épingler `algorithms: ['HS256']` dans tous les `jwt.verify` (hub + borne) + test
+- [x] S5.2 Login admin Borne : `crypto.timingSafeEqual` au lieu de `!==` sur le mot de passe + test
 - [ ] S5.3 Error handler : message générique pour les 500 côté client, détail loggé serveur (hub + borne) + test (pas de fuite de chemin/erreur SQL)
 
 > **L4** (JWT en `?token=` dans les logs Nginx) : risque **accepté**, déjà tracé PROJET.md §13.
