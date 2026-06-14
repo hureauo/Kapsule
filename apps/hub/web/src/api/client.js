@@ -39,6 +39,8 @@ export const api = {
   deleteQuestion: (eventId, id) => apiFetch(`/events/${eventId}/questions/${id}`, { method: 'DELETE' }),
   reorderQuestions: (eventId, order) => apiFetch(`/events/${eventId}/questions/reorder/batch`, { method: 'PUT', body: { order } }),
 
+  getSyncInfo: (eventId) => apiFetch(`/events/${eventId}/sync`),
+
   // URL directe avec ?token= pour téléchargements (invariant §11.2)
   videoStreamUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/file?token=${getToken()}`,
   videoDownloadUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/download?token=${getToken()}`,

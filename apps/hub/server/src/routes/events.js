@@ -119,6 +119,41 @@ export function makeEventsRouter(dataDir) {
     }
   });
 
+  // ── GET /api/events/:eventId/sync — données synchro (jobs + sync_log) ──────
+  router.get('/:eventId/sync', requireUser, requireOwner, (req, res) => {
+    const db = getDb();
+    const event = req.event;
+
+    const jobs = db.prepare(
+      'SELECT * FROM jobs WHERE event_id = ? ORDER BY created_at ASC'
+    ).all(event.id);
+
+    const logs = db.prepare(
+      'SELECT sl.*, b.name as box_name FROM sync_log sl LEFT JOIN boxes b ON b.id = sl.box_id WHERE sl.event_id = ? ORDER BY sl.created_at DESC LIMIT 20'
+    ).all(event.id);
+
+    const box = event.box_id
+      ? db.prepare('SELECT id, name, last_seen_at FROM boxes WHERE id = ?').get(event.box_id)
+      : null;
+
+    const jobsDone = jobs.filter(j => j.status === 'done').length;
+    const jobsFailed = jobs.filter(j => j.status === 'failed').length;
+
+    res.json({
+      event: {
+        id: event.id,
+        status: event.status,
+        pulled_at: event.pulled_at,
+        pushed_at: event.pushed_at,
+        processed_at: event.processed_at,
+        purged_at: event.purged_at,
+      },
+      box,
+      jobs: { total: jobs.length, done: jobsDone, failed: jobsFailed, list: jobs },
+      sync_log: logs,
+    });
+  });
+
   // ── PUT /api/events/:eventId/assign ───────────────────────────────────────
   router.put('/:eventId/assign', requireUser, requireOwner, (req, res, next) => {
     try {

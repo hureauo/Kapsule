@@ -1,6 +1,137 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { api } from '../api/client.js';
 
-// Stub — implémenté en phase 3
+const STATUS_ORDER = ['draft', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'purged'];
+
+function formatDate(d) {
+  if (!d) return null;
+  return new Date(d).toLocaleString('fr-FR');
+}
+
+function StatusTimeline({ status, pulledAt, pushedAt, processedAt }) {
+  const current = STATUS_ORDER.indexOf(status);
+  return (
+    <div className="sync-timeline">
+      {STATUS_ORDER.map((s, i) => {
+        const done = i <= current;
+        let date = null;
+        if (s === 'loaded' && pulledAt) date = formatDate(pulledAt);
+        if (s === 'pushed' && pushedAt) date = formatDate(pushedAt);
+        if (s === 'processed' && processedAt) date = formatDate(processedAt);
+        return (
+          <div key={s} className={`timeline-step${done ? ' timeline-step--done' : ''}`}>
+            <span className="timeline-step__label">{s}</span>
+            {date && <span className="timeline-step__date">{date}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function SyncStatus({ event }) {
-  return <p className="text--muted">Statut synchro — implémenté en phase 3.</p>;
+  const [info, setInfo] = useState(null);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    if (!event?.id) return;
+    try {
+      const data = await api.getSyncInfo(event.id);
+      setInfo(data);
+      setError('');
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [event?.id]);
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 10000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  if (error) return <p className="error-msg">{error}</p>;
+  if (!info) return <p className="text--muted">Chargement…</p>;
+
+  const { box, jobs, sync_log } = info;
+  const ev = info.event;
+
+  return (
+    <div className="sync-status">
+      {/* Timeline */}
+      <section className="panel-section">
+        <h3 className="panel-section__title">Progression</h3>
+        <StatusTimeline
+          status={ev.status}
+          pulledAt={ev.pulled_at}
+          pushedAt={ev.pushed_at}
+          processedAt={ev.processed_at}
+        />
+      </section>
+
+      {/* Borne assignée */}
+      <section className="panel-section">
+        <h3 className="panel-section__title">Borne assignée</h3>
+        {box ? (
+          <dl className="sync-info">
+            <dt>Nom</dt><dd>{box.name}</dd>
+            <dt>Dernier contact</dt><dd>{formatDate(box.last_seen_at) ?? '—'}</dd>
+          </dl>
+        ) : (
+          <p className="text--muted">Aucune borne assignée.</p>
+        )}
+      </section>
+
+      {/* Jobs */}
+      {jobs.total > 0 && (
+        <section className="panel-section">
+          <h3 className="panel-section__title">
+            Jobs de traitement — {jobs.done}/{jobs.total} terminés
+            {jobs.failed > 0 && <span className="badge badge--error"> {jobs.failed} échoués</span>}
+          </h3>
+          <table className="sync-jobs-table">
+            <thead>
+              <tr>
+                <th>Type</th><th>Vidéo</th><th>Statut</th><th>Fin</th>
+              </tr>
+            </thead>
+            <tbody>
+              {jobs.list.map(j => (
+                <tr key={j.id} className={`job-row job-row--${j.status}`}>
+                  <td>{j.type}</td>
+                  <td className="text--muted">{j.video_id ? j.video_id.slice(0, 8) + '…' : '—'}</td>
+                  <td><span className={`status-badge status-badge--${j.status}`}>{j.status}</span></td>
+                  <td className="text--muted">{formatDate(j.finished_at) ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {/* Sync log */}
+      {sync_log.length > 0 && (
+        <section className="panel-section">
+          <h3 className="panel-section__title">Journal de synchro (20 derniers)</h3>
+          <table className="sync-log-table">
+            <thead>
+              <tr><th>Date</th><th>Borne</th><th>Action</th><th>Détail</th></tr>
+            </thead>
+            <tbody>
+              {sync_log.map(l => (
+                <tr key={l.id}>
+                  <td className="text--muted">{formatDate(l.created_at)}</td>
+                  <td>{l.box_name ?? '—'}</td>
+                  <td><code>{l.action}</code></td>
+                  <td className="text--muted">
+                    {l.detail ? JSON.stringify(JSON.parse(l.detail)) : ''}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+    </div>
+  );
 }

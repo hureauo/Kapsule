@@ -6,6 +6,38 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 3.8 — SyncPanel Borne + onglet Synchro Hub
+
+### `online` signifie « Hub configuré » et non « Hub joignable »
+
+**Fichier :** [routes/sync.js:17](apps/borne/server/src/routes/sync.js#L17), [SyncPanel.jsx:91](apps/borne/web/src/components/admin/SyncPanel.jsx#L91)
+
+**Observation :** `online = !!hubUrl` — le badge « En ligne » s'affiche dès qu'une URL Hub est configurée, même si le réseau est coupé. Les boutons Pull/PUSH sont activés dans ce cas.
+
+**À ne pas corriger maintenant.** Pour une vraie détection : stocker le timestamp du dernier appel réussi dans `autoPull.js` et l'exposer via `GET /sync/status`.
+
+---
+
+### SyncPanel ne recharge pas la liste des events après push réussi
+
+**Fichier :** [SyncPanel.jsx:79-80](apps/borne/web/src/components/admin/SyncPanel.jsx#L79)
+
+**Observation :** `closedEvents`/`pushedEvents` sont filtrés depuis `events` rechargé uniquement au montage. Après un push (closed→pushed), la liste ne se met à jour qu'au remount suivant.
+
+**À ne pas corriger maintenant.** Ajouter un `loadEvents()` quand `push.running` passe de `true` à `false` (via un `useEffect` sur `status?.push?.running`).
+
+---
+
+### SyncStatus Hub : `JSON.parse(l.detail)` sans try/catch
+
+**Fichier :** [SyncStatus.jsx:127](apps/hub/web/src/components/SyncStatus.jsx#L127)
+
+**Observation :** si un `detail` non-JSON apparaissait dans `sync_log` (ex. bug futur), le rendu crasherait.
+
+**À ne pas corriger maintenant.** Ajouter un `try/catch` ou `?? l.detail` en fallback si ce cas se présente.
+
+---
+
 ## Phase 3.7 — routes/sync.js (Borne)
 
 ### `online` reflète la présence de hubUrl, pas la connectivité réelle

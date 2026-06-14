@@ -146,3 +146,46 @@ button { cursor: pointer; font: inherit; }
 /* ── Misc ────────────────────────────────────────────────────────────────── */
 .text--muted { color: var(--text-muted); font-size: 14px; }
 .error-msg { color: var(--danger); font-size: 13px; margin-top: 6px; }
+
+/* ── SyncStatus (onglet Synchro Hub) ─────────────────────────────────────── */
+.sync-status { display: flex; flex-direction: column; gap: 1.5rem; }
+
+.sync-timeline {
+  display: flex;
+  gap: 0;
+  flex-wrap: wrap;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.timeline-step {
+  flex: 1 1 auto;
+  padding: 8px 10px;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 70px;
+}
+.timeline-step:last-child { border-right: none; }
+.timeline-step--done { background: var(--primary, #2563eb); color: #fff; }
+.timeline-step__label { display: block; font-weight: 600; }
+.timeline-step__date  { display: block; font-size: 10px; margin-top: 2px; opacity: 0.85; }
+
+.sync-jobs-table, .sync-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 8px;
+}
+.sync-jobs-table th, .sync-jobs-table td,
+.sync-log-table  th, .sync-log-table  td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.sync-jobs-table th, .sync-log-table th { font-weight: 600; color: var(--text-muted); }
+
+.badge { padding: 1px 6px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.badge--error { background: var(--danger, #c0392b); color: #fff; }

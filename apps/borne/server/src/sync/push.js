@@ -11,7 +11,7 @@ function backoffMs(n) { return Math.min(2000 * Math.pow(2, n - 1), 30000); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // État partagé de la progression (lu par GET /api/sync/status)
-const _state = { running: false, total: 0, done: 0, currentFile: null };
+const _state = { running: false, total: 0, done: 0, currentFile: null, lastError: null };
 export function getPushState() { return { ..._state }; }
 
 /**
@@ -91,6 +91,7 @@ export async function pushEvent(eventId, dataDir) {
   _state.total = 0;
   _state.done = 0;
   _state.currentFile = null;
+  _state.lastError = null;
 
   try {
   const eventDir = join(dataDir, 'events', eventId);
@@ -176,6 +177,13 @@ export async function pushEvent(eventId, dataDir) {
     _state.currentFile = null;
   }
 
+  } catch (err) {
+    // Expose l'erreur (y compris 401 token révoqué) dans _state pour GET /sync/status
+    const msg = err.status === 401
+      ? 'Token borne révoqué ou invalide — vérifier la configuration Hub'
+      : (err.message ?? 'Erreur inconnue');
+    _state.lastError = { message: msg, status: err.status ?? null };
+    throw err;
   } finally {
     _state.running = false;
   }

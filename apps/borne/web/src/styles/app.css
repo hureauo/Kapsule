@@ -916,3 +916,36 @@ input, textarea, [contenteditable] {
 .video-modal__player { width: 100%; max-height: 70vh; background: #000; }
 
 .modal--video .btn { border-radius: 0; margin: 0; }
+
+/* ── SyncPanel ──────────────────────────────────────────────────────────────── */
+.sync-panel { display: flex; flex-direction: column; gap: 1.5rem; }
+.sync-row   { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+.sync-url   { font-size: 0.85rem; word-break: break-all; }
+
+.sync-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.sync-badge--online  { background: var(--success, #2d8a4e); color: #fff; }
+.sync-badge--offline { background: var(--error,   #c0392b); color: #fff; }
+
+.sync-event-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.sync-event-item { display: flex; justify-content: space-between; align-items: center; }
+
+.push-progress { display: flex; flex-direction: column; gap: 0.5rem; }
+.progress-bar  { height: 10px; border-radius: 5px; background: var(--input-border); overflow: hidden; }
+.progress-bar__fill { height: 100%; background: var(--primary); transition: width 0.3s; }
+
+.purge-form { display: flex; flex-direction: column; gap: 0.75rem; }
+.purge-form__actions { display: flex; gap: 0.75rem; }
+.text--warn { color: var(--error, #c0392b); font-size: 0.9rem; }
+
+.btn--danger {
+  background: var(--error, #c0392b);
+  color: #fff;
+  border: none;
+}
+.btn--danger:hover { opacity: 0.85; }

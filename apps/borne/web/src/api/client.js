@@ -97,6 +97,13 @@ export const api = {
     apiFetch(`/api/preflight?client_time=${encodeURIComponent(clientTime)}`),
 
   health: () => apiFetch('/api/health'),
+
+  // Synchro
+  getSyncStatus: () => apiFetch('/api/sync/status'),
+  triggerPull: () => apiFetch('/api/sync/pull', { method: 'POST' }),
+  triggerPush: (eventId) => apiFetch(`/api/sync/push/${eventId}`, { method: 'POST' }),
+  purgeEvent: (eventId, confirm) =>
+    apiFetch(`/api/sync/purge/${eventId}`, { method: 'POST', body: JSON.stringify({ confirm }) }),
 };
 
 // URLs de ressources — ajoutent ?token= pour <video src>, <a href>, CSV

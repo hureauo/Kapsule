@@ -313,6 +313,26 @@ describe('push — pushEvent', () => {
     assert.ok('total' in state);
     assert.ok('done' in state);
     assert.ok('currentFile' in state);
+    assert.ok('lastError' in state);
+  });
+
+  it('getPushState.lastError expose un 401 (token révoqué) après échec', async () => {
+    makeClosedEvent(dir, 'ev-401', 0);
+
+    globalThis.fetch = async (url) => {
+      if (url.includes('/manifest')) {
+        return { ok: false, status: 401, json: async () => ({ error: 'Token borne invalide' }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    await assert.rejects(() => pushEvent('ev-401', dir));
+
+    const state = getPushState();
+    assert.equal(state.running, false);
+    assert.ok(state.lastError !== null, 'lastError doit être défini');
+    assert.equal(state.lastError.status, 401);
+    assert.match(state.lastError.message, /révoqué/);
   });
 
   it('§11.8 — checkpoint WAL avant transfert du db.sqlite', async () => {

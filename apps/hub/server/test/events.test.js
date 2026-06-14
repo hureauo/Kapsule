@@ -264,3 +264,43 @@ describe('DELETE /api/events/:eventId', () => {
     assert.equal(res.body.status, 'purged');
   });
 });
+
+// ── GET /api/events/:eventId/sync ─────────────────────────────────────────────
+
+describe('GET /api/events/:eventId/sync', () => {
+  let eventId;
+
+  before(async () => {
+    const res = await request
+      .post('/api/events')
+      .set(auth(tokenAlice))
+      .send({ name: 'Sync Info Event' });
+    eventId = res.body.id;
+  });
+
+  it('retourne les champs attendus', async () => {
+    const res = await request
+      .get(`/api/events/${eventId}/sync`)
+      .set(auth(tokenAlice));
+    assert.equal(res.status, 200);
+    assert.ok('event' in res.body);
+    assert.ok('box' in res.body);
+    assert.ok('jobs' in res.body);
+    assert.ok('sync_log' in res.body);
+    assert.equal(res.body.event.id, eventId);
+    assert.equal(res.body.jobs.total, 0);
+    assert.equal(res.body.jobs.done, 0);
+  });
+
+  it('retourne 403 pour un autre utilisateur', async () => {
+    const res = await request
+      .get(`/api/events/${eventId}/sync`)
+      .set(auth(tokenBob));
+    assert.equal(res.status, 403);
+  });
+
+  it('retourne 401 sans token', async () => {
+    const res = await request.get(`/api/events/${eventId}/sync`);
+    assert.equal(res.status, 401);
+  });
+});

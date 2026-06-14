@@ -6,14 +6,7 @@ import EventPanel from '../components/admin/EventPanel.jsx';
 import PreflightPanel from '../components/admin/PreflightPanel.jsx';
 import QuestionManager from '../components/admin/QuestionManager.jsx';
 import VideoList from '../components/admin/VideoList.jsx';
-
-function PanelPlaceholder({ name }) {
-  return (
-    <div className="panel-placeholder">
-      <p className="text--muted">Panneau « {name} » — implémenté en phase 1d</p>
-    </div>
-  );
-}
+import SyncPanel from '../components/admin/SyncPanel.jsx';
 
 export default function AdminPage() {
   const [authed, setAuthed] = useState(isAuthenticated());
@@ -29,7 +22,7 @@ export default function AdminPage() {
       case 'preflight': return <PreflightPanel />;
       case 'questions': return <QuestionManager />;
       case 'videos':    return <VideoList />;
-      case 'sync':      return <PanelPlaceholder name="Synchro" />;
+      case 'sync':      return <SyncPanel />;
       default:          return null;
     }
   }

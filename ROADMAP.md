@@ -74,7 +74,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 - [x] 3.5 Borne : `autoPull.js` (intervalle, heartbeat best effort silencieux)
 - [x] 3.6 Borne : `push.js` (checkpoint → manifest → uploads manquants → db → finalize ; reprise via manifest ; exige `closed` → 409 sinon)
 - [x] 3.7 Borne : `routes/sync.js` (status avec progression, pull/push manuels, purge si `pushed` + confirmation)
-- [ ] 3.8 UI : `SyncPanel` Borne (online/offline, PUSH avec progression, erreurs 401 token visibles) + onglet Synchro Hub (timeline, jobs, sync_log)
+- [x] 3.8 UI : `SyncPanel` Borne (online/offline, PUSH avec progression, erreurs 401 token visibles) + onglet Synchro Hub (timeline, jobs, sync_log)
 - [ ] 3.9 **Tests d'intégration du protocole** (supertest, Hub réel en mémoire de test) : pull → sessions → push → coupure simulée à mi-upload → relance → reprise via `missing` → finalize
 - [ ] 🧑 3.10 Scénario manuel complet Borne réelle ↔ Hub
 

@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api, clearToken } from '../api/client.js';
 import { DEFAULTS } from '@kapsule/core';
 import QuestionEditor from '../components/QuestionEditor.jsx';
+import SyncStatus from '../components/SyncStatus.jsx';
 
 const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
 const TABS = ['Questions', 'Synchro', 'Galerie'];
@@ -183,13 +184,7 @@ export default function EventDetailPage() {
 
         {tab === 'Synchro' && (
           <div className="tab-content">
-            <p className="text--muted">Panneau Synchro — implémenté en phase 3.</p>
-            <dl className="sync-info">
-              <dt>Statut</dt><dd>{event.status}</dd>
-              <dt>Récupéré le</dt><dd>{event.pulled_at ? formatDate(event.pulled_at) : '—'}</dd>
-              <dt>Poussé le</dt><dd>{event.pushed_at ? formatDate(event.pushed_at) : '—'}</dd>
-              <dt>Traité le</dt><dd>{event.processed_at ? formatDate(event.processed_at) : '—'}</dd>
-            </dl>
+            <SyncStatus event={event} />
           </div>
         )}
 
