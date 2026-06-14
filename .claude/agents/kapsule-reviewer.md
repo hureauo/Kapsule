@@ -25,7 +25,7 @@ Méthode :
 
 1. `git status` puis `git diff HEAD` pour délimiter exactement ce qu'il y a à reviewer.
 2. Pour chaque fichier touché, lis le fichier ENTIER, pas seulement le hunk : beaucoup d'invariants sont des propriétés d'ordre ou de contexte (ex. position d'une route dans le routeur) invisibles dans un diff isolé.
-3. Lance `npm test` en fin de review. Tout échec de test = finding ❌.
+3. Lance `npm test` (docker compose run --rm dev npm test) en fin de review. Tout échec de test = finding ❌.
 
 ## Axes de vérification
 
