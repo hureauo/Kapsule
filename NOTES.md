@@ -6,6 +6,30 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 3.6 — push.js (Borne)
+
+### uploadFileWithRetry charge tout le fichier en mémoire
+
+**Fichier :** [push.js:36-39](apps/borne/server/src/sync/push.js#L36)
+
+**Observation :** `for await ... chunks.push(chunk)` puis `new Blob(chunks)` bufferise tout le fichier avant chaque tentative. Sur Raspberry Pi avec des vidéos ~500 MB et plusieurs retries, ça peut faire exploser la RAM.
+
+**Alternative :** passer un `ReadableStream` / `Readable` comme body avec `duplex: 'half'`. Mais `FormData + ReadableStream` n'est pas universellement supporté en Node 20 sans polyfill.
+
+**À ne pas corriger maintenant.** À surveiller si des OOM apparaissent lors des tests réels sur Raspberry.
+
+---
+
+### Test §11.8 : WAL pas forcément non-vide avant checkpoint
+
+**Fichier :** [sync.push.test.js:328-348](apps/borne/server/test/sync.push.test.js#L328)
+
+**Observation :** `walExists` est calculé mais non asserté. Si SQLite fait un auto-checkpoint avant le test, il n'y a pas de WAL à vider, et le test passe même sans `wal_checkpoint(TRUNCATE)`. Pour rendre le test déterministe : désactiver l'auto-checkpoint via `PRAGMA wal_autocheckpoint=0` avant d'écrire, puis asserter que le WAL existe avant et est vide après.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 3.5 — autoPull.js (Borne)
 
 ### Test "lastPull reste null si le pull échoue" sans vraie assertion
