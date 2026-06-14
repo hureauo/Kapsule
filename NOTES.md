@@ -6,6 +6,28 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 4.3 — routes/gallery.js
+
+### Pas de 416 Range Not Satisfiable
+
+**Fichier :** [gallery.js:32-34](apps/hub/server/src/routes/gallery.js#L32)
+
+**Observation :** le parsing Range ne gère pas les bornes invalides ou hors taille du fichier — un Range malformé retourne 206 incohérent plutôt que 416. Même comportement que `videos.js` côté Borne (cohérence interne). Le cas ne se produit pas avec les clients navigateur standard.
+
+**À ne pas corriger maintenant.**
+
+---
+
+### Test du 409 `requirePushed` manquant
+
+**Fichier :** [gallery.test.js](apps/hub/server/test/gallery.test.js)
+
+**Observation :** aucun test ne couvre le cas où la galerie est demandée sur un événement en statut `< pushed` (ex. `draft`/`loaded`), qui devrait retourner 409. Le garde existe et est correct.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 4.1 — Worker boucle de jobs + ffmpeg.js
 
 ### `archive.js` : détection de la présence du ZIP côté galerie
