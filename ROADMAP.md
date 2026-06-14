@@ -67,7 +67,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 
 ## Phase 3 — Synchro
 
-- [ ] 3.1 Hub : `middleware/boxAuth.js`, CRUD bornes super-admin (token affiché une fois), `last_seen_at`, `sync_log`
+- [x] 3.1 Hub : `middleware/boxAuth.js`, CRUD bornes super-admin (token affiché une fois), `last_seen_at`, `sync_log`
 - [ ] 3.2 Hub : `GET /sync/assigned`, `GET /sync/events/:id/bundle` (ready→loaded), heartbeat `POST /status` (transitions avant uniquement)
 - [ ] 3.3 Hub : `POST /manifest` (réponse `missing`), `PUT /files/:videoId` (recalcul sha256, 422 mismatch), `PUT /db` (fermer handle avant écrasement), `POST /finalize` (enfile les jobs)
 - [ ] 3.4 Borne : `hubClient.js` (retry/backoff), `pull.js` (règle `loaded` vérifiée à l'application)

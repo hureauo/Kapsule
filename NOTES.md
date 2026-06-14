@@ -6,6 +6,28 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 3.1 — boxAuth.js + routes/admin.js Hub
+
+### boxAuth : branches critiques non couvertes par les tests en 3.1
+
+**Fichier :** [admin.test.js:124-160](apps/hub/server/test/admin.test.js#L124)
+
+**Observation :** le bloc « boxAuth — middleware » dans `admin.test.js` ne fait pas passer de requête HTTP par `requireBox`. Les branches réelles du middleware (401 header absent, 401 token invalide, `updateBoxSeen`, `insertSyncLog`) sont livrées sans couverture. Acceptable en 3.1 car aucune route ne monte encore `requireBox`.
+
+**À corriger en 3.2** dès le premier montage d'une route `/api/sync` : soit via une mini-app supertest avec `requireBox` monté sur une route jetable (3 cas : header absent → 401, token bidon → 401, token valide → next + `last_seen_at` mis à jour + ligne `sync_log`), soit en intégrant ces cas aux tests de `routes/sync.js`.
+
+---
+
+### boxAuth : `req._syncLogAction` convention implicite
+
+**Fichier :** [boxAuth.js:14](apps/hub/server/src/middleware/boxAuth.js#L14)
+
+**Observation :** `req._syncLogAction ?? 'heartbeat'` lit une propriété jamais posée actuellement. Toute entrée `sync_log` en 3.1 sera `'heartbeat'`. PROJET.md §5.3/§7 attend des actions précises (`pull`, `status`, `push_manifest`…).
+
+**À clarifier en 3.2** : faire poser l'action par chaque route (`req._syncLogAction = 'pull'`) ou passer l'action en paramètre du middleware plutôt que via un champ implicite sur `req`.
+
+---
+
 ## Phase 2.6 — Frontend Hub
 
 ### consent_text/idle_timeout : pré-remplissage par défaut, pas par la valeur réelle
