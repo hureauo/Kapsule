@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import supertest from 'supertest';
 import argon2 from 'argon2';
+import { v4 as uuidv4 } from 'uuid';
 import { createApp } from '../src/index.js';
 import {
   getDb, closeRegistry, insertUser, insertBox, getBoxByTokenHash, getEvent,
@@ -157,7 +158,8 @@ describe('GET /api/sync/events/:id/bundle', () => {
   });
 
   it('retourne 404 pour un événement inexistant', async () => {
-    const res = await request.get('/api/sync/events/does-not-exist/bundle')
+    // UUID bien formé mais absent → 404 (et non 400 de validation)
+    const res = await request.get('/api/sync/events/11111111-1111-4111-8111-111111111111/bundle')
       .set('X-Box-Token', boxToken);
     assert.equal(res.status, 404);
   });
@@ -244,7 +246,7 @@ describe('POST /api/sync/events/:id/status (heartbeat)', () => {
   });
 
   it('retourne 404 pour un événement inexistant', async () => {
-    const res = await request.post('/api/sync/events/inexistant/status')
+    const res = await request.post('/api/sync/events/11111111-1111-4111-8111-111111111111/status')
       .set('X-Box-Token', boxToken)
       .send({ status: 'live' });
     assert.equal(res.status, 404);
@@ -409,33 +411,35 @@ describe('PUT /api/sync/events/:id/files/:videoId', () => {
   });
 
   it('accepte un fichier vidéo et retourne son checksum', async () => {
+    const vidId = uuidv4();
     const content = randomBytes(64);
-    const res = await request.put(`/api/sync/events/${uploadEventId}/files/vid-upload-1`)
+    const res = await request.put(`/api/sync/events/${uploadEventId}/files/${vidId}`)
       .set('X-Box-Token', boxToken)
-      .attach('file', content, 'vid-upload-1.mp4');
+      .attach('file', content, `${vidId}.mp4`);
     assert.equal(res.status, 200);
     assert.ok(res.body.ok);
-    assert.equal(res.body.video_id, 'vid-upload-1');
+    assert.equal(res.body.video_id, vidId);
     assert.ok(res.body.checksum, 'checksum doit être présent');
   });
 
   it('retourne 422 si checksum mismatch', async () => {
     // Prépare un manifest avec un mauvais checksum
+    const badVid = uuidv4();
     const wrongChecksum = 'a'.repeat(64);
     const evMismatch = await makeClosedEvent(request, tokenClient, tokenAdmin, boxToken, boxId, 'Checksum mismatch');
     await request.post(`/api/sync/events/${evMismatch}/manifest`)
       .set('X-Box-Token', boxToken)
-      .send({ files: [{ video_id: 'bad-vid', filename: 'bad-vid.mp4', size: 10, checksum: wrongChecksum }], db: { size: 0, checksum: 'x' } });
+      .send({ files: [{ video_id: badVid, filename: `${badVid}.mp4`, size: 10, checksum: wrongChecksum }], db: { size: 0, checksum: 'x' } });
 
     const content = randomBytes(64);
-    const res = await request.put(`/api/sync/events/${evMismatch}/files/bad-vid`)
+    const res = await request.put(`/api/sync/events/${evMismatch}/files/${badVid}`)
       .set('X-Box-Token', boxToken)
-      .attach('file', content, 'bad-vid.mp4');
+      .attach('file', content, `${badVid}.mp4`);
     assert.equal(res.status, 422);
   });
 
   it('retourne 400 si aucun fichier joint', async () => {
-    const res = await request.put(`/api/sync/events/${uploadEventId}/files/vid-nofile`)
+    const res = await request.put(`/api/sync/events/${uploadEventId}/files/${uuidv4()}`)
       .set('X-Box-Token', boxToken);
     assert.equal(res.status, 400);
   });
@@ -503,7 +507,9 @@ describe('POST /api/sync/events/:id/finalize', () => {
   before(async () => {
     finalizeEventId = await makeClosedEvent(request, tokenClient, tokenAdmin, boxToken, boxId, 'Finalize test');
 
-    // Upload 2 vidéos fictives + db.sqlite
+    // Upload 2 vidéos fictives + db.sqlite (video_id = UUID, comme en production)
+    const fVid1 = uuidv4();
+    const fVid2 = uuidv4();
     const vid1 = randomBytes(32);
     const vid2 = randomBytes(32);
     const dbContent = randomBytes(32);
@@ -516,17 +522,17 @@ describe('POST /api/sync/events/:id/finalize', () => {
       .set('X-Box-Token', boxToken)
       .send({
         files: [
-          { video_id: 'f-vid1', filename: 'f-vid1.mp4', size: vid1.length, checksum: h1 },
-          { video_id: 'f-vid2', filename: 'f-vid2.mp4', size: vid2.length, checksum: h2 },
+          { video_id: fVid1, filename: `${fVid1}.mp4`, size: vid1.length, checksum: h1 },
+          { video_id: fVid2, filename: `${fVid2}.mp4`, size: vid2.length, checksum: h2 },
         ],
         db: { size: dbContent.length, checksum: hdb },
       });
 
     // Uploads vidéos
-    await request.put(`/api/sync/events/${finalizeEventId}/files/f-vid1`)
-      .set('X-Box-Token', boxToken).attach('file', vid1, 'f-vid1.mp4');
-    await request.put(`/api/sync/events/${finalizeEventId}/files/f-vid2`)
-      .set('X-Box-Token', boxToken).attach('file', vid2, 'f-vid2.mp4');
+    await request.put(`/api/sync/events/${finalizeEventId}/files/${fVid1}`)
+      .set('X-Box-Token', boxToken).attach('file', vid1, `${fVid1}.mp4`);
+    await request.put(`/api/sync/events/${finalizeEventId}/files/${fVid2}`)
+      .set('X-Box-Token', boxToken).attach('file', vid2, `${fVid2}.mp4`);
 
     // Upload db
     await request.put(`/api/sync/events/${finalizeEventId}/db`)
@@ -583,5 +589,46 @@ describe('POST /api/sync/events/:id/finalize', () => {
 
     const jobsAfter = db.prepare('SELECT COUNT(*) as n FROM jobs WHERE event_id = ?').get(finalizeEventId).n;
     assert.equal(jobsAfter, jobsBefore, 'aucun job supplémentaire ne doit être inséré');
+  });
+});
+
+// ── validateUuidParams — anti path traversal (SECURITY.md H1) ──────────────────
+
+describe('validateUuidParams — rejet des params non-UUID avant tout accès disque', () => {
+  it('rejette :id = ".." (400) sur le bundle', async () => {
+    const res = await request.get('/api/sync/events/..%2f..%2f..%2fetc/bundle')
+      .set('X-Box-Token', boxToken);
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /id invalide/);
+  });
+
+  it('rejette :id non-UUID (400) sur le manifest', async () => {
+    const res = await request.post('/api/sync/events/pas-un-uuid/manifest')
+      .set('X-Box-Token', boxToken)
+      .send({ files: [], db: { size: 1, checksum: 'x' } });
+    assert.equal(res.status, 400);
+  });
+
+  it('rejette :videoId malformé (400) sans écrire de fichier hors du dossier', async () => {
+    const res = await request.put(`/api/sync/events/${eventId}/files/..%2f..%2f..%2fevil`)
+      .set('X-Box-Token', boxToken)
+      .attach('file', Buffer.from('malveillant'), 'evil.mp4');
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /videoId invalide/);
+    // Aucun fichier 'evil' ne doit avoir été déposé à la racine du DATA_DIR
+    assert.ok(!existsSync(join(dir, 'evil')), 'aucun fichier ne doit sortir du dossier événement');
+    assert.ok(!existsSync(join(dir, 'evil.mp4')), 'aucun fichier ne doit sortir du dossier événement');
+  });
+
+  it('exige le token borne avant la validation des params (401 prioritaire)', async () => {
+    const res = await request.put('/api/sync/events/pas-un-uuid/files/pas-un-uuid').send({});
+    assert.equal(res.status, 401);
+  });
+
+  it('accepte un :id UUID valide (pas de 400 de validation)', async () => {
+    // event inexistant mais UUID bien formé → on passe la validation, 404 attendu (pas 400)
+    const res = await request.get('/api/sync/events/00000000-0000-4000-8000-000000000000/bundle')
+      .set('X-Box-Token', boxToken);
+    assert.notEqual(res.status, 400);
   });
 });

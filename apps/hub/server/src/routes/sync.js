@@ -6,6 +6,7 @@ import { sha256File } from '@kapsule/core/src/checksum.js';
 import { getDb, getEvent, updateEvent, insertSyncLog } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { requireBox } from '../middleware/boxAuth.js';
+import { validateUuidParams } from '../middleware/validateParams.js';
 
 // Ordre des statuts pour les transitions avant uniquement (heartbeat)
 const STATUS_ORDER = ['draft', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'purged'];
@@ -78,7 +79,7 @@ export function makeSyncRouter(dataDir) {
   });
 
   // ── GET /api/sync/events/:id/bundle ──────────────────────────────────────
-  router.get('/events/:id/bundle', (req, res, next) => {
+  router.get('/events/:id/bundle', validateUuidParams('id'), (req, res, next) => {
     try {
       const db = getDb();
       const event = getEvent(db, req.params.id);
@@ -109,7 +110,7 @@ export function makeSyncRouter(dataDir) {
   });
 
   // ── POST /api/sync/events/:id/status (heartbeat) ─────────────────────────
-  router.post('/events/:id/status', (req, res, next) => {
+  router.post('/events/:id/status', validateUuidParams('id'), (req, res, next) => {
     try {
       const { status } = req.body;
       if (!['live', 'closed'].includes(status)) {
@@ -137,7 +138,7 @@ export function makeSyncRouter(dataDir) {
   // ── POST /api/sync/events/:id/manifest ───────────────────────────────────
   // body: { files: [{ video_id, filename, size, checksum }], db: { size, checksum } }
   // réponse: { missing: [video_id…] } — rend le push idempotent/reprenable (§11.12)
-  router.post('/events/:id/manifest', async (req, res, next) => {
+  router.post('/events/:id/manifest', validateUuidParams('id'), async (req, res, next) => {
     try {
       const db = getDb();
       const event = getEvent(db, req.params.id);
@@ -172,7 +173,7 @@ export function makeSyncRouter(dataDir) {
 
   // ── PUT /api/sync/events/:id/files/:videoId ───────────────────────────────
   // Upload multipart d'UN fichier vidéo ; Hub recalcule sha256, 422 si mismatch
-  router.put('/events/:id/files/:videoId', uploadVideo.single('file'), async (req, res, next) => {
+  router.put('/events/:id/files/:videoId', validateUuidParams('id', 'videoId'), uploadVideo.single('file'), async (req, res, next) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'Fichier manquant' });
 
@@ -217,7 +218,7 @@ export function makeSyncRouter(dataDir) {
 
   // ── PUT /api/sync/events/:id/db ───────────────────────────────────────────
   // Upload du db.sqlite final. Ferme d'abord le handle LRU (§11.11).
-  router.put('/events/:id/db', uploadDbFile.single('file'), async (req, res, next) => {
+  router.put('/events/:id/db', validateUuidParams('id'), uploadDbFile.single('file'), async (req, res, next) => {
     try {
       if (!req.file) return res.status(400).json({ error: 'Fichier manquant' });
 
@@ -271,7 +272,7 @@ export function makeSyncRouter(dataDir) {
 
   // ── POST /api/sync/events/:id/finalize ───────────────────────────────────
   // Vérifie que tout le manifest est reçu, passe en pushed, enfile les jobs.
-  router.post('/events/:id/finalize', async (req, res, next) => {
+  router.post('/events/:id/finalize', validateUuidParams('id'), async (req, res, next) => {
     try {
       const db = getDb();
       const event = getEvent(db, req.params.id);

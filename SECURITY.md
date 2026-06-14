@@ -174,7 +174,7 @@ Mitigation possible : token média court (5 min) ou `log_format` sans query stri
 
 | ID | Sévérité | Statut | Notes |
 |---|---|---|---|
-| H1 | 🔴 Élevé | À corriger | |
+| H1 | 🔴 Élevé | ✅ Corrigé | S1.1 — `validateUuidParams` avant multer (`middleware/validateParams.js`) |
 | M1 | 🟠 Moyen | À corriger | |
 | M2 | 🟠 Moyen | À corriger | |
 | M3 | 🟠 Moyen | À corriger | |

@@ -99,7 +99,7 @@ autres phases : un correctif backend n'est terminé que **testé** (cas nominal 
 bloqué), relu par `kapsule-reviewer`, committé en sous-lot.
 
 ### S1 — Path traversal synchro Hub (H1, 🔴)
-- [ ] S1.1 Middleware `validateUuidParams` (regex UUID stricte sur `:id`/`:videoId` → 400) monté **avant** multer dans `routes/sync.js` ; test : `..`/`%2e%2e` rejeté avant toute écriture disque, UUID valide accepté
+- [x] S1.1 Middleware `validateUuidParams` (regex UUID stricte sur `:id`/`:videoId` → 400) monté **avant** multer dans `routes/sync.js` ; test : `..`/`%2e%2e` rejeté avant toute écriture disque, UUID valide accepté
 
 ### S2 — Secrets par défaut refusés au démarrage (M3, 🟠)
 - [ ] S2.1 Hub : refus de booter si `JWT_SECRET` vaut `change-me` ou < N caractères, **hors tests** (garde dans `index.js`/`config.js`) + test
@@ -122,6 +122,6 @@ bloqué), relu par `kapsule-reviewer`, committé en sous-lot.
 
 **Terminé quand** : H1 et M1–M3 corrigés et testés ; le tableau de suivi de SECURITY.md est à jour (statut « Corrigé » + n° de commit).
 
-## Phase 5 — Évolutions (au fil de l'eau)
+## Phase 6 — Évolutions (au fil de l'eau)
 
 Machine de capture dédiée, job `chromakey`, portail invités, mode point d'accès Wi-Fi (hostapd).

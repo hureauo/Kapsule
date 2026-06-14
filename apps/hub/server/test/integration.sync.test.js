@@ -30,6 +30,7 @@ import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import supertest from 'supertest';
 import argon2 from 'argon2';
+import { v4 as uuidv4 } from 'uuid';
 import Database from 'better-sqlite3';
 
 // ── Hub
@@ -269,11 +270,13 @@ describe('Intégration 3.9 — push nominal', () => {
       `INSERT INTO sessions (id, guest_name, consent_at) VALUES ('sess-integ', 'Alice', CURRENT_TIMESTAMP)`
     ).run();
 
-    // 2 vidéos
-    const { filename: fn1, size: s1, content: c1 } = makeVideoFile(borneEventDir, 'vid-integ-1');
-    const { filename: fn2, size: s2, content: c2 } = makeVideoFile(borneEventDir, 'vid-integ-2');
-    insertVideoInDb(edb, 'vid-integ-1', 'sess-integ', fn1, s1, c1);
-    insertVideoInDb(edb, 'vid-integ-2', 'sess-integ', fn2, s2, c2);
+    // 2 vidéos (id = UUID v4, comme en production où videos.id vient de uuidv4())
+    const vidIntg1 = uuidv4();
+    const vidIntg2 = uuidv4();
+    const { filename: fn1, size: s1, content: c1 } = makeVideoFile(borneEventDir, vidIntg1);
+    const { filename: fn2, size: s2, content: c2 } = makeVideoFile(borneEventDir, vidIntg2);
+    insertVideoInDb(edb, vidIntg1, 'sess-integ', fn1, s1, c1);
+    insertVideoInDb(edb, vidIntg2, 'sess-integ', fn2, s2, c2);
     edb.close();
 
     // Borne passe live → closed
@@ -358,10 +361,12 @@ describe('Intégration 3.9 — coupure à mi-upload et reprise', () => {
     const edb = new Database(dbPath);
     edb.prepare(`INSERT INTO sessions (id, guest_name, consent_at) VALUES ('sess-coup', 'Bob', CURRENT_TIMESTAMP)`).run();
 
-    const { filename: fn1, size: s1, content: c1 } = makeVideoFile(borneEventDir, 'vid-coup-1', 'video content A');
-    const { filename: fn2, size: s2, content: c2 } = makeVideoFile(borneEventDir, 'vid-coup-2', 'video content B');
-    insertVideoInDb(edb, 'vid-coup-1', 'sess-coup', fn1, s1, c1);
-    insertVideoInDb(edb, 'vid-coup-2', 'sess-coup', fn2, s2, c2);
+    const vidCoup1 = uuidv4();
+    const vidCoup2 = uuidv4();
+    const { filename: fn1, size: s1, content: c1 } = makeVideoFile(borneEventDir, vidCoup1, 'video content A');
+    const { filename: fn2, size: s2, content: c2 } = makeVideoFile(borneEventDir, vidCoup2, 'video content B');
+    insertVideoInDb(edb, vidCoup1, 'sess-coup', fn1, s1, c1);
+    insertVideoInDb(edb, vidCoup2, 'sess-coup', fn2, s2, c2);
     edb.close();
 
     borneUpdateStatus(eventId2, 'live');

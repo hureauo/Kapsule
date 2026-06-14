@@ -566,3 +566,18 @@ causes que par parsing du message d'erreur.
 **À ne pas corriger maintenant.** Si l'UI doit un jour réagir différemment (ex. proposer
 « réessayer dans quelques secondes » seulement pour le push en cours), ajouter un champ
 `code` discriminant dans le body de la réponse (ex. `{ error, code: 'push_in_progress' }`).
+
+---
+
+## Phase S — S1 : regex UUID v4 stricte vs permissive
+
+**Fichier :** [validateParams.js:9](apps/hub/server/src/middleware/validateParams.js#L9)
+
+**Observation :** SECURITY.md (H1) proposait une regex permissive `/^[0-9a-f-]{36}$/`.
+L'implémentation retenue est plus stricte : UUID v4 complet (impose version `4` et
+variant `8/9/a/b`). C'est volontaire et meilleur (rejette davantage), puisque `events.id`
+et `videos.id` viennent toujours de `uuidv4()` en production.
+
+**À ne pas corriger maintenant.** Écart assumé vs le correctif proposé. Si un jour un
+identifiant non-v4 devait légitimement transiter par ces routes (très improbable), il
+faudrait assouplir la regex — mais ce serait un changement de contrat à réévaluer.
