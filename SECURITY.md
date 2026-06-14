@@ -178,7 +178,7 @@ Mitigation possible : token média court (5 min) ou `log_format` sans query stri
 | M1 | 🟠 Moyen | ✅ Corrigé | S4.1 — préfixe apostrophe sur `= + - @ \t \r` dans `videos.js` + `gallery.js` (`2d90264`) |
 | M2 | 🟠 Moyen | ✅ Corrigé | S3.1 — `limits: { fileSize, files: 1 }` sur les deux multer + MulterError → 413 (`3c5047a`) |
 | M3 | 🟠 Moyen | ⏸ Reporté | À traiter en fin de projet (durcissement déploiement, non prioritaire) |
-| L1 | 🟡 Faible | À corriger | |
-| L2 | 🟡 Faible | À corriger | Atténué (LAN offline) |
-| L3 | 🟡 Faible | À corriger | |
+| L1 | 🟡 Faible | ✅ Corrigé | S5.1 — `algorithms: ['HS256']` dans tous les `jwt.verify` + test alg:none (`dce0dda`) |
+| L2 | 🟡 Faible | ✅ Corrigé | S5.2 — `timingSafeEqual` pour le login admin Borne (`a9473bc`) |
+| L3 | 🟡 Faible | ✅ Corrigé | S5.3 — 5xx → message générique + log serveur (hub + borne) (`7af4d2e`) |
 | L4 | 🟡 Faible | Accepté | Déjà tracé PROJET.md §13 |

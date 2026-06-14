@@ -116,7 +116,7 @@ bloqué), relu par `kapsule-reviewer`, committé en sous-lot.
 ### S5 — Durcissements défense en profondeur (L1–L3, 🟡)
 - [x] S5.1 Épingler `algorithms: ['HS256']` dans tous les `jwt.verify` (hub + borne) + test
 - [x] S5.2 Login admin Borne : `crypto.timingSafeEqual` au lieu de `!==` sur le mot de passe + test
-- [ ] S5.3 Error handler : message générique pour les 500 côté client, détail loggé serveur (hub + borne) + test (pas de fuite de chemin/erreur SQL)
+- [x] S5.3 Error handler : message générique pour les 500 côté client, détail loggé serveur (hub + borne) + test (pas de fuite de chemin/erreur SQL)
 
 > **L4** (JWT en `?token=` dans les logs Nginx) : risque **accepté**, déjà tracé PROJET.md §13.
 > À réévaluer si un token média court (5 min) est introduit — hors périmètre de cette phase.
