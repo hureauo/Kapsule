@@ -175,7 +175,7 @@ Mitigation possible : token média court (5 min) ou `log_format` sans query stri
 | ID | Sévérité | Statut | Notes |
 |---|---|---|---|
 | H1 | 🔴 Élevé | ✅ Corrigé | S1.1 — `validateUuidParams` avant multer (`middleware/validateParams.js`) |
-| M1 | 🟠 Moyen | À corriger | |
+| M1 | 🟠 Moyen | ✅ Corrigé | S4.1 — préfixe apostrophe sur `= + - @ \t \r` dans `videos.js` + `gallery.js` (`2d90264`) |
 | M2 | 🟠 Moyen | ✅ Corrigé | S3.1 — `limits: { fileSize, files: 1 }` sur les deux multer + MulterError → 413 (`3c5047a`) |
 | M3 | 🟠 Moyen | ⏸ Reporté | À traiter en fin de projet (durcissement déploiement, non prioritaire) |
 | L1 | 🟡 Faible | À corriger | |

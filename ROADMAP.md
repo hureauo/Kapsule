@@ -111,7 +111,7 @@ bloqué), relu par `kapsule-reviewer`, committé en sous-lot.
 - [x] S3.1 `limits: { fileSize, files: 1 }` sur `uploadVideo` et `uploadDbFile` (`routes/sync.js`) + test (413/400 au-delà de la limite)
 
 ### S4 — Injection de formule CSV (M1, 🟠)
-- [ ] S4.1 Neutralisation des préfixes `= + - @ \t \r` dans l'échappement CSV (borne `videos.js` ET hub `gallery.js`) + test (prénom `=cmd…` exporté inerte)
+- [x] S4.1 Neutralisation des préfixes `= + - @ \t \r` dans l'échappement CSV (borne `videos.js` ET hub `gallery.js`) + test (prénom `=cmd…` exporté inerte)
 
 ### S5 — Durcissements défense en profondeur (L1–L3, 🟡)
 - [ ] S5.1 Épingler `algorithms: ['HS256']` dans tous les `jwt.verify` (hub + borne) + test
