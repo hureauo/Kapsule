@@ -36,6 +36,11 @@ export function openRegistry(dataDir) {
     );
   `);
 
+  // Migration douce : ajoute pulled_at/pushed_at si absents (base créée avant phase 3.4)
+  const cols = db.pragma('table_info(local_events)').map(c => c.name);
+  if (!cols.includes('pulled_at')) db.exec('ALTER TABLE local_events ADD COLUMN pulled_at DATETIME');
+  if (!cols.includes('pushed_at')) db.exec('ALTER TABLE local_events ADD COLUMN pushed_at DATETIME');
+
   _db = db;
   return _db;
 }

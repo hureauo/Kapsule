@@ -70,7 +70,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 - [x] 3.1 Hub : `middleware/boxAuth.js`, CRUD bornes super-admin (token affiché une fois), `last_seen_at`, `sync_log`
 - [x] 3.2 Hub : `GET /sync/assigned`, `GET /sync/events/:id/bundle` (ready→loaded), heartbeat `POST /status` (transitions avant uniquement)
 - [x] 3.3 Hub : `POST /manifest` (réponse `missing`), `PUT /files/:videoId` (recalcul sha256, 422 mismatch), `PUT /db` (fermer handle avant écrasement), `POST /finalize` (enfile les jobs)
-- [ ] 3.4 Borne : `hubClient.js` (retry/backoff), `pull.js` (règle `loaded` vérifiée à l'application)
+- [x] 3.4 Borne : `hubClient.js` (retry/backoff), `pull.js` (règle `loaded` vérifiée à l'application)
 - [ ] 3.5 Borne : `autoPull.js` (intervalle, heartbeat best effort silencieux)
 - [ ] 3.6 Borne : `push.js` (checkpoint → manifest → uploads manquants → db → finalize ; reprise via manifest ; exige `closed` → 409 sinon)
 - [ ] 3.7 Borne : `routes/sync.js` (status avec progression, pull/push manuels, purge si `pushed` + confirmation)
