@@ -569,6 +569,16 @@ causes que par parsing du message d'erreur.
 
 ---
 
+## Phase S — S4 : sanitizeCsv dupliquée entre Borne et Hub
+
+**Fichiers :** [videos.js:227](apps/borne/server/src/routes/videos.js#L227), [gallery.js:54](apps/hub/server/src/routes/gallery.js#L54)
+
+**Observation :** la fonction `sanitizeCsv` (regex `/^[=+\-@\t\r]/` + préfixe apostrophe) est définie à l'identique dans les deux apps. PROJET.md §4 ne prévoit pas de util CSV partagé entre les deux workspaces ; la duplication est donc conforme à l'arborescence contractuelle.
+
+**À ne pas factoriser maintenant.** Si un troisième endroit l'utilise, envisager d'ajouter un helper dans `@kapsule/core`.
+
+---
+
 ## Phase S — S3 : err?.name vs err.name dans le handler MulterError
 
 **Fichier :** [index.js:41](apps/hub/server/src/index.js#L41)

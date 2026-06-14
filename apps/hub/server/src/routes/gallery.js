@@ -49,6 +49,14 @@ export function makeGalleryRouter(dataDir) {
     }
   }
 
+  // Neutralise les préfixes de formule CSV (§S4/M1) : un prénom `=cmd|'/c calc'!A1`
+  // s'exécuterait à l'ouverture dans Excel/LibreOffice. On préfixe d'une apostrophe.
+  const sanitizeCsv = (v) => {
+    const s = String(v ?? '');
+    return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+  };
+  const escapeCsv = (v) => `"${sanitizeCsv(v).replace(/"/g, '""')}"`;
+
   // ── GET /api/events/:eventId/videos/export/csv ─── (AVANT /:videoId §11.1)
   router.get('/videos/export/csv', requirePushed, (req, res) => {
     const edb = openEventDb(req.params.eventId, dataDir);
@@ -67,8 +75,7 @@ export function makeGalleryRouter(dataDir) {
       ['id', 'filename', 'question_text', 'guest_name', 'consent_at', 'recorded_at',
        'size', 'duration_s', 'width', 'height'].join(','),
       ...videos.map((v) =>
-        [v.id, v.filename, `"${(v.question_text ?? '').replace(/"/g, '""')}"`,
-         `"${(v.guest_name ?? '').replace(/"/g, '""')}"`,
+        [v.id, v.filename, escapeCsv(v.question_text), escapeCsv(v.guest_name),
          v.consent_at, v.recorded_at, v.size, v.duration_s ?? '', v.width ?? '', v.height ?? '']
           .join(',')
       ),

@@ -224,7 +224,11 @@ export function makeVideosRouter(dataDir, cfg) {
 
       const headers = ['id','session_id','guest_name','consent_at','question_id',
                        'question_text','recorded_at','uploaded_at','size','filename','mime_type'];
-      const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      const sanitize = (v) => {
+        const s = String(v ?? '');
+        return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+      };
+      const escape = (v) => `"${sanitize(v).replace(/"/g, '""')}"`;
 
       const csv = [
         headers.join(','),

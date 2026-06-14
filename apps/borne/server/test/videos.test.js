@@ -250,6 +250,31 @@ describe('GET /api/videos/export/csv', () => {
     assert.ok(res.headers['content-type'].includes('text/csv'));
   });
 
+  test('neutralise les préfixes de formule CSV (§S4/M1)', async () => {
+    // Crée une session avec un guest_name malveillant
+    const malSessRes = await request(ctx.app)
+      .post('/api/sessions')
+      .send({ guest_name: '=cmd|"/c calc"!A1', consent: true });
+    assert.equal(malSessRes.status, 201);
+    const malSessId = malSessRes.body.id;
+
+    // Upload une vidéo avec une question_text malveillante
+    await request(ctx.app)
+      .post('/api/videos')
+      .field('session_id', malSessId)
+      .field('question_text', '+formule')
+      .attach('video', fakeVideoBuffer(), { filename: 'r.mp4', contentType: 'video/mp4' });
+
+    const res = await request(ctx.app)
+      .get('/api/videos/export/csv')
+      .set('Authorization', `Bearer ${ctx.token}`);
+    assert.equal(res.status, 200);
+    // Le préfixe = doit être précédé d'une apostrophe
+    assert.ok(res.text.includes("'=cmd"), `guest_name malveillant non neutralisé : ${res.text}`);
+    // Le préfixe + doit aussi être neutralisé
+    assert.ok(res.text.includes("'+formule"), `question_text malveillant non neutralisé : ${res.text}`);
+  });
+
   test('retourne 401 sans token', async () => {
     const res = await request(ctx.app).get('/api/videos/export/csv');
     assert.equal(res.status, 401);

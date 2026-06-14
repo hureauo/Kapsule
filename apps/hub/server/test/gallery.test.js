@@ -120,6 +120,29 @@ describe('GET /api/events/:id/videos/export/csv', () => {
     assert.ok(res.text.includes('question_text'));
     assert.ok(res.text.includes('Alice'));
   });
+
+  it('neutralise les préfixes de formule CSV (§S4/M1)', async () => {
+    // Insère une session avec un guest_name et une question_text malveillants
+    const malSessId = uuidv4();
+    const malVidId = uuidv4();
+    const edb = openEventDb(eventId, dir);
+    edb.prepare(`INSERT INTO sessions (id, guest_name, consent_at) VALUES (?, '=cmd|"/c calc"!A1', CURRENT_TIMESTAMP)`).run(malSessId);
+    edb.prepare(`
+      INSERT INTO videos (id, session_id, question_id, question_text, filename, mime_type, size, checksum)
+      VALUES (?, ?, 2, '+formule', 'mal.mp4', 'video/mp4', 1, 'x')
+    `).run(malVidId, malSessId);
+
+    const res = await request
+      .get(`/api/events/${eventId}/videos/export/csv`)
+      .set(auth(token));
+    assert.equal(res.status, 200);
+    // Le préfixe = doit être neutralisé par une apostrophe
+    assert.ok(res.text.includes("'=cmd"), `guest_name malveillant non neutralisé : ${res.text}`);
+    // Le préfixe + doit aussi être neutralisé
+    assert.ok(res.text.includes("'+formule"), `question_text malveillant non neutralisé : ${res.text}`);
+    // Les valeurs brutes dangereuses ne doivent pas apparaître en début de cellule CSV
+    assert.ok(!res.text.includes('"=cmd'), `préfixe = non neutralisé dans le CSV`);
+  });
 });
 
 // ── GET /videos/:videoId/file ─────────────────────────────────────────────────
