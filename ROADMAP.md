@@ -82,7 +82,7 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 
 ## Phase 4 — Traitement & galerie
 
-- [ ] 4.1 Worker : boucle de jobs (`pending` → `running` → `done|failed`), `ffmpeg.js` (spawn, pas de wrapper)
+- [x] 4.1 Worker : boucle de jobs (`pending` → `running` → `done|failed`), `ffmpeg.js` (spawn, pas de wrapper)
 - [ ] 4.2 Jobs `probe` + `thumbnail` (t=1s → `derived/`) + `archive` (ZIP mode **store**) ; passage `processed` quand tout est `done`
 - [ ] 4.3 `routes/gallery.js` (list + derived, stream Range, download, thumbnail, CSV avant `/:videoId`, archive 202 si pending, delete vidéo → ré-enfile `archive`) + tests
 - [ ] 4.4 `routes/admin.js` overview (stockage/événement, disque libre, jobs failed, bornes)

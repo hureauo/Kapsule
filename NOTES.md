@@ -6,6 +6,38 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 4.1 — Worker boucle de jobs + ffmpeg.js
+
+### `archive.js` : détection de la présence du ZIP côté galerie
+
+**Fichier :** [archive.js:42-45](apps/hub/server/src/worker/jobs/archive.js#L42)
+
+**Observation :** le job `archive` ne stocke pas le chemin du ZIP dans une colonne dédiée du registre — la galerie (4.3) devra détecter la présence du fichier via l'existence physique de `derived/archive.zip` et le statut `done` du job `archive`. C'est à clarifier explicitement lors de l'implémentation de `routes/gallery.js`.
+
+**À ne pas corriger maintenant.**
+
+---
+
+### `recoverOrphans` rejette sans plafond d'attempts
+
+**Fichier :** [worker/index.js](apps/hub/server/src/worker/index.js)
+
+**Observation :** un job qui crashe le worker en boucle sera rejoué indéfiniment car `recoverOrphans` ne plafonne pas `attempts`. La politique de retry/max-attempts est explicitement une piste écartée pour l'instant (PROJET.md §13). Si un job poison apparaît, la seule sortie est une intervention manuelle (supprimer ou passer le job en `failed` en base).
+
+**À ne pas corriger maintenant.**
+
+---
+
+### `process.argv[1]` fragile pour détection du point d'entrée
+
+**Fichier :** [worker/index.js](apps/hub/server/src/worker/index.js)
+
+**Observation :** `process.argv[1] === new URL(import.meta.url).pathname` peut échouer si lancé via symlink ou chemin non canonique. `fileURLToPath(import.meta.url)` serait plus robuste.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 3.9 — Tests d'intégration du protocole
 
 ### Heartbeat `closed` envoyé par `push.js` peut sauter la phase `live` sur le Hub
