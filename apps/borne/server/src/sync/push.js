@@ -14,6 +14,9 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 const _state = { running: false, total: 0, done: 0, currentFile: null, lastError: null };
 export function getPushState() { return { ..._state }; }
 
+/** Test-only : force le flag running (pour vérifier les gardes qui en dépendent). */
+export function _setPushRunning(v) { _state.running = v; }
+
 /**
  * Checkpoint WAL + retourne le sha256 du db.sqlite.
  */

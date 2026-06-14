@@ -550,3 +550,19 @@ ajoute un composant persistent de lecture vidéo sans remount.
 
 **À ne pas corriger maintenant.** Si ce bug se manifeste, ajouter un cache-buster à
 `guestVideoUrl` (ex. `?t=<uploaded_at>` récupéré depuis les `answers`).
+
+---
+
+## Audit — correctif §6 (activate refusé pendant un push)
+
+### 409 non discriminé entre « event pushed/purged » et « push en cours »
+
+**Fichier :** [events.js:62](apps/borne/server/src/routes/events.js#L62)
+
+**Observation :** le garde « push en cours » renvoie le même code 409 que le contrôle
+`pushed/purged` juste au-dessus. Conforme à §6, mais le front ne peut distinguer les deux
+causes que par parsing du message d'erreur.
+
+**À ne pas corriger maintenant.** Si l'UI doit un jour réagir différemment (ex. proposer
+« réessayer dans quelques secondes » seulement pour le push en cours), ajouter un champ
+`code` discriminant dans le body de la réponse (ex. `{ error, code: 'push_in_progress' }`).

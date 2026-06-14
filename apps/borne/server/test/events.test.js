@@ -7,6 +7,7 @@ import request from 'supertest';
 import { createApp } from '../src/index.js';
 import { closeRegistry, updateEventStatus } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
+import { _setPushRunning } from '../src/sync/push.js';
 
 const TEST_CFG = { adminPassword: 'test', jwtSecret: 'secret-test', dataDir: '' };
 
@@ -115,6 +116,23 @@ describe('PUT /api/events/:id/activate', () => {
   test('retourne 401 sans token', async () => {
     const res = await request(ctx.app).put('/api/events/x/activate');
     assert.equal(res.status, 401);
+  });
+
+  test('retourne 409 si un push est en cours (§6)', async () => {
+    const created = await request(ctx.app)
+      .post('/api/events')
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ name: 'Evt push' });
+    _setPushRunning(true);
+    try {
+      const res = await request(ctx.app)
+        .put(`/api/events/${created.body.id}/activate`)
+        .set('Authorization', `Bearer ${ctx.token}`);
+      assert.equal(res.status, 409);
+      assert.match(res.body.error, /push/i);
+    } finally {
+      _setPushRunning(false); // ne pas polluer les autres tests (état module partagé)
+    }
   });
 });
 

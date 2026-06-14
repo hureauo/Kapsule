@@ -9,6 +9,7 @@ import {
   getActiveEvent, listEvents, insertEvent, setActiveEvent, updateEventStatus,
 } from '../registry.js';
 import { getActiveEventDb } from '../eventDb.js';
+import { getPushState } from '../sync/push.js';
 
 export function makeEventsRouter(dataDir, cfg) {
   const router = Router();
@@ -55,6 +56,11 @@ export function makeEventsRouter(dataDir, cfg) {
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
       if (event.status === 'pushed' || event.status === 'purged') {
         return res.status(409).json({ error: 'Impossible d\'activer un événement déjà poussé ou purgé' });
+      }
+      // §6 : activation refusée pendant un push en cours (changer d'événement actif
+      // pendant que push.js lit la BD/les fichiers d'un autre event = état incohérent)
+      if (getPushState().running) {
+        return res.status(409).json({ error: 'Un push est en cours — réessayez après' });
       }
       setActiveEvent(id);
       res.json(listEvents().find(e => e.id === id));
