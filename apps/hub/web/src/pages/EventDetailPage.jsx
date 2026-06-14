@@ -4,6 +4,7 @@ import { api, clearToken } from '../api/client.js';
 import { DEFAULTS } from '@kapsule/core';
 import QuestionEditor from '../components/QuestionEditor.jsx';
 import SyncStatus from '../components/SyncStatus.jsx';
+import VideoGallery from '../components/VideoGallery.jsx';
 
 const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
 const TABS = ['Questions', 'Synchro', 'Galerie'];
@@ -190,7 +191,11 @@ export default function EventDetailPage() {
 
         {tab === 'Galerie' && (
           <div className="tab-content">
-            <p className="text--muted">Galerie disponible après push (phase 4).</p>
+            {!['pushed', 'processed'].includes(event.status) ? (
+              <p className="text--muted">La galerie est disponible après le push de la borne.</p>
+            ) : (
+              <VideoGallery eventId={id} eventName={event.name} />
+            )}
           </div>
         )}
       </main>

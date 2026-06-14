@@ -41,8 +41,22 @@ export const api = {
 
   getSyncInfo: (eventId) => apiFetch(`/events/${eventId}/sync`),
 
+  // Galerie
+  listVideos: (eventId) => apiFetch(`/events/${eventId}/videos`),
+  deleteVideo: (eventId, videoId) => apiFetch(`/events/${eventId}/videos/${videoId}`, { method: 'DELETE' }),
+  getArchiveStatus: (eventId) => fetch(`/api/events/${eventId}/archive`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  }),
+
+  // Admin overview + boxes
+  getOverview: () => apiFetch('/admin/overview'),
+  createBox: (name) => apiFetch('/admin/boxes', { method: 'POST', body: { name } }),
+  deleteBox: (id) => apiFetch(`/admin/boxes/${id}`, { method: 'DELETE' }),
+
   // URL directe avec ?token= pour téléchargements (invariant §11.2)
   videoStreamUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/file?token=${getToken()}`,
   videoDownloadUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/download?token=${getToken()}`,
+  thumbnailUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/thumbnail?token=${getToken()}`,
   csvExportUrl: (eventId) => `/api/events/${eventId}/videos/export/csv?token=${getToken()}`,
+  archiveUrl: (eventId) => `/api/events/${eventId}/archive?token=${getToken()}`,
 };

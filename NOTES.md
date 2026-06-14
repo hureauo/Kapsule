@@ -6,6 +6,18 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase 4.5 — Frontend Hub VideoGallery + AdminPage
+
+### Duplication de helpers de formatage entre VideoGallery et AdminPage
+
+**Fichiers :** [VideoGallery.jsx](apps/hub/web/src/components/VideoGallery.jsx), [AdminPage.jsx](apps/hub/web/src/pages/AdminPage.jsx)
+
+**Observation :** `formatSize`/`formatBytes` et `formatDate` sont définis dans les deux composants séparément. Factorisable dans un util frontend partagé.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 4.3 — routes/gallery.js
 
 ### Pas de 416 Range Not Satisfiable
