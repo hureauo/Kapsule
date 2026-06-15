@@ -20,12 +20,13 @@ function retryDelay(attempt) { return Math.min(2000 * Math.pow(2, attempt - 1), 
 
 // ── Composant principal ───────────────────────────────────────────────────────
 // Keyé par questionIndex dans le parent → remount forcé à chaque question.
+// V2 : plus de prop onBack (bouton « ← Retour » retiré — design/parcours-invite.md §12).
+// Navigation en arrière possible uniquement depuis le récap (RecapScreen.onGo).
 export default function RecordingScreen({
   question,
   sessionId,
   existingVideoId,   // id si déjà répondue → sous-état ANSWERED
   onNext,
-  onBack,
   onLockChange,      // remonte au parent l'état de verrouillage de la nav basse
 }) {
   const [subState, setSubState] = useState(existingVideoId ? S.ANSWERED : S.INTRO);
@@ -47,8 +48,12 @@ export default function RecordingScreen({
     }
   }, [subState]);
 
+  // V2.6 : caméra live aussi en RECORDING (le flux getUserMedia reste actif).
+  // attachPreview ne dépend que de streamRef — pas du statut READY/RECORDING.
   useEffect(() => {
-    if (subState === S.INTRO && recorder.status === REC_STATUS.READY && videoPreviewRef.current) {
+    const inLiveState = subState === S.INTRO || subState === S.RECORDING;
+    const streamActive = recorder.status === REC_STATUS.READY || recorder.status === REC_STATUS.RECORDING;
+    if (inLiveState && streamActive && videoPreviewRef.current) {
       recorder.attachPreview(videoPreviewRef.current);
     }
   }, [subState, recorder.status]);
@@ -168,7 +173,6 @@ export default function RecordingScreen({
           )}
         </div>
         <div className="rec__actions">
-          <button className="btn btn--ghost" onClick={onBack}>← Retour</button>
           <button
             className="btn btn--record btn--large"
             onClick={() => {
@@ -202,6 +206,17 @@ export default function RecordingScreen({
         <div className="rec__live-indicator" aria-live="polite">
           <span className="rec__dot rec__dot--blink" aria-hidden="true" /> REC
           &nbsp;&nbsp;{formatDuration(recorder.duration)}
+        </div>
+        {/* Caméra live pendant l'enregistrement — l'invité se voit (V2.6).
+            playsInline + muted obligatoires pour Safari (invariant §11.5). */}
+        <div className="rec__camera-wrap">
+          <video
+            ref={videoPreviewRef}
+            className="rec__camera-preview"
+            muted
+            autoPlay
+            playsInline
+          />
         </div>
         <div className="rec__progress-bar rec__progress-bar--recording">
           <div className="rec__progress-fill" style={{ width: `${progress * 100}%` }} />

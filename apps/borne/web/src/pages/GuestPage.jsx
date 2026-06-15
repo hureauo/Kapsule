@@ -79,34 +79,6 @@ function ResumeScreen({ guestName, onResume, onRestart }) {
   );
 }
 
-// Modale d'inactivité : compte à rebours 30 s puis retour accueil (spec §8).
-// La session abandonnée reste en base.
-const IDLE_MODAL_S = 30;
-
-function IdleModal({ onStay, onLeave }) {
-  const [remaining, setRemaining] = useState(IDLE_MODAL_S);
-
-  useEffect(() => {
-    if (remaining <= 0) { onLeave(); return; }
-    const t = setTimeout(() => setRemaining((r) => r - 1), 1000);
-    return () => clearTimeout(t);
-  }, [remaining, onLeave]);
-
-  return (
-    <div className="idle-modal-overlay">
-      <div className="idle-modal">
-        <h2 className="idle-modal__title">Tu es toujours là ?</h2>
-        <p className="text--muted idle-modal__countdown">
-          Retour à l'accueil dans {remaining} s…
-        </p>
-        <button className="btn btn--primary btn--large" onClick={onStay}>
-          Oui, je continue
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ── Machine à états principale ────────────────────────────────────────────────
 // États : loading | error | closed | resume | start | name | questions | recap | thanks
 
@@ -117,27 +89,36 @@ const S = {
   RECAP: 'recap', THANKS: 'thanks',
 };
 
-// Écrans sur lesquels le timeout d'inactivité est actif.
-// QUESTIONS est exclu : rec/upload y vivent et ne doivent jamais être interrompus.
-const IDLE_SCREENS = new Set([S.RESUME, S.START, S.NAME, S.RECAP, S.THANKS]);
+// V2.8 — inactivité recentrée sur NAME uniquement : seul écran où un invité peut
+// « bloquer » la borne (clavier affiché, personne devant). Sur NAME il n'y a rien
+// à perdre → retour direct accueil sans modale intermédiaire (design/parcours-invite.md §9).
+// QUESTIONS exclu : rec/upload y vivent et ne doivent jamais être interrompus.
+const IDLE_SCREENS = new Set([S.NAME]);
 
 export default function GuestPage() {
   const [screen, setScreen] = useState(S.LOADING);
   const [event, setEvent] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [errorMsg, setErrorMsg] = useState('');
-  const [idleModalVisible, setIdleModalVisible] = useState(false);
   const [navLocked, setNavLocked] = useState(false); // verrou nav basse pendant rec/upload
 
   const [sessionId, setSessionId] = useState(null);
   const [guestName, setGuestName] = useState('');
   const [questionIndex, setQuestionIndex] = useState(0);
+  // V2.5 — origine d'entrée dans une question : 'flow' (parcours linéaire) ou
+  // 'recap' (ré-enregistrement depuis le récap). Détermine où aller après l'upload.
+  const [questionOrigin, setQuestionOrigin] = useState('flow');
   const [answers, setAnswers] = useState([]);
 
+  // V2.7 — confirmation avant retour accueil
+  const [homeConfirmVisible, setHomeConfirmVisible] = useState(false);
+
   const idleTimerRef = useRef(null);
+  // Ref stable vers handleRestart pour le callback idle, afin d'éviter une
+  // dépendance circulaire dans resetIdleTimer (qui est un useCallback stable).
+  const handleRestartRef = useRef(null);
 
   const loadEvent = useCallback(async () => {
-    setIdleModalVisible(false);
     setScreen(S.LOADING);
     try {
       const [evtData, qData] = await Promise.all([api.getEvent(), api.getQuestions()]);
@@ -145,7 +126,6 @@ export default function GuestPage() {
       setQuestions(qData.filter((q) => q.enabled));
 
       // Applique le thème choisi par l'admin (data-theme sur <html>) — défaut 'cute'.
-      // Le CSS recalcule juste les variables ; aucun re-render React lié au thème.
       document.documentElement.setAttribute('data-theme', evtData.theme ?? 'cute');
 
       if (evtData.status === 'closed') {
@@ -181,12 +161,13 @@ export default function GuestPage() {
     } catch { /* non bloquant */ }
   }, [sessionId]);
 
-  // ── Timeout d'inactivité (spec §8) ───────────────────────────────────────────
+  // ── Timeout d'inactivité v2 (NAME uniquement → retour direct accueil) ─────────
   const idleMs = (event?.idle_timeout ?? DEFAULTS.IDLE_TIMEOUT_S) * 1000;
 
   const resetIdleTimer = useCallback(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-    idleTimerRef.current = setTimeout(() => setIdleModalVisible(true), idleMs);
+    // Appelle handleRestart via ref : ne dépend pas de handleRestart (récréé chaque render)
+    idleTimerRef.current = setTimeout(() => handleRestartRef.current?.(), idleMs);
   }, [idleMs]);
 
   useEffect(() => {
@@ -212,14 +193,21 @@ export default function GuestPage() {
     setSessionId(sid);
     setGuestName(name);
     setQuestionIndex(0);
+    setQuestionOrigin('flow');
     setAnswers([]);
     saveSession(sid, name, 0);
     setScreen(S.QUESTIONS);
   }
 
+  // Après l'upload d'une réponse :
+  // - origine 'recap' → retour au récap (ré-enregistrement terminé)
+  // - origine 'flow' → question suivante, ou récap si dernière question
   function handleQuestionNext() {
     refreshAnswers();
-    if (questionIndex < questions.length - 1) {
+    if (questionOrigin === 'recap') {
+      setQuestionOrigin('flow'); // reset pour la prochaine fois
+      setScreen(S.RECAP);
+    } else if (questionIndex < questions.length - 1) {
       const next = questionIndex + 1;
       saveSession(sessionId, guestName, next);
       setQuestionIndex(next);
@@ -229,28 +217,21 @@ export default function GuestPage() {
     }
   }
 
-  function handleQuestionBack() {
-    refreshAnswers();
-    if (questionIndex > 0) {
-      const prev = questionIndex - 1;
-      saveSession(sessionId, guestName, prev);
-      setQuestionIndex(prev);
-    } else {
-      setScreen(S.NAME);
-    }
-  }
-
+  // Navigation par pastille (barre basse) → flux normal, pas depuis le récap
   function handleGoQuestion(i) {
     if (i >= 0 && i < questions.length) {
       refreshAnswers();
       saveSession(sessionId, guestName, i);
       setQuestionIndex(i);
+      setQuestionOrigin('flow');
     }
   }
 
+  // Navigation depuis le récap → après upload, revenir au récap
   function handleRecapGo(i) {
     saveSession(sessionId, guestName, i);
     setQuestionIndex(i);
+    setQuestionOrigin('recap');
     setScreen(S.QUESTIONS);
   }
 
@@ -260,19 +241,33 @@ export default function GuestPage() {
   }
 
   function handleRestart() {
-    clearSavedSession(); // timeout d'inactivité → nettoyage (spec §8)
+    clearSavedSession(); // reset complet (inactivité ou bouton Accueil)
     setSessionId(null);
     setGuestName('');
     setQuestionIndex(0);
+    setQuestionOrigin('flow');
     setAnswers([]);
+    setHomeConfirmVisible(false);
     loadEvent();
   }
+
+  // Exposer handleRestart via ref pour le callback idle (resetIdleTimer ne peut
+  // pas dépendre directement de handleRestart sans le recréer à chaque render)
+  handleRestartRef.current = handleRestart;
 
   // Reprise : l'utilisateur accepte de reprendre sa session sauvegardée
   function handleResume() {
     refreshAnswers();
     setScreen(S.QUESTIONS);
   }
+
+  // Bouton Accueil visible sur tous les écrans du parcours sauf pendant le
+  // verrou nav (COUNTDOWN/RECORDING/UPLOADING) et les écrans système (V2.7).
+  const showHomeButton =
+    !navLocked &&
+    screen !== S.LOADING &&
+    screen !== S.ERROR &&
+    screen !== S.CLOSED;
 
   // ── Rendu ─────────────────────────────────────────────────────────────────────
 
@@ -282,12 +277,36 @@ export default function GuestPage() {
 
   return (
     <>
-      {/* Modale d'inactivité — superposée à tout écran IDLE_SCREENS */}
-      {idleModalVisible && (
-        <IdleModal
-          onStay={() => { setIdleModalVisible(false); resetIdleTimer(); }}
-          onLeave={handleRestart}
-        />
+      {/* Bouton Accueil 🏠 — coin haut gauche, sauf pendant le REC/upload (V2.7) */}
+      {showHomeButton && (
+        <button
+          className="guest-home-btn"
+          aria-label="Retourner à l'accueil"
+          onClick={() => setHomeConfirmVisible(true)}
+        >
+          🏠
+        </button>
+      )}
+
+      {/* Modal de confirmation retour accueil — action destructive (V2.7) */}
+      {homeConfirmVisible && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal">
+            <h3 className="modal__title">Revenir à l'accueil ?</h3>
+            <p className="text--muted">Tes réponses seront perdues.</p>
+            <div className="modal__actions">
+              <button
+                className="btn btn--small btn--secondary"
+                onClick={() => setHomeConfirmVisible(false)}
+              >
+                Annuler
+              </button>
+              <button className="btn btn--small btn--danger" onClick={handleRestart}>
+                Tout effacer
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {screen === S.RESUME && (
@@ -321,10 +340,9 @@ export default function GuestPage() {
               sessionId={sessionId}
               existingVideoId={existingAnswer?.video_id ?? null}
               onNext={handleQuestionNext}
-              onBack={handleQuestionBack}
               onLockChange={setNavLocked}
             />
-            {/* Barre de progression en BAS (design/parcours-invite.md) */}
+            {/* Barre de progression en BAS (design/parcours-invite.md §12) */}
             <QuestionNav
               questions={questions}
               currentIndex={questionIndex}
@@ -353,7 +371,13 @@ export default function GuestPage() {
         />
       )}
 
-      {screen === S.THANKS && <ThankYouScreen onRestart={handleRestart} />}
+      {/* V2.3 : thanksText branché sur event.thanks_text */}
+      {screen === S.THANKS && (
+        <ThankYouScreen
+          onRestart={handleRestart}
+          thanksText={event?.thanks_text}
+        />
+      )}
     </>
   );
 }

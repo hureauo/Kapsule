@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 
 const AUTO_RETURN_S = 15;
 
-export default function ThankYouScreen({ onRestart }) {
+export default function ThankYouScreen({ onRestart, thanksText }) {
   const [remaining, setRemaining] = useState(AUTO_RETURN_S);
 
   // Auto-retour à l'accueil après 15 s (spec §8)
@@ -16,7 +16,9 @@ export default function ThankYouScreen({ onRestart }) {
     <div className="screen screen--center">
       <div className="done__icon" aria-hidden="true">🎬</div>
       <h2 className="screen__title">Merci !</h2>
-      <p className="text--muted">Votre témoignage a bien été enregistré.</p>
+      <p className="text--muted">
+        {thanksText || 'Votre témoignage a bien été enregistré.'}
+      </p>
       <p className="text--muted">Retour automatique dans {remaining} s…</p>
       <button className="btn btn--secondary btn--large" onClick={onRestart}>
         Terminer maintenant

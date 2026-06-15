@@ -31,7 +31,7 @@ window.DOCS_PAGES = [
     group: "2 — Le package partagé",
     pages: [
       { slug: "core-index", title: "core/index.js — le barrel", js: ["barrel / ré-export", "export *"] },
-      { slug: "core-constants", title: "core/constants.js", js: ["const exporté", "objet figé", "liste blanche (THEMES)"] },
+      { slug: "core-constants", title: "core/constants.js", js: ["const exporté", "objet figé", "liste blanche (THEMES)", "TEXT_FIELDS (textes éditables)"] },
       { slug: "core-validate", title: "core/validate.js", js: ["fonction pure", "Number / Number.isInteger", "throw / Error"] },
       { slug: "core-eventdbschema", title: "core/eventDbSchema.js", js: ["better-sqlite3", "new Database", "pragma", "exec", "prepare / run / get / all", "transaction", "WAL"] },
       { slug: "core-checksum", title: "core/checksum.js", js: ["node:crypto", "createReadStream", "stream / events", "Promise manuelle"] },
@@ -66,7 +66,7 @@ window.DOCS_PAGES = [
       { slug: "borne-eventdb", title: "borne/eventDb.js — handle unique", js: [] },
       { slug: "borne-middleware-auth", title: "borne/middleware/auth.js", js: ["timingSafeEqual", "Buffer", "closure de config"] },
       { slug: "borne-index", title: "borne/index.js", js: ["injection de config"] },
-      { slug: "borne-routes-events", title: "borne/routes/events.js", js: ["statfs", "preflight", "thème (event_meta)", "upsert ON CONFLICT"] },
+      { slug: "borne-routes-events", title: "borne/routes/events.js", js: ["statfs", "preflight", "thème (event_meta)", "upsert ON CONFLICT", "textes éditables (settings)"] },
       { slug: "borne-routes-sessions", title: "borne/routes/sessions.js", js: ["capability token", "machine à états"] },
       { slug: "borne-routes-videos", title: "borne/routes/videos.js — upload", js: ["fileFilter Safari", "transaction DELETE+INSERT", "unlink après commit"] },
       { slug: "borne-routes-questions", title: "borne/routes/questions.js", js: [] },

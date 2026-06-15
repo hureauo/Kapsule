@@ -58,9 +58,9 @@
   manuellement.
 </p>
 
-<h2>Régler le thème : <code>PUT /events/:id/settings</code></h2>
+<h2>Régler thème + textes : <code>PUT /events/:id/settings</code></h2>
 <pre><code class="js">// Réglages d'événement (config, pas donnée invité → conforme RGPD §11).
-// Pour l'instant : le thème visuel du parcours invité. Écrit dans event_meta.
+// Thème visuel + textes éditables du parcours invité. Écrit dans event_meta.
 router.put('/events/:id/settings', auth, (req, res, next) =&gt; {
   try {
     const { id } = req.params;
@@ -72,31 +72,60 @@ router.put('/events/:id/settings', auth, (req, res, next) =&gt; {
       return res.status(400).json({ error: `Thème invalide (attendu : ${THEMES.join(', ')})` });
     }
 
-    // Le thème ne concerne que l'événement vu par les invités (l'actif).
-    // Restreindre à l'actif évite aussi que getActiveEventDb (cache à un slot)
-    // ne ferme le handle de l'actif en ouvrant celui d'un autre événement.
+    // Valider les champs texte présents dans le body.
+    const textUpdates = {};
+    for (const key of Object.keys(TEXT_FIELDS)) {
+      const val = req.body[key];
+      if (val === undefined) continue;
+      if (typeof val !== 'string') {
+        return res.status(400).json({ error: `Champ "${key}" doit être une chaîne` });
+      }
+      if (val.length &gt; TEXT_FIELD_MAX) {
+        return res.status(400).json({ error: `Champ "${key}" dépasse ${TEXT_FIELD_MAX} caractères` });
+      }
+      textUpdates[key] = val.trim();
+    }
+
+    // Le thème et les textes ne concernent que l'événement actif (cache 1 slot).
     const activeEvent = getActiveEvent();
     if (!activeEvent || activeEvent.id !== id) {
       return res.status(409).json({ error: 'Seul l\'événement actif peut être configuré' });
     }
 
     const db = getActiveEventDb(dataDir, activeEvent);
-    if (theme !== undefined) {
-      db.prepare(`INSERT INTO event_meta (key, value) VALUES ('theme', ?)
-                  ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(theme);
-    }
+    const upsertMeta = db.prepare(
+      `INSERT INTO event_meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
+    if (theme !== undefined) upsertMeta.run('theme', theme);
+    for (const [key, val] of Object.entries(textUpdates)) upsertMeta.run(key, val);
+
     const getMeta = (key) =&gt; db.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value ?? null;
-    res.json({ id, theme: getMeta('theme') ?? DEFAULTS.THEME });
+    const consent = getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT;
+    res.json({
+      id, theme: getMeta('theme') ?? DEFAULTS.THEME,
+      welcome_title:    getMeta('welcome_title')    || activeEvent.name,
+      welcome_subtitle: getMeta('welcome_subtitle') || consent.split('\n')[0],
+      name_prompt:      getMeta('name_prompt')      ?? DEFAULTS.NAME_PROMPT,
+      consent_text:     consent,
+      consent_details:  getMeta('consent_details')  ?? DEFAULTS.CONSENT_DETAILS,
+      thanks_text:      getMeta('thanks_text')      ?? DEFAULTS.THANKS_TEXT,
+    });
   } catch (err) { next(err); }
 });</code></pre>
 <p>
-  Cette route admin permet de changer le <strong>thème visuel du parcours invité</strong>
-  (sélectionné depuis le panneau admin). Quatre gardes, dans l'ordre : <strong>404</strong> si l'id
-  n'existe pas, <strong>400</strong> si le thème reçu n'est pas dans la liste blanche
-  <a href="#/core-constants">THEMES</a>, <strong>409</strong> si l'événement n'est pas l'actif,
-  <strong>401</strong> si pas authentifié (le middleware <code>auth</code> en amont). L'écriture se
-  fait en <em>upsert</em> (<code>ON CONFLICT … DO UPDATE</code>) sur la clé <code>theme</code> de
-  <code>event_meta</code>.
+  Cette route admin (une seule route « settings » <strong>générique</strong>) règle à la fois le
+  <strong>thème visuel</strong> et les <strong>textes du parcours invité</strong> (titre d'accueil,
+  invite prénom, consentement, « En savoir plus », remerciement). Gardes dans l'ordre :
+  <strong>404</strong> si l'id n'existe pas, <strong>400</strong> si le thème n'est pas dans la liste
+  blanche <a href="#/core-constants">THEMES</a> <em>ou</em> si un champ texte n'est pas une chaîne /
+  dépasse <code>TEXT_FIELD_MAX</code>, <strong>409</strong> si l'événement n'est pas l'actif,
+  <strong>401</strong> si pas authentifié (middleware <code>auth</code> en amont). On itère
+  <a href="#/core-constants">TEXT_FIELDS</a> pour ne valider/écrire que les clés <em>présentes</em>
+  dans le body (un champ <code>undefined</code> est laissé tel quel), chaque valeur étant
+  <code>trim()</code>-ée. L'écriture est un <em>upsert</em> (<code>ON CONFLICT … DO UPDATE</code>) ;
+  on prépare la requête <strong>une fois</strong> et on la rejoue pour le thème puis chaque texte. La
+  réponse renvoie l'état résolu (avec les fallbacks dynamiques de <code>welcome_*</code>), ce qui
+  permet à l'admin de réafficher les valeurs trimées.
 </p>
 
 <div class="callout info">
@@ -187,20 +216,34 @@ router.put('/events/:id/settings', auth, (req, res, next) =&gt; {
   const db = getActiveEventDb(dataDir, activeEvent);
   const getMeta = (key) =&gt; db.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value ?? null;
 
+  // welcome_title / welcome_subtitle ont un défaut DYNAMIQUE (vide dans DEFAULTS) :
+  // titre ← nom de l'événement, sous-titre ← 1ʳᵉ ligne du consentement.
+  const consent = getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT;
+  const textOrDefault = (key) =&gt; getMeta(key) ?? TEXT_FIELDS[key];
+
   res.json({
     id: activeEvent.id, name: activeEvent.name, status: activeEvent.status,
-    consent_text: getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT,
+    consent_text: consent,
     idle_timeout: parseInt(getMeta('idle_timeout') ?? String(DEFAULTS.IDLE_TIMEOUT_S), 10),
     theme: getMeta('theme') ?? DEFAULTS.THEME,
+    welcome_title: getMeta('welcome_title') || activeEvent.name,
+    welcome_subtitle: getMeta('welcome_subtitle') || consent.split('\n')[0],
+    name_prompt: textOrDefault('name_prompt'),
+    consent_details: textOrDefault('consent_details'),
+    thanks_text: textOrDefault('thanks_text'),
   });
 });</code></pre>
 <p>
-  C'est ce que le kiosque (l'iPad) interroge pour savoir quel événement afficher : nom, texte de
-  consentement, délai d'inactivité, et le <strong>thème</strong> (appliqué au chargement en
-  <code>data-theme</code> sur <code>&lt;html&gt;</code>). Les valeurs viennent de
-  <code>event_meta</code>, avec un repli sur les <a href="#/core-constants">DEFAULTS</a> si non définies. <code>getMeta</code> est un petit
-  helper local (closure sur <code>db</code>) qui lit une clé meta, avec optional chaining + nullish
-  pour gérer l'absence.
+  C'est ce que le kiosque (l'iPad) interroge pour savoir quoi afficher : nom, texte de
+  consentement, délai d'inactivité, le <strong>thème</strong> (appliqué au chargement en
+  <code>data-theme</code> sur <code>&lt;html&gt;</code>) et tous les <strong>textes éditables</strong>
+  du parcours. Les valeurs viennent de <code>event_meta</code>, avec repli sur les
+  <a href="#/core-constants">DEFAULTS</a> si non définies. Subtilité importante : le serveur résout
+  ici les <strong>fallbacks dynamiques</strong> — <code>welcome_title</code> retombe sur le nom de
+  l'événement et <code>welcome_subtitle</code> sur la 1ʳᵉ ligne du consentement (l'opérateur
+  <code>||</code> traite aussi la chaîne vide stockée comme « non défini »). Le client n'a donc
+  jamais à connaître ces défauts ; il affiche directement <code>event.welcome_title</code>,
+  <code>event.name_prompt</code>, <code>event.thanks_text</code>, etc.
 </p>
 
 <table class="api-table">
@@ -209,7 +252,7 @@ router.put('/events/:id/settings', auth, (req, res, next) =&gt; {
   <tr><td>POST /events</td><td>admin</td><td>Crée un événement local (origine 'local').</td></tr>
   <tr><td>PUT /events/:id/activate</td><td>admin</td><td>Rend un événement actif (refusé si push en cours).</td></tr>
   <tr><td>PUT /events/:id/close</td><td>admin</td><td>Clôture un événement live.</td></tr>
-  <tr><td>PUT /events/:id/settings</td><td>admin</td><td>Règle le thème du parcours invité (event actif seulement). 400 thème invalide, 404 id inconnu, 409 si pas l'actif.</td></tr>
+  <tr><td>PUT /events/:id/settings</td><td>admin</td><td>Règle le thème + les textes du parcours invité (event actif seulement). 400 thème/texte invalide, 404 id inconnu, 409 si pas l'actif.</td></tr>
   <tr><td>GET /preflight</td><td>admin</td><td>Vérifs : événement chargé, questions, disque, horloge.</td></tr>
-  <tr><td>GET /event</td><td><strong>public</strong></td><td>L'événement actif pour le kiosque (dont le <code>theme</code>).</td></tr>
+  <tr><td>GET /event</td><td><strong>public</strong></td><td>L'événement actif pour le kiosque (<code>theme</code> + textes résolus avec leurs fallbacks dynamiques).</td></tr>
 </table>

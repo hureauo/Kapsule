@@ -7,9 +7,12 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
   const [consented, setConsented] = useState(false); // non pré-cochée (RGPD obligatoire)
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false); // popup « En savoir plus »
 
   const consentText = event?.consent_text ??
     'J\'accepte que mes vidéos soient enregistrées et transmises à l\'organisateur.';
+  // name_prompt vient de GET /event (déjà résolu avec son défaut) — design/parcours-invite.md §11
+  const namePrompt = event?.name_prompt ?? 'Comment vous appelez-vous ?';
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -37,7 +40,7 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
 
   return (
     <div className="screen screen--name">
-      <h2 className="screen__title">Comment vous appelez-vous ?</h2>
+      <h2 className="screen__title">{namePrompt}</h2>
 
       <form className="name-form" onSubmit={handleSubmit}>
         <input
@@ -51,11 +54,23 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
           disabled={loading}
         />
 
-        {/* Bloc consentement RGPD — texte scrollable + case à cocher tactile */}
+        {/* Bloc consentement RGPD — texte scrollable + bouton détail + case à cocher tactile */}
         <div className="consent-block">
           <div className="consent-block__text" role="region" aria-label="Texte de consentement">
             {consentText}
           </div>
+
+          {/* Bouton « En savoir plus » — ouvre la popup de détail (V2.4) */}
+          {event?.consent_details && (
+            <button
+              type="button"
+              className="btn btn--ghost consent-block__details-btn"
+              onClick={() => setDetailsOpen(true)}
+            >
+              En savoir plus
+            </button>
+          )}
+
           <label className="consent-block__label">
             <input
               className="consent-block__checkbox"
@@ -64,9 +79,7 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
               onChange={(e) => { setConsented(e.target.checked); setError(''); }}
               disabled={loading}
             />
-            <span className="consent-block__caption">
-              J'accepte que mes vidéos soient enregistrées et transmises à l'organisateur
-            </span>
+            <span className="consent-block__caption">J'accepte</span>
           </label>
         </div>
 
@@ -85,6 +98,26 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
       <button className="btn btn--ghost" onClick={onBack} disabled={loading}>
         ← Retour
       </button>
+
+      {/* Popup « En savoir plus » — informatif, un seul bouton Fermer (V2.4) */}
+      {detailsOpen && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-label="En savoir plus">
+          <div className="modal consent-details-modal">
+            <h3 className="modal__title">En savoir plus</h3>
+            <div className="consent-details-modal__body">
+              {event.consent_details}
+            </div>
+            <div className="modal__actions">
+              <button
+                className="btn btn--primary"
+                onClick={() => setDetailsOpen(false)}
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -63,6 +63,21 @@ Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.s
   EventPanel.jsx ; tests events.test.js couverts par le pattern générique de tests-runner.
 - Vérifs : manifeste/fichiers OK (0/0), liens internes OK, `node --check pages.js` OK.
 
+## Sync incrémentale — V2 parcours invité (textes éditables + nav repensée)
+- core-constants : ajout `DEFAULTS.WELCOME_*/NAME_PROMPT/CONSENT_DETAILS/THANKS_TEXT`,
+  `TEXT_FIELD_MAX`, `TEXT_FIELDS` dans la lecture ; paragraphe « source unique + fallback dynamique »,
+  ligne API TEXT_FIELDS/TEXT_FIELD_MAX.
+- borne-routes-events : route `PUT /settings` étendue (validation des champs texte itérés sur
+  TEXT_FIELDS, upsert préparé une fois rejoué, réponse résolue) ; `GET /event` enrichi des textes +
+  explication des fallbacks dynamiques welcome_* ; API table mise à jour.
+- borne-middleware-auth : `Buffer.from(String(a))` DÉJÀ documenté (conversion défensive) → aucun
+  changement nécessaire (le diff applique exactement ce que la page décrit).
+- pages.js : enrichi `js` de core-constants et borne-routes-events.
+- Hors scope doc (aucune page UI dédiée) : GuestPage/NameInput/StartScreen/ThankYouScreen/
+  QuestionNav/RecordingScreen/EventPanel.jsx, app.css ; design/parcours-invite.md (doc projet, pas docs/) ;
+  tests events.test.js couverts par le pattern générique de tests-runner.
+- Vérifs : manifeste/fichiers OK, liens internes OK, `node --check pages.js` OK.
+
 ---
 
 ## Conventions du site (décidées avec l'utilisateur)

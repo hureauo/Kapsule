@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api/client.js';
+import { TEXT_FIELDS } from '@kapsule/core';
 
 const STATUS_LABEL = {
   loaded: 'Chargé',
@@ -15,6 +16,16 @@ const THEME_OPTIONS = [
   { value: 'modern', label: '⬜ Modern',    hint: 'Blanc épuré, plat, léger' },
   { value: 'dark',   label: '🎬 Sombre',    hint: 'Noir / rouge, sobre' },
 ];
+
+// Labels lisibles pour chaque clé de TEXT_FIELDS (les clés sont techniques)
+const TEXT_FIELD_LABELS = {
+  welcome_title:    'Titre d\'accueil',
+  welcome_subtitle: 'Sous-titre d\'accueil',
+  name_prompt:      'Invite prénom',
+  consent_text:     'Texte de consentement',
+  consent_details:  'Détails (« En savoir plus »)',
+  thanks_text:      'Message de remerciement',
+};
 
 function StatusBadge({ status }) {
   return (
@@ -45,18 +56,29 @@ export default function EventPanel() {
   const [themeSaving, setThemeSaving] = useState(false);
   const [themeError, setThemeError] = useState('');
 
+  // Textes éditables du parcours invité (event_meta — conforme RGPD §11)
+  const [texts, setTexts] = useState({});
+  const [textsSaving, setTextsSaving] = useState(false);
+  const [textsError, setTextsError] = useState('');
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       setEvents(await api.listEvents());
-      // Thème courant : lu depuis l'événement actif (route publique /event).
-      // 404 si aucun actif → pas de thème à afficher.
+      // Thème et textes courants : lus depuis l'événement actif (route publique /event).
+      // 404 si aucun actif → pas de valeurs à afficher.
       try {
         const evt = await api.getEvent();
         setTheme(evt.theme ?? 'cute');
+        const initialTexts = {};
+        for (const key of Object.keys(TEXT_FIELDS)) {
+          initialTexts[key] = evt[key] ?? '';
+        }
+        setTexts(initialTexts);
       } catch {
         setTheme(null);
+        setTexts({});
       }
     } catch (e) {
       setError(e.message);
@@ -109,6 +131,27 @@ export default function EventPanel() {
       setThemeError(err.message);
     } finally {
       setThemeSaving(false);
+    }
+  }
+
+  async function handleSaveTexts() {
+    if (!active) return;
+    const previous = { ...texts };
+    setTextsSaving(true);
+    setTextsError('');
+    try {
+      const res = await api.updateEventSettings(active.id, texts);
+      // Mettre à jour depuis la réponse (valeurs trimées par le serveur)
+      const updated = {};
+      for (const key of Object.keys(TEXT_FIELDS)) {
+        updated[key] = res[key] ?? '';
+      }
+      setTexts(updated);
+    } catch (err) {
+      setTexts(previous); // rollback si l'API refuse
+      setTextsError(err.message);
+    } finally {
+      setTextsSaving(false);
     }
   }
 
@@ -185,7 +228,39 @@ export default function EventPanel() {
               </button>
             ))}
           </div>
-          {themeError && <p className="text--error">{themeError}</p>}
+              {themeError && <p className="text--error">{themeError}</p>}
+        </section>
+      )}
+
+      {/* Textes éditables du parcours invité (event_meta, conforme RGPD §11) */}
+      {active && Object.keys(texts).length > 0 && (
+        <section className="panel-section">
+          <h2 className="panel-section__title">
+            Textes du parcours
+            <span className="panel-section__hint"> — affichés aux invités</span>
+          </h2>
+          {Object.entries(TEXT_FIELD_LABELS).map(([key, label]) => (
+            <label key={key} className="question-form__field">
+              <span>{label}</span>
+              <textarea
+                className="admin-input admin-input--textarea"
+                value={texts[key] ?? ''}
+                onChange={(e) => setTexts((prev) => ({ ...prev, [key]: e.target.value }))}
+                disabled={textsSaving}
+                rows={key === 'consent_text' || key === 'consent_details' ? 4 : 2}
+              />
+            </label>
+          ))}
+          <div className="question-form__actions" style={{ marginTop: '0.5rem' }}>
+            <button
+              className="btn btn--small btn--primary"
+              onClick={handleSaveTexts}
+              disabled={textsSaving}
+            >
+              {textsSaving ? 'Enregistrement…' : 'Enregistrer les textes'}
+            </button>
+          </div>
+          {textsError && <p className="text--error">{textsError}</p>}
         </section>
       )}
 

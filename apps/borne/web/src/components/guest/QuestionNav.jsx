@@ -1,10 +1,13 @@
 import React from 'react';
 
 // Barre de progression BASSE — composant unique de navigation/progression du parcours
-// (voir design/parcours-invite.md). Fusionne : flèches ◀ ▶, pastilles d'état,
+// (voir design/parcours-invite.md). Fusionne : pastilles d'état (cliquables),
 // label « Question X / N » et barre de remplissage globale.
 // Placée en bas de l'écran (zone du pouce sur iPad) ; le header haut a été retiré
 // de RecordingScreen pour dégager la question et la caméra.
+//
+// Navigation v2 : plus de flèches ◀ ▶ — on navigue par les pastilles (onGo) ou
+// depuis le récap. Voir design/parcours-invite.md §12.
 //
 // answers : tableau d'ids (ou d'objets {question_id}) des questions déjà répondues.
 // locked  : désactive les interactions (ex. pendant l'enregistrement/upload).
@@ -21,15 +24,6 @@ export default function QuestionNav({ questions, currentIndex, answers = [], onG
       </div>
 
       <div className="question-nav__row">
-        <button
-          className="question-nav__arrow"
-          aria-label="Question précédente"
-          onClick={() => onGo(currentIndex - 1)}
-          disabled={locked || currentIndex === 0}
-        >
-          ◀
-        </button>
-
         <div className="question-nav__dots">
           {questions.map((q, i) => (
             <button
@@ -50,15 +44,6 @@ export default function QuestionNav({ questions, currentIndex, answers = [], onG
         <span className="question-nav__label">
           Question {currentIndex + 1} / {total}
         </span>
-
-        <button
-          className="question-nav__arrow"
-          aria-label="Question suivante"
-          onClick={() => onGo(currentIndex + 1)}
-          disabled={locked || currentIndex === total - 1}
-        >
-          ▶
-        </button>
       </div>
     </nav>
   );

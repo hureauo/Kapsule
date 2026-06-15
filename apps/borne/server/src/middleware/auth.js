@@ -3,8 +3,8 @@ import { timingSafeEqual } from 'node:crypto';
 
 // Comparaison à temps constant pour résister aux attaques par timing (§S5.2/L2)
 function safeCompare(a, b) {
-  const ba = Buffer.from(a);
-  const bb = Buffer.from(b);
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
   if (ba.length !== bb.length) return false;
   return timingSafeEqual(ba, bb);
 }

@@ -299,6 +299,83 @@ describe('PUT /api/events/:id/settings', () => {
       .send({ theme: 'cute' });
     assert.equal(res.status, 401);
   });
+
+  test('écrit name_prompt et le relit via GET /event', async () => {
+    const id = await createActiveEvent('Evt Name Prompt');
+    const put = await request(ctx.app)
+      .put(`/api/events/${id}/settings`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ name_prompt: 'Quel est votre prénom ?' });
+    assert.equal(put.status, 200);
+    assert.equal(put.body.name_prompt, 'Quel est votre prénom ?');
+
+    const get = await request(ctx.app).get('/api/event');
+    assert.equal(get.body.name_prompt, 'Quel est votre prénom ?');
+  });
+
+  test('écrit thanks_text et le relit via GET /event', async () => {
+    const id = await createActiveEvent('Evt Thanks');
+    await request(ctx.app)
+      .put(`/api/events/${id}/settings`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ thanks_text: 'Merci infiniment !' });
+    const get = await request(ctx.app).get('/api/event');
+    assert.equal(get.body.thanks_text, 'Merci infiniment !');
+  });
+
+  test('écrit consent_details et le relit via GET /event', async () => {
+    const id = await createActiveEvent('Evt Consent Details');
+    const details = 'Vos données sont stockées 30 jours.';
+    await request(ctx.app)
+      .put(`/api/events/${id}/settings`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ consent_details: details });
+    const get = await request(ctx.app).get('/api/event');
+    assert.equal(get.body.consent_details, details);
+  });
+
+  test('écrit welcome_title et le relit', async () => {
+    const id = await createActiveEvent('Evt Welcome');
+    await request(ctx.app)
+      .put(`/api/events/${id}/settings`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ welcome_title: 'Bienvenue à la soirée !' });
+    const get = await request(ctx.app).get('/api/event');
+    assert.equal(get.body.welcome_title, 'Bienvenue à la soirée !');
+  });
+
+  test('welcome_title dynamique = nom event quand non défini', async () => {
+    await createActiveEvent('Mon Mariage');
+    const get = await request(ctx.app).get('/api/event');
+    assert.equal(get.body.welcome_title, 'Mon Mariage');
+  });
+
+  test('welcome_subtitle dynamique = 1ère ligne du consent quand non défini', async () => {
+    await createActiveEvent('Evt Subtitle');
+    const get = await request(ctx.app).get('/api/event');
+    const { DEFAULTS: D } = await import('@kapsule/core');
+    const expected = D.CONSENT_TEXT.split('\n')[0];
+    assert.equal(get.body.welcome_subtitle, expected);
+  });
+
+  test('retourne 400 si un champ texte dépasse TEXT_FIELD_MAX', async () => {
+    const { TEXT_FIELD_MAX: MAX } = await import('@kapsule/core');
+    const id = await createActiveEvent('Evt Long');
+    const res = await request(ctx.app)
+      .put(`/api/events/${id}/settings`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ name_prompt: 'x'.repeat(MAX + 1) });
+    assert.equal(res.status, 400);
+  });
+
+  test('retourne 400 si un champ texte n\'est pas une chaîne', async () => {
+    const id = await createActiveEvent('Evt Type');
+    const res = await request(ctx.app)
+      .put(`/api/events/${id}/settings`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ thanks_text: 42 });
+    assert.equal(res.status, 400);
+  });
 });
 
 // ── GET /api/preflight ────────────────────────────────────────────────────────

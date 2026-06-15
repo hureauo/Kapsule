@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { statfs } from 'node:fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
-import { DEFAULTS, LIMITS, THEMES } from '@kapsule/core';
+import { DEFAULTS, LIMITS, THEMES, TEXT_FIELDS, TEXT_FIELD_MAX } from '@kapsule/core';
 import {
   getActiveEvent, listEvents, insertEvent, setActiveEvent, updateEventStatus,
 } from '../registry.js';
@@ -87,8 +87,8 @@ export function makeEventsRouter(dataDir, cfg) {
   });
 
   // Réglages d'événement (config, pas donnée invité → conforme RGPD §11).
-  // Pour l'instant : le thème visuel du parcours invité. Écrit dans event_meta
-  // de events/<id>/db.sqlite. Validé contre la liste blanche THEMES.
+  // Thème visuel + textes éditables du parcours invité. Écrit dans event_meta
+  // de events/<id>/db.sqlite. Voir design/parcours-invite.md §11.
   router.put('/events/:id/settings', auth, (req, res, next) => {
     try {
       const { id } = req.params;
@@ -100,7 +100,21 @@ export function makeEventsRouter(dataDir, cfg) {
         return res.status(400).json({ error: `Thème invalide (attendu : ${THEMES.join(', ')})` });
       }
 
-      // Le thème ne concerne que l'événement vu par les invités (l'actif).
+      // Valider les champs texte présents dans le body.
+      const textUpdates = {};
+      for (const key of Object.keys(TEXT_FIELDS)) {
+        const val = req.body[key];
+        if (val === undefined) continue;
+        if (typeof val !== 'string') {
+          return res.status(400).json({ error: `Champ "${key}" doit être une chaîne` });
+        }
+        if (val.length > TEXT_FIELD_MAX) {
+          return res.status(400).json({ error: `Champ "${key}" dépasse ${TEXT_FIELD_MAX} caractères` });
+        }
+        textUpdates[key] = val.trim();
+      }
+
+      // Le thème et les textes ne concernent que l'événement vu par les invités (l'actif).
       // Restreindre à l'actif évite aussi que getActiveEventDb (cache à un slot)
       // ne ferme le handle de l'actif en ouvrant celui d'un autre événement.
       const activeEvent = getActiveEvent();
@@ -109,12 +123,25 @@ export function makeEventsRouter(dataDir, cfg) {
       }
 
       const db = getActiveEventDb(dataDir, activeEvent);
-      if (theme !== undefined) {
-        db.prepare(`INSERT INTO event_meta (key, value) VALUES ('theme', ?)
-                    ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(theme);
-      }
+      const upsertMeta = db.prepare(
+        `INSERT INTO event_meta (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+      );
+      if (theme !== undefined) upsertMeta.run('theme', theme);
+      for (const [key, val] of Object.entries(textUpdates)) upsertMeta.run(key, val);
+
       const getMeta = (key) => db.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value ?? null;
-      res.json({ id, theme: getMeta('theme') ?? DEFAULTS.THEME });
+      const consent = getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT;
+      res.json({
+        id,
+        theme: getMeta('theme') ?? DEFAULTS.THEME,
+        welcome_title:    getMeta('welcome_title')    || activeEvent.name,
+        welcome_subtitle: getMeta('welcome_subtitle') || consent.split('\n')[0],
+        name_prompt:      getMeta('name_prompt')      ?? DEFAULTS.NAME_PROMPT,
+        consent_text:     consent,
+        consent_details:  getMeta('consent_details')  ?? DEFAULTS.CONSENT_DETAILS,
+        thanks_text:      getMeta('thanks_text')      ?? DEFAULTS.THANKS_TEXT,
+      });
     } catch (err) {
       next(err);
     }
@@ -161,13 +188,24 @@ export function makeEventsRouter(dataDir, cfg) {
       const db = getActiveEventDb(dataDir, activeEvent);
       const getMeta = (key) => db.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value ?? null;
 
+      // Textes du parcours : valeur stockée si présente, sinon défaut.
+      // welcome_title / welcome_subtitle ont un défaut DYNAMIQUE (vide dans DEFAULTS) :
+      // titre ← nom de l'événement, sous-titre ← 1ʳᵉ ligne du consentement.
+      const consent = getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT;
+      const textOrDefault = (key) => getMeta(key) ?? TEXT_FIELDS[key];
+
       res.json({
         id: activeEvent.id,
         name: activeEvent.name,
         status: activeEvent.status,
-        consent_text: getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT,
+        consent_text: consent,
         idle_timeout: parseInt(getMeta('idle_timeout') ?? String(DEFAULTS.IDLE_TIMEOUT_S), 10),
         theme: getMeta('theme') ?? DEFAULTS.THEME,
+        welcome_title: getMeta('welcome_title') || activeEvent.name,
+        welcome_subtitle: getMeta('welcome_subtitle') || consent.split('\n')[0],
+        name_prompt: textOrDefault('name_prompt'),
+        consent_details: textOrDefault('consent_details'),
+        thanks_text: textOrDefault('thanks_text'),
       });
     } catch (err) {
       next(err);

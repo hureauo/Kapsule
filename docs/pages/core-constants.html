@@ -97,7 +97,42 @@ export const DEFAULTS = {
   IDLE_TIMEOUT_S: 120,
   CONSENT_TEXT: "En participant, vous acceptez que vos vidéos…",
   THEME: 'cute',
+  // Textes du parcours invité, éditables en admin (event_meta). Chaîne vide =
+  // « pas de valeur fixe », la route /event applique un fallback dynamique.
+  WELCOME_TITLE: '',            // défaut dynamique : nom de l'événement
+  WELCOME_SUBTITLE: '',         // défaut dynamique : 1ʳᵉ ligne du consentement
+  NAME_PROMPT: 'Comment vous appelez-vous ?',
+  CONSENT_DETAILS: "Votre vidéo est enregistrée localement sur la borne…",
+  THANKS_TEXT: 'Votre témoignage a bien été enregistré.',
+};
+
+// Longueur max d'un champ texte du parcours (garde-fou anti-payload abusif).
+export const TEXT_FIELD_MAX = 2000;
+
+// Clés event_meta éditables comme texte libre, avec leur défaut associé.
+// Source unique pour la validation backend ET l'UI admin (panneau « Textes »).
+export const TEXT_FIELDS = {
+  welcome_title:    DEFAULTS.WELCOME_TITLE,
+  welcome_subtitle: DEFAULTS.WELCOME_SUBTITLE,
+  name_prompt:      DEFAULTS.NAME_PROMPT,
+  consent_text:     DEFAULTS.CONSENT_TEXT,
+  consent_details:  DEFAULTS.CONSENT_DETAILS,
+  thanks_text:      DEFAULTS.THANKS_TEXT,
 };</code></pre>
+
+<p>
+  <code>TEXT_FIELDS</code> est la <strong>source unique</strong> des textes du parcours invité
+  personnalisables depuis l'admin. La même structure sert à deux endroits : le serveur itère ses
+  clés pour valider et persister les champs reçus (route <code>settings</code>), et l'UI admin itère
+  ses clés pour générer un <code>&lt;textarea&gt;</code> par champ. Deux clés ont un défaut
+  <strong>dynamique</strong> (chaîne vide dans <code>DEFAULTS</code>) : <code>welcome_title</code>
+  retombe sur le nom de l'événement et <code>welcome_subtitle</code> sur la 1ʳᵉ ligne du
+  consentement — ce fallback est calculé côté serveur dans
+  <a href="#/borne-routes-events">borne/routes/events.js</a>, pas dans <code>DEFAULTS</code>.
+  Comme le thème, ces textes sont des <strong>configs d'événement</strong> stockées dans
+  <code>event_meta</code> — jamais de donnée invité dans <code>registry.sqlite</code> (invariant
+  RGPD §11.13). <code>TEXT_FIELD_MAX</code> plafonne chaque champ pour éviter un payload abusif.
+</p>
 
 <p>
   <code>THEMES</code> est une <strong>liste blanche</strong> : la route admin qui change le thème
@@ -126,6 +161,7 @@ export const DEFAULTS = {
   <tr><td>DEFAULTS.MAX_DURATION_S / COUNTDOWN_S</td><td>Valeurs par défaut du schéma SQL et des routes questions.</td></tr>
   <tr><td>DEFAULTS.CONSENT_TEXT</td><td>Texte de consentement servi au kiosque si l'événement n'en définit pas.</td></tr>
   <tr><td>THEMES / DEFAULTS.THEME</td><td>Liste blanche des thèmes du parcours invité + thème par défaut, validés/écrits par la route <a href="#/borne-routes-events">settings</a> de la Borne et exposés par <code>GET /event</code>.</td></tr>
+  <tr><td>TEXT_FIELDS / TEXT_FIELD_MAX</td><td>Clés des textes éditables du parcours invité (défauts + plafond de longueur), itérées par la route <a href="#/borne-routes-events">settings</a> (validation/écriture) et par le panneau « Textes » de l'admin Borne.</td></tr>
   <tr><td>STATUS_ORDER</td><td>Vérification des transitions de statut (machine à états).</td></tr>
 </table>
 
