@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { statfs } from 'node:fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
-import { DEFAULTS, LIMITS } from '@kapsule/core';
+import { DEFAULTS, LIMITS, THEMES } from '@kapsule/core';
 import {
   getActiveEvent, listEvents, insertEvent, setActiveEvent, updateEventStatus,
 } from '../registry.js';
@@ -35,6 +35,7 @@ export function makeEventsRouter(dataDir, cfg) {
       db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('event_id', id);
       db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('name', name.trim());
       db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('origin', 'local');
+      db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('theme', DEFAULTS.THEME);
       if (event_date) {
         db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('event_date', event_date);
       }
@@ -80,6 +81,40 @@ export function makeEventsRouter(dataDir, cfg) {
       }
       updateEventStatus(id, 'closed');
       res.json(listEvents().find(e => e.id === id));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Réglages d'événement (config, pas donnée invité → conforme RGPD §11).
+  // Pour l'instant : le thème visuel du parcours invité. Écrit dans event_meta
+  // de events/<id>/db.sqlite. Validé contre la liste blanche THEMES.
+  router.put('/events/:id/settings', auth, (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { theme } = req.body;
+      const event = listEvents().find(e => e.id === id);
+      if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+
+      if (theme !== undefined && !THEMES.includes(theme)) {
+        return res.status(400).json({ error: `Thème invalide (attendu : ${THEMES.join(', ')})` });
+      }
+
+      // Le thème ne concerne que l'événement vu par les invités (l'actif).
+      // Restreindre à l'actif évite aussi que getActiveEventDb (cache à un slot)
+      // ne ferme le handle de l'actif en ouvrant celui d'un autre événement.
+      const activeEvent = getActiveEvent();
+      if (!activeEvent || activeEvent.id !== id) {
+        return res.status(409).json({ error: 'Seul l\'événement actif peut être configuré' });
+      }
+
+      const db = getActiveEventDb(dataDir, activeEvent);
+      if (theme !== undefined) {
+        db.prepare(`INSERT INTO event_meta (key, value) VALUES ('theme', ?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(theme);
+      }
+      const getMeta = (key) => db.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value ?? null;
+      res.json({ id, theme: getMeta('theme') ?? DEFAULTS.THEME });
     } catch (err) {
       next(err);
     }
@@ -132,6 +167,7 @@ export function makeEventsRouter(dataDir, cfg) {
         status: activeEvent.status,
         consent_text: getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT,
         idle_timeout: parseInt(getMeta('idle_timeout') ?? String(DEFAULTS.IDLE_TIMEOUT_S), 10),
+        theme: getMeta('theme') ?? DEFAULTS.THEME,
       });
     } catch (err) {
       next(err);

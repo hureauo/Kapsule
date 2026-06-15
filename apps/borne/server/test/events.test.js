@@ -216,6 +216,91 @@ describe('GET /api/event', () => {
   });
 });
 
+// ── PUT /api/events/:id/settings (thème) ──────────────────────────────────────
+
+describe('PUT /api/events/:id/settings', () => {
+  let ctx;
+  beforeEach(async () => { ctx = await setup(); });
+  afterEach(() => teardown(ctx.dir));
+
+  // Crée un événement et l'active (le thème ne se configure que sur l'actif).
+  async function createActiveEvent(name) {
+    const res = await request(ctx.app)
+      .post('/api/events')
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ name });
+    await request(ctx.app)
+      .put(`/api/events/${res.body.id}/activate`)
+      .set('Authorization', `Bearer ${ctx.token}`);
+    return res.body.id;
+  }
+
+  test('écrit le thème et le relit via GET /event', async () => {
+    const id = await createActiveEvent('Evt Thème');
+    const put = await request(ctx.app)
+      .put(`/api/events/${id}/settings`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ theme: 'dark' });
+    assert.equal(put.status, 200);
+    assert.equal(put.body.theme, 'dark');
+
+    const get = await request(ctx.app).get('/api/event');
+    assert.equal(get.body.theme, 'dark');
+  });
+
+  test('accepte le thème modern', async () => {
+    const id = await createActiveEvent('Evt Modern');
+    const put = await request(ctx.app)
+      .put(`/api/events/${id}/settings`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ theme: 'modern' });
+    assert.equal(put.status, 200);
+    assert.equal(put.body.theme, 'modern');
+  });
+
+  test('thème par défaut = cute à la création', async () => {
+    await createActiveEvent('Evt Défaut');
+    const get = await request(ctx.app).get('/api/event');
+    assert.equal(get.body.theme, 'cute');
+  });
+
+  test('retourne 400 pour un thème invalide', async () => {
+    const id = await createActiveEvent('Evt Invalide');
+    const res = await request(ctx.app)
+      .put(`/api/events/${id}/settings`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ theme: 'neon' });
+    assert.equal(res.status, 400);
+  });
+
+  test('retourne 409 si l\'événement n\'est pas actif', async () => {
+    const res = await request(ctx.app)
+      .post('/api/events')
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ name: 'Evt Inactif' });
+    const put = await request(ctx.app)
+      .put(`/api/events/${res.body.id}/settings`)
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ theme: 'dark' });
+    assert.equal(put.status, 409);
+  });
+
+  test('retourne 404 pour un id inexistant', async () => {
+    const res = await request(ctx.app)
+      .put('/api/events/inexistant/settings')
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ theme: 'cute' });
+    assert.equal(res.status, 404);
+  });
+
+  test('retourne 401 sans token', async () => {
+    const res = await request(ctx.app)
+      .put('/api/events/x/settings')
+      .send({ theme: 'cute' });
+    assert.equal(res.status, 401);
+  });
+});
+
 // ── GET /api/preflight ────────────────────────────────────────────────────────
 
 describe('GET /api/preflight', () => {

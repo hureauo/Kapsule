@@ -13,21 +13,121 @@ body {
   /* Kiosque : désactiver la sélection de texte hors inputs pour éviter les sélections accidentelles */
   user-select: none;
   -webkit-user-select: none;
-  /* Thème invité sombre par défaut */
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+/* ── Thèmes invité commutables ────────────────────────────────────────────────
+   Chaque thème = un bloc de variables sélectionné par data-theme sur <html>.
+   GuestPage pose l'attribut depuis event.theme. Le navigateur recalcule juste
+   les variables — aucune logique conditionnelle dans les composants React.
+   L'admin redéfinit TOUS ces tokens sur .admin-login/.admin-layout (plus bas) pour
+   rester en thème clair quel que soit data-theme. Défaut (:root) = Cutealism.    */
+
+/* Thème Cutealism (défaut) — voir design/cutealism.md */
+:root,
+[data-theme="cute"] {
+  /* Fonds & surfaces */
+  --bg: #FFF8EE;          /* crème neutre chaud */
+  --surface: #FFFFFF;     /* cartes, barres */
+  --surface-alt: #FDEFD9; /* zone secondaire douce */
+
+  /* Texte */
+  --text: #0B3B45;        /* encre bleu nuit (pas noir pur) */
+  --text-muted: #5B7B82;  /* bleu-gris */
+  --text-error: #C0532B;  /* terracotta — erreur sans rouge agressif */
+
+  /* Structure froide */
+  --primary: #0388A6;
+  --primary-soft: #63D8F2;
+  --primary-tint: #E3F7FC; /* halo très clair (états répondu) */
+
+  /* Action chaude */
+  --accent: #F27405;
+  --accent-hover: #F28705;
+  --accent-soft: #F2AC29;
+  --accent-tint: #FDE9CF;
+
+  /* Champs */
+  --input-bg: #FFFFFF;
+  --input-border: #F2D2A6;
+  --input-border-focus: #0388A6;
+
+  /* Boutons secondaires */
+  --btn-secondary-bg: #E3F7FC;
+  --btn-secondary-hover: #C8EEF7;
+
+  /* Forme & profondeur */
+  --radius: 16px;
+  --radius-pill: 28px;
+  --shadow-soft: 0 6px 18px rgba(3, 136, 166, 0.15);
+  --shadow-press: 0 2px 6px rgba(3, 136, 166, 0.20);
+
+  /* Enregistrement — rouge conservé (convention universelle), tous thèmes */
+  --rec: #E63946;
+}
+
+/* Thème sombre (historique noir/rouge) — conservé, sélectionnable depuis l'admin */
+[data-theme="dark"] {
   --bg: #111;
   --surface: #1e1e1e;
+  --surface-alt: #181818;
   --text: #f0f0f0;
   --text-muted: #888;
   --text-error: #ff6b6b;
+  --primary: #e63946;
+  --primary-soft: #ff6b6b;
+  --primary-tint: #2a1416;
   --accent: #e63946;
   --accent-hover: #c1121f;
+  --accent-soft: #e63946;
+  --accent-tint: #2a1416;
   --btn-secondary-bg: #2d2d2d;
   --btn-secondary-hover: #3a3a3a;
   --input-bg: #2d2d2d;
   --input-border: #444;
   --input-border-focus: #e63946;
-  background-color: var(--bg);
-  color: var(--text);
+  --radius: 12px;
+  --radius-pill: 12px;
+  --shadow-soft: 0 6px 18px rgba(0, 0, 0, 0.4);
+  --shadow-press: 0 2px 6px rgba(0, 0, 0, 0.5);
+  --rec: #e63946;
+}
+
+/* Thème Modern — blanc épuré, plat. AUCUNE transparence, AUCUN backdrop-filter
+   ni animation de fond : rendu léger sur Raspberry/iPad. Esthétique « design
+   system » : blanc, gris neutres, une seule couleur d'accent, ombres discrètes,
+   bordures fines. Tout passe par les tokens — pas de règle de surface dédiée. */
+[data-theme="modern"] {
+  --bg: #f5f6f8;          /* gris très clair, neutre froid */
+  --surface: #ffffff;     /* cartes/barres : blanc plein (opaque) */
+  --surface-alt: #eef0f3;
+
+  --text: #1a1d21;        /* presque noir, neutre */
+  --text-muted: #6b7280;  /* gris moyen */
+  --text-error: #d92d20;
+
+  --primary: #2563eb;     /* bleu accent sobre */
+  --primary-soft: #60a5fa;
+  --primary-tint: #eaf1fe;
+
+  --accent: #2563eb;      /* action = même bleu : un seul accent, look unifié */
+  --accent-hover: #1d4ed8;
+  --accent-soft: #2563eb;
+  --accent-tint: #eaf1fe;
+
+  --input-bg: #ffffff;
+  --input-border: #d1d5db;
+  --input-border-focus: #2563eb;
+
+  --btn-secondary-bg: #eef0f3;
+  --btn-secondary-hover: #e2e5ea;
+
+  --radius: 12px;          /* coins arrondis nets, pas « pillow » */
+  --radius-pill: 12px;
+  --shadow-soft: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-press: 0 1px 2px rgba(16, 24, 40, 0.10);
+  --rec: #e63946;          /* rouge conservé pour le signal d'enregistrement */
 }
 
 /* Réactiver la sélection dans les champs de saisie */
@@ -36,20 +136,35 @@ input, textarea, [contenteditable] {
   -webkit-user-select: text;
 }
 
-/* Thème admin clair (appliqué via .admin-login et .admin-layout) */
+/* Thème admin clair (appliqué via .admin-login et .admin-layout).
+   Ce bloc redéfinit TOUS les tokens consommés par l'admin pour le figer en clair,
+   quel que soit le data-theme posé sur <html> par le parcours invité (la SPA partage
+   le même document). Sans ça, naviguer invité→admin sans reload ferait hériter le
+   thème invité — contraire à PROJET.md §8 (thème admin distinct). */
 .admin-login, .admin-layout {
   --bg: #f5f5f7;
   --surface: #fff;
+  --surface-alt: #ececf0;
   --text: #1d1d1f;
   --text-muted: #6e6e73;
   --text-error: #c0392b;
+  --primary: #0071e3;
+  --primary-soft: #5ac8ff;
+  --primary-tint: #e8f1fd;
   --accent: #0071e3;
   --accent-hover: #0058b0;
+  --accent-soft: #0071e3;
+  --accent-tint: #e8f1fd;
   --btn-secondary-bg: #e5e5ea;
   --btn-secondary-hover: #d1d1d6;
   --input-bg: #fff;
   --input-border: #ccc;
   --input-border-focus: #0071e3;
+  --radius: 12px;
+  --radius-pill: 12px;
+  --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.10);
+  --shadow-press: 0 1px 2px rgba(0, 0, 0, 0.12);
+  --rec: #e63946;
   background-color: var(--bg);
   color: var(--text);
   min-height: 100%;
@@ -93,13 +208,13 @@ input, textarea, [contenteditable] {
   padding: 2rem;
 }
 
-/* ── Typographie ──────────────────────────────────────────────────────────── */
-.screen__title { font-size: 2rem; font-weight: 600; line-height: 1.2; }
+/* ── Typographie — chunky Cutealism (titres gras, ronds, compacts) ─────────── */
+.screen__title { font-size: 2rem; font-weight: 800; line-height: 1.15; letter-spacing: -0.01em; }
 .text--muted   { color: var(--text-muted); font-size: 1rem; }
 .text--error   { color: var(--text-error); font-size: 0.95rem; }
 
 /* ── Idle screen ──────────────────────────────────────────────────────────── */
-.idle__title   { font-size: 3rem; font-weight: 700; margin-bottom: 1rem; }
+.idle__title   { font-size: 3rem; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 1rem; }
 .idle__consent { max-width: 600px; color: var(--text-muted); font-size: 1.1rem; line-height: 1.6; }
 
 /* ── Boutons — touch targets ≥ 80px (PROJET.md iPad) ─────────────────────── */
@@ -108,26 +223,30 @@ input, textarea, [contenteditable] {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 12px;
+  border-radius: var(--radius-pill); /* boutons « pillow » Cutealism */
   cursor: pointer;
   font-size: 1.2rem;
-  font-weight: 600;
+  font-weight: 700;
   padding: 0 2rem;
   min-height: 80px;
   min-width: 200px;
-  transition: background-color 0.15s ease, opacity 0.15s ease;
+  box-shadow: var(--shadow-soft);
+  transition: background-color 0.15s ease, opacity 0.15s ease,
+              transform 0.1s ease, box-shadow 0.1s ease;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
 }
 
-.btn:disabled { opacity: 0.5; cursor: default; }
+.btn:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
+
+/* Effet « on appuie sur un coussin » : la touche enfonce légèrement le bouton */
+.btn:not(:disabled):active { transform: translateY(2px); box-shadow: var(--shadow-press); }
 
 .btn--primary {
   background-color: var(--accent);
   color: #fff;
 }
 .btn--primary:not(:disabled):hover  { background-color: var(--accent-hover); }
-.btn--primary:not(:disabled):active { opacity: 0.85; }
 
 .btn--secondary {
   background-color: var(--btn-secondary-bg);
@@ -165,12 +284,13 @@ input, textarea, [contenteditable] {
   padding: 1rem 1.25rem;
   font-size: 1.3rem;
   border: 2px solid var(--input-border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--input-bg);
   color: var(--text);
   outline: none;
   min-height: 72px;
   -webkit-appearance: none;
+  transition: border-color 0.15s ease;
 }
 .name-form__input:focus { border-color: var(--input-border-focus); }
 
@@ -196,12 +316,12 @@ input, textarea, [contenteditable] {
   justify-content: center;
   width: 100%;
   border: 2px dashed var(--input-border);
-  border-radius: 16px;
+  border-radius: var(--radius);
   margin: 1rem 0;
 }
 
 /* ── Start screen ─────────────────────────────────────────────────────────── */
-.start__title   { font-size: 3rem; font-weight: 700; }
+.start__title   { font-size: 3rem; font-weight: 800; letter-spacing: -0.02em; }
 .start__tagline { max-width: 600px; color: var(--text-muted); font-size: 1.1rem; line-height: 1.6; }
 
 /* ── Name / consentement ──────────────────────────────────────────────────── */
@@ -211,7 +331,8 @@ input, textarea, [contenteditable] {
   width: 100%;
   max-width: 480px;
   background: var(--surface);
-  border-radius: 12px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
   padding: 1rem 1.25rem;
   display: flex;
   flex-direction: column;
@@ -252,6 +373,7 @@ input, textarea, [contenteditable] {
   background: transparent;
   color: var(--text-muted);
   border: none;
+  box-shadow: none; /* bouton discret : pas d'élévation pillow */
   font-size: 1rem;
   min-height: 44px;
   min-width: 0;
@@ -268,32 +390,61 @@ input, textarea, [contenteditable] {
   height: 100%;
 }
 
-/* ── QuestionNav ──────────────────────────────────────────────────────────── */
+/* L'écran (RecordingScreen) occupe l'espace ; la nav basse se colle dessous.
+   On neutralise le height:100% du .screen pour qu'il flex-grow au lieu de
+   forcer la pleine hauteur (sinon la barre basse serait poussée hors écran). */
+.questions-layout > .screen {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+/* ── QuestionNav — barre de progression BASSE (design/parcours-invite.md) ──────
+   margin-top:auto la colle en bas du .questions-layout (colonne flex).
+   Surface arrondie en haut, légère élévation : elle « flotte » au-dessus du fond. */
 .question-nav {
+  margin-top: auto;        /* pousse la nav tout en bas */
+  flex-shrink: 0;
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+/* Barre de remplissage globale, intégrée en haut de la barre basse */
+.question-nav__progress {
+  height: 6px;
+  width: 100%;
+  background: var(--primary-tint);
+}
+.question-nav__progress-fill {
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+
+.question-nav__row {
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 1rem;
-  padding: 0.75rem 1rem;
-  background: var(--surface);
-  flex-shrink: 0;
+  padding: 0.75rem 1.25rem;
 }
 
 .question-nav__arrow {
   background: none;
   border: none;
   font-size: 1.5rem;
-  color: var(--text);
+  color: var(--primary);
   min-width: 48px;
   min-height: 48px;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 50%;
   -webkit-tap-highlight-color: transparent;
 }
 .question-nav__arrow:disabled { opacity: 0.3; cursor: default; }
-.question-nav__arrow:not(:disabled):active { background: var(--btn-secondary-bg); }
+.question-nav__arrow:not(:disabled):active { background: var(--primary-tint); }
 
-.question-nav__dots { display: flex; gap: 0.5rem; }
+.question-nav__dots { display: flex; gap: 0.5rem; flex: 1; justify-content: center; }
 
 .question-nav__dot {
   width: 16px;
@@ -303,11 +454,27 @@ input, textarea, [contenteditable] {
   background: transparent;
   cursor: pointer;
   padding: 0;
-  transition: background 0.15s, border-color 0.15s;
+  /* Cible tactile ≥ 44px (invariant iPad) sans grossir le point visible */
+  position: relative;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
   -webkit-tap-highlight-color: transparent;
 }
-.question-nav__dot--current  { border-color: var(--accent); background: var(--accent); }
-.question-nav__dot--answered { border-color: var(--text); background: var(--text); }
+.question-nav__dot::after {
+  content: '';
+  position: absolute;
+  inset: -14px;            /* 16 + 2×14 = 44px de zone cliquable */
+}
+.question-nav__dot--current  { border-color: var(--accent); background: var(--accent); transform: scale(1.2); }
+.question-nav__dot--answered { border-color: var(--primary); background: var(--primary); }
+
+/* Label « Question X / N » dans la barre basse */
+.question-nav__label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 
 /* ── RecordingScreen ──────────────────────────────────────────────────────── */
 .screen--recording {
@@ -398,14 +565,14 @@ input, textarea, [contenteditable] {
 
 .rec__actions .btn { flex: 1; }
 
-/* Indicateur REC */
+/* Indicateur REC — rouge conservé (--rec), signal d'enregistrement universel */
 .rec__live-indicator {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   font-size: 1.3rem;
   font-weight: 700;
-  color: #e63946;
+  color: var(--rec);
   font-variant-numeric: tabular-nums;
 }
 
@@ -413,7 +580,7 @@ input, textarea, [contenteditable] {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #e63946;
+  background: var(--rec);
   display: inline-block;
 }
 
@@ -421,21 +588,21 @@ input, textarea, [contenteditable] {
 
 @keyframes blink { 50% { opacity: 0; } }
 
-/* Bouton Stop */
+/* Bouton Stop — arrêt du REC : surface neutre cerclée rouge */
 .btn--stop {
-  background-color: #222;
-  color: #fff;
-  border: 3px solid #e63946;
+  background-color: var(--surface);
+  color: var(--text);
+  border: 3px solid var(--rec);
 }
-.btn--stop:not(:disabled):hover { background-color: #e63946; }
+.btn--stop:not(:disabled):hover { background-color: var(--rec); color: #fff; }
 
-/* Bouton Record (rouge) */
+/* Bouton Record — action principale (orange Cutealism), pas le rouge du REC */
 .btn--record {
-  background-color: #e63946;
+  background-color: var(--accent);
   color: #fff;
 }
-.btn--record:not(:disabled):hover { background-color: #c1121f; }
-.btn--record:disabled { background-color: #555; }
+.btn--record:not(:disabled):hover { background-color: var(--accent-hover); }
+.btn--record:disabled { opacity: 0.5; }
 
 /* Countdown */
 .countdown__number {
@@ -484,7 +651,8 @@ input, textarea, [contenteditable] {
   align-items: center;
   gap: 1rem;
   background: var(--surface);
-  border-radius: 12px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
   padding: 1rem 1.25rem;
 }
 
@@ -495,22 +663,25 @@ input, textarea, [contenteditable] {
   cursor: pointer;
   color: var(--text);
   text-align: left;
-  transition: background 0.15s;
+  transition: background 0.15s, transform 0.1s ease;
   -webkit-tap-highlight-color: transparent;
 }
 .recap__item--btn:hover { background: var(--btn-secondary-bg); }
-.recap__item--done { opacity: 1; }
+.recap__item--btn:active { transform: translateY(2px); }
+/* Réponse déjà donnée : pastille bleu clair → repère visuel positif */
+.recap__item--done .recap__index { background: var(--primary); }
+.recap__item--done .recap__status { color: var(--primary); }
 
 .recap__index {
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-soft);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
+  font-weight: 800;
   flex-shrink: 0;
 }
 
@@ -541,7 +712,8 @@ input, textarea, [contenteditable] {
 
 .idle-modal {
   background: var(--surface);
-  border-radius: 20px;
+  border-radius: 24px;
+  box-shadow: var(--shadow-soft);
   padding: 2.5rem 2rem;
   display: flex;
   flex-direction: column;
@@ -552,7 +724,7 @@ input, textarea, [contenteditable] {
   text-align: center;
 }
 
-.idle-modal__title    { font-size: 2rem; font-weight: 700; }
+.idle-modal__title    { font-size: 2rem; font-weight: 800; letter-spacing: -0.01em; }
 .idle-modal__countdown { font-size: 1.1rem; }
 
 /* ── Admin layout ─────────────────────────────────────────────────────────── */
@@ -758,6 +930,31 @@ input, textarea, [contenteditable] {
 
 /* ── EventPanel ───────────────────────────────────────────────────────────── */
 .event-panel { max-width: 800px; }
+
+/* Sélecteur de thème du parcours invité (admin) */
+.theme-picker { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+
+.theme-option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  text-align: left;
+  min-width: 200px;
+  min-height: 44px;
+  padding: 0.75rem 1rem;
+  border: 2px solid var(--input-border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.theme-option:hover { background: var(--btn-secondary-bg); }
+.theme-option:disabled { opacity: 0.6; cursor: default; }
+.theme-option--active { border-color: var(--accent); background: var(--btn-secondary-bg); }
+
+.theme-option__label { font-weight: 600; font-size: 1rem; }
+.theme-option__hint  { font-size: 0.8rem; color: var(--text-muted); }
 
 /* ── PreflightPanel ───────────────────────────────────────────────────────── */
 .preflight-panel { max-width: 640px; display: flex; flex-direction: column; gap: 1.5rem; }

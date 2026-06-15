@@ -37,9 +37,15 @@ export const LIMITS = {
   DISK_ALERT_BYTES: 10 * 1024 * 1024 * 1024, // 10 GB
 };
 
+// Thèmes visuels du parcours invité, sélectionnables depuis l'admin de la borne.
+// 'cute' = Cutealism (défaut), 'dark' = sombre historique, 'modern' = blanc épuré,
+// plat (sans transparence ni backdrop-filter — léger sur Raspberry/iPad). Voir design/.
+export const THEMES = ['cute', 'dark', 'modern'];
+
 export const DEFAULTS = {
   MAX_DURATION_S: 60,
   COUNTDOWN_S: 3,
   IDLE_TIMEOUT_S: 120,
   CONSENT_TEXT: "En participant, vous acceptez que vos vidéos soient enregistrées et transmises à l'organisateur de l'événement à des fins de souvenir personnel. Vos données ne seront pas partagées avec des tiers.",
+  THEME: 'cute',
 };

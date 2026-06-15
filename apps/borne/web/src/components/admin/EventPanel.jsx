@@ -9,6 +9,13 @@ const STATUS_LABEL = {
   purged: 'Purgé',
 };
 
+// Thèmes visuels du parcours invité (doit refléter THEMES de @kapsule/core)
+const THEME_OPTIONS = [
+  { value: 'cute',   label: '🫧 Cutealism', hint: 'Doux, coloré, rassurant (défaut)' },
+  { value: 'modern', label: '⬜ Modern',    hint: 'Blanc épuré, plat, léger' },
+  { value: 'dark',   label: '🎬 Sombre',    hint: 'Noir / rouge, sobre' },
+];
+
 function StatusBadge({ status }) {
   return (
     <span className={`event-badge event-badge--${status}`}>
@@ -33,11 +40,24 @@ export default function EventPanel() {
   const [closeError, setCloseError] = useState('');
   const [closing, setClosing] = useState(false);
 
+  // Thème du parcours invité (de l'événement actif)
+  const [theme, setTheme] = useState(null);
+  const [themeSaving, setThemeSaving] = useState(false);
+  const [themeError, setThemeError] = useState('');
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       setEvents(await api.listEvents());
+      // Thème courant : lu depuis l'événement actif (route publique /event).
+      // 404 si aucun actif → pas de thème à afficher.
+      try {
+        const evt = await api.getEvent();
+        setTheme(evt.theme ?? 'cute');
+      } catch {
+        setTheme(null);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -72,6 +92,23 @@ export default function EventPanel() {
       setCreateError(err.message);
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleSelectTheme(value) {
+    if (!active || value === theme) return;
+    const previous = theme;
+    setTheme(value);          // optimiste : retour visuel immédiat
+    setThemeSaving(true);
+    setThemeError('');
+    try {
+      const res = await api.updateEventSettings(active.id, { theme: value });
+      setTheme(res.theme);
+    } catch (err) {
+      setTheme(previous);     // rollback si l'API refuse
+      setThemeError(err.message);
+    } finally {
+      setThemeSaving(false);
     }
   }
 
@@ -125,6 +162,32 @@ export default function EventPanel() {
           <p className="text--muted">Aucun événement actif.</p>
         )}
       </section>
+
+      {/* Thème du parcours invité — s'applique à l'événement actif */}
+      {active && theme && (
+        <section className="panel-section">
+          <h2 className="panel-section__title">
+            Design de la borne
+            <span className="panel-section__hint"> — vu par les invités</span>
+          </h2>
+          <div className="theme-picker">
+            {THEME_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                className={`theme-option${theme === opt.value ? ' theme-option--active' : ''}`}
+                onClick={() => handleSelectTheme(opt.value)}
+                disabled={themeSaving}
+                aria-pressed={theme === opt.value}
+              >
+                <span className="theme-option__label">{opt.label}</span>
+                <span className="theme-option__hint">{opt.hint}</span>
+              </button>
+            ))}
+          </div>
+          {themeError && <p className="text--error">{themeError}</p>}
+        </section>
+      )}
 
       {/* Tous les événements */}
       <section className="panel-section">

@@ -20,7 +20,7 @@ export function isAuthenticated() {
 async function apiFetch(path, options = {}) {
   const token = getToken();
   const headers = { ...options.headers };
-  if (token && !(options.body instanceof FormData)) {
+  if (options.body && !(options.body instanceof FormData)) {
     headers['Content-Type'] = headers['Content-Type'] ?? 'application/json';
   }
   if (token) {
@@ -71,6 +71,8 @@ export const api = {
     apiFetch(`/api/events/${id}/activate`, { method: 'PUT' }),
   closeEvent: (id) =>
     apiFetch(`/api/events/${id}/close`, { method: 'PUT' }),
+  updateEventSettings: (id, settings) =>
+    apiFetch(`/api/events/${id}/settings`, { method: 'PUT', body: JSON.stringify(settings) }),
 
   // Questions
   listQuestions: () => apiFetch('/api/questions'),

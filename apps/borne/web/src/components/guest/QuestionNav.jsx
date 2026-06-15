@@ -1,45 +1,65 @@
 import React from 'react';
 
-// Navigation ◀ ▶ + pastilles d'état par question.
-// answers : Set ou tableau d'ids de questions déjà répondues (alimenté en 1c.1).
-export default function QuestionNav({ questions, currentIndex, answers = [], onGo }) {
+// Barre de progression BASSE — composant unique de navigation/progression du parcours
+// (voir design/parcours-invite.md). Fusionne : flèches ◀ ▶, pastilles d'état,
+// label « Question X / N » et barre de remplissage globale.
+// Placée en bas de l'écran (zone du pouce sur iPad) ; le header haut a été retiré
+// de RecordingScreen pour dégager la question et la caméra.
+//
+// answers : tableau d'ids (ou d'objets {question_id}) des questions déjà répondues.
+// locked  : désactive les interactions (ex. pendant l'enregistrement/upload).
+export default function QuestionNav({ questions, currentIndex, answers = [], onGo, locked = false }) {
   const answeredSet = new Set(answers.map ? answers.map((a) => a.question_id ?? a) : answers);
+  const total = questions.length;
+  const fillPct = ((currentIndex + 1) / total) * 100;
 
   return (
     <nav className="question-nav" aria-label="Navigation questions">
-      <button
-        className="question-nav__arrow"
-        aria-label="Question précédente"
-        onClick={() => onGo(currentIndex - 1)}
-        disabled={currentIndex === 0}
-      >
-        ◀
-      </button>
-
-      <div className="question-nav__dots">
-        {questions.map((q, i) => (
-          <button
-            key={q.id}
-            className={[
-              'question-nav__dot',
-              i === currentIndex ? 'question-nav__dot--current' : '',
-              answeredSet.has(q.id) ? 'question-nav__dot--answered' : '',
-            ].filter(Boolean).join(' ')}
-            aria-label={`Question ${i + 1}${answeredSet.has(q.id) ? ' (répondue)' : ''}`}
-            aria-current={i === currentIndex ? 'step' : undefined}
-            onClick={() => onGo(i)}
-          />
-        ))}
+      {/* Barre de remplissage globale (progression dans le parcours) */}
+      <div className="question-nav__progress" aria-hidden="true">
+        <div className="question-nav__progress-fill" style={{ width: `${fillPct}%` }} />
       </div>
 
-      <button
-        className="question-nav__arrow"
-        aria-label="Question suivante"
-        onClick={() => onGo(currentIndex + 1)}
-        disabled={currentIndex === questions.length - 1}
-      >
-        ▶
-      </button>
+      <div className="question-nav__row">
+        <button
+          className="question-nav__arrow"
+          aria-label="Question précédente"
+          onClick={() => onGo(currentIndex - 1)}
+          disabled={locked || currentIndex === 0}
+        >
+          ◀
+        </button>
+
+        <div className="question-nav__dots">
+          {questions.map((q, i) => (
+            <button
+              key={q.id}
+              className={[
+                'question-nav__dot',
+                i === currentIndex ? 'question-nav__dot--current' : '',
+                answeredSet.has(q.id) ? 'question-nav__dot--answered' : '',
+              ].filter(Boolean).join(' ')}
+              aria-label={`Question ${i + 1}${answeredSet.has(q.id) ? ' (répondue)' : ''}`}
+              aria-current={i === currentIndex ? 'step' : undefined}
+              onClick={() => onGo(i)}
+              disabled={locked}
+            />
+          ))}
+        </div>
+
+        <span className="question-nav__label">
+          Question {currentIndex + 1} / {total}
+        </span>
+
+        <button
+          className="question-nav__arrow"
+          aria-label="Question suivante"
+          onClick={() => onGo(currentIndex + 1)}
+          disabled={locked || currentIndex === total - 1}
+        >
+          ▶
+        </button>
+      </div>
     </nav>
   );
 }

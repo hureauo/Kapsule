@@ -22,12 +22,11 @@ function retryDelay(attempt) { return Math.min(2000 * Math.pow(2, attempt - 1), 
 // Keyé par questionIndex dans le parent → remount forcé à chaque question.
 export default function RecordingScreen({
   question,
-  questionIndex,
-  totalQuestions,
   sessionId,
   existingVideoId,   // id si déjà répondue → sous-état ANSWERED
   onNext,
   onBack,
+  onLockChange,      // remonte au parent l'état de verrouillage de la nav basse
 }) {
   const [subState, setSubState] = useState(existingVideoId ? S.ANSWERED : S.INTRO);
   const [countdown, setCountdown] = useState(question.countdown ?? 3);
@@ -106,28 +105,21 @@ export default function RecordingScreen({
     return () => { if (retryTimerRef.current) clearTimeout(retryTimerRef.current); };
   }, []);
 
-  // ── Rendu selon sous-état ────────────────────────────────────────────────────
+  // ── Verrouillage de la barre de navigation basse ─────────────────────────────
+  // Pendant countdown/recording/upload, on ne doit pas changer de question.
+  // On remonte l'info au parent (GuestPage) qui passe `locked` à QuestionNav.
+  const navLocked = subState === S.COUNTDOWN || subState === S.RECORDING || subState === S.UPLOADING;
+  useEffect(() => {
+    onLockChange?.(navLocked);
+  }, [navLocked, onLockChange]);
 
-  function renderHeader() {
-    return (
-      <div className="rec__header">
-        <span className="rec__progress-label">
-          Question {questionIndex + 1} sur {totalQuestions}
-        </span>
-        <div className="rec__progress-bar">
-          <div
-            className="rec__progress-fill"
-            style={{ width: `${((questionIndex + 1) / totalQuestions) * 100}%` }}
-          />
-        </div>
-      </div>
-    );
-  }
+  // ── Rendu selon sous-état ────────────────────────────────────────────────────
+  // Plus de header de progression ici : la barre basse (QuestionNav) porte
+  // désormais « Question X / N » + la barre de remplissage (design/parcours-invite.md).
 
   if (subState === S.ANSWERED) {
     return (
       <div className="screen screen--recording">
-        {renderHeader()}
         <h2 className="rec__question">{question.text}</h2>
         <div className="rec__preview-wrap">
           {/* Lecture de la réponse enregistrée — Range-aware côté serveur → scrubbing */}
@@ -157,7 +149,6 @@ export default function RecordingScreen({
     const cameraReady = recorder.status === REC_STATUS.READY;
     return (
       <div className="screen screen--recording">
-        {renderHeader()}
         <h2 className="rec__question">{question.text}</h2>
         <p className="text--muted rec__duration-hint">
           Durée max : {question.max_duration ?? 60} s
@@ -207,7 +198,6 @@ export default function RecordingScreen({
     const progress = (recorder.duration / (question.max_duration ?? 60));
     return (
       <div className="screen screen--recording">
-        {renderHeader()}
         <h2 className="rec__question">{question.text}</h2>
         <div className="rec__live-indicator" aria-live="polite">
           <span className="rec__dot rec__dot--blink" aria-hidden="true" /> REC
@@ -226,7 +216,6 @@ export default function RecordingScreen({
   if (subState === S.PREVIEW) {
     return (
       <div className="screen screen--recording">
-        {renderHeader()}
         <h2 className="rec__question">{question.text}</h2>
         <div className="rec__preview-wrap">
           {/* playsInline obligatoire pour Safari — invariant §11.5 */}

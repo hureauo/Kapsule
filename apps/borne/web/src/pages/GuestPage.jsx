@@ -127,6 +127,7 @@ export default function GuestPage() {
   const [questions, setQuestions] = useState([]);
   const [errorMsg, setErrorMsg] = useState('');
   const [idleModalVisible, setIdleModalVisible] = useState(false);
+  const [navLocked, setNavLocked] = useState(false); // verrou nav basse pendant rec/upload
 
   const [sessionId, setSessionId] = useState(null);
   const [guestName, setGuestName] = useState('');
@@ -142,6 +143,10 @@ export default function GuestPage() {
       const [evtData, qData] = await Promise.all([api.getEvent(), api.getQuestions()]);
       setEvent(evtData);
       setQuestions(qData.filter((q) => q.enabled));
+
+      // Applique le thème choisi par l'admin (data-theme sur <html>) — défaut 'cute'.
+      // Le CSS recalcule juste les variables ; aucun re-render React lié au thème.
+      document.documentElement.setAttribute('data-theme', evtData.theme ?? 'cute');
 
       if (evtData.status === 'closed') {
         setScreen(S.CLOSED);
@@ -309,22 +314,23 @@ export default function GuestPage() {
         const existingAnswer = answers.find((a) => (a.question_id ?? a) === q.id);
         return (
           <div className="questions-layout">
+            {/* key force le remount complet à chaque changement de question */}
+            <RecordingScreen
+              key={`${sessionId}-q${questionIndex}`}
+              question={q}
+              sessionId={sessionId}
+              existingVideoId={existingAnswer?.video_id ?? null}
+              onNext={handleQuestionNext}
+              onBack={handleQuestionBack}
+              onLockChange={setNavLocked}
+            />
+            {/* Barre de progression en BAS (design/parcours-invite.md) */}
             <QuestionNav
               questions={questions}
               currentIndex={questionIndex}
               answers={answers}
               onGo={handleGoQuestion}
-            />
-            {/* key force le remount complet à chaque changement de question */}
-            <RecordingScreen
-              key={`${sessionId}-q${questionIndex}`}
-              question={q}
-              questionIndex={questionIndex}
-              totalQuestions={questions.length}
-              sessionId={sessionId}
-              existingVideoId={existingAnswer?.video_id ?? null}
-              onNext={handleQuestionNext}
-              onBack={handleQuestionBack}
+              locked={navLocked}
             />
           </div>
         );
