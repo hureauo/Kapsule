@@ -1,0 +1,82 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/eventDb.js — handle unique</h1>
+
+<p>
+  L'équivalent Borne de <a href="#/hub-eventstore">eventStore.js</a> du Hub — mais radicalement
+  plus simple. Là où le Hub gère un cache LRU de 10 bases (il sert plusieurs événements), la Borne
+  n'a <strong>qu'un événement actif</strong> à la fois. Son cache est donc à <strong>une seule
+  entrée</strong>.
+</p>
+
+<p>Le fichier entier :</p>
+<pre><code class="js">import { join } from 'node:path';
+import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
+
+let _cached = null;   // { id, db } — une seule entrée
+
+export function getActiveEventDb(dataDir, activeEvent) {
+  if (!activeEvent) {            // plus d'événement actif → on ferme
+    closeEventDb();
+    return null;
+  }
+  if (_cached &amp;&amp; _cached.id === activeEvent.id) {
+    return _cached.db;           // même événement qu'avant → réutilise
+  }
+  closeEventDb();                // événement différent → ferme l'ancien
+  const dbPath = join(dataDir, 'events', activeEvent.id, 'db.sqlite');
+  const db = createEventDb(dbPath);
+  _cached = { id: activeEvent.id, db };
+  return db;
+}
+
+export function closeEventDb() {
+  if (_cached) {
+    _cached.db.close();
+    _cached = null;
+  }
+}</code></pre>
+
+<h2>La logique</h2>
+<p>
+  Une seule variable de module <code>_cached</code> mémorise <code>{ id, db }</code>. À chaque
+  appel de <code>getActiveEventDb</code> :
+</p>
+<ul>
+  <li>Pas d'événement actif → on ferme le handle courant et on renvoie <code>null</code>.</li>
+  <li>Même événement que la dernière fois → on renvoie le handle déjà ouvert (pas de réouverture).</li>
+  <li>Événement <em>différent</em> → on ferme l'ancien handle, on ouvre le nouveau, on le mémorise.</li>
+</ul>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Pourquoi un cache à une entrée suffit (vs LRU côté Hub)</div>
+  <p>
+    Le kiosque ne sert qu'un événement — l'actif. Toutes les routes publiques
+    (<a href="#/borne-routes-sessions">sessions</a>, <a href="#/borne-routes-videos">vidéos</a>,
+    questions) passent par <code>getActiveEventDb(dataDir, getActiveEvent())</code>. Il n'y a donc
+    jamais besoin de plusieurs bases ouvertes en même temps. Quand l'admin change d'événement actif
+    (<a href="#/borne-routes-events">activate</a>), le handle de l'ancien est fermé et celui du
+    nouveau ouvert. C'est l'illustration parfaite de « dimensionner la structure de données au
+    besoin réel » : même problème que le Hub, solution dix fois plus simple parce que la contrainte
+    est différente.
+  </p>
+</div>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ <code>closeEventDb</code> et l'invariant §11.11</div>
+  <p>
+    Comme côté Hub, <code>closeEventDb()</code> doit être appelé <strong>avant</strong> de
+    supprimer le dossier d'un événement (purge). On le retrouve dans
+    <a href="#/borne-routes-sync">routes/sync.js</a> (purge) juste avant le <code>rmSync</code>.
+    Subtilité : si l'événement purgé est encore l'actif, son handle est ouvert — d'où l'appel
+    explicite à <code>closeEventDb()</code> avant la suppression physique.
+  </p>
+</div>
+
+<a class="see-also" href="#/core-eventdbschema">→ notion : createEventDb (schéma + ouverture) — vue dans core/eventDbSchema</a>
+<a class="see-also" href="#/hub-eventstore">→ comparer : le cache LRU du Hub (eventStore.js)</a>
+
+<table class="api-table">
+  <tr><th>Fonction</th><th>Rôle</th></tr>
+  <tr><td>getActiveEventDb(dataDir, activeEvent)</td><td>Retourne le handle de l'événement actif (réutilise si inchangé, sinon rouvre). <code>null</code> si pas d'actif.</td></tr>
+  <tr><td>closeEventDb()</td><td>Ferme le handle courant. À appeler avant purge/suppression (§11.11).</td></tr>
+</table>

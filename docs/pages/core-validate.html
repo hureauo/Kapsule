@@ -1,0 +1,160 @@
+<div class="page-kicker">2 — Le package partagé</div>
+<h1>core/validate.js</h1>
+
+<p>
+  Trois fonctions de validation partagées : <code>validateQuestion</code>,
+  <code>validateGuestName</code>, <code>assertStatus</code>. Comme elles sont dans
+  <code>core</code> (et dans le barrel), Hub et Borne valident à l'identique. Elles sont en JS pur
+  — utilisables aussi bien côté serveur que dans un front, même si ici elles servent surtout
+  côté serveur.
+</p>
+
+<h2>Une convention de retour à connaître</h2>
+
+<p>
+  <code>validateQuestion</code> et <code>validateGuestName</code> suivent une convention simple :
+  <strong>retourner <code>null</code> si tout va bien, ou une chaîne de message d'erreur sinon.</strong>
+</p>
+
+<pre><code class="js">export function validateGuestName(name) {
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    return 'Le prénom est requis.';
+  }
+  if (name.length > LIMITS.GUEST_NAME_MAX) {
+    return `Le prénom ne doit pas dépasser ${LIMITS.GUEST_NAME_MAX} caractères.`;
+  }
+  return null;   // null = valide
+}</code></pre>
+
+<p>Et l'appel typique dans une route (<a href="#/borne-routes-sessions">sessions.js</a>) :</p>
+<pre><code class="js">const nameErr = validateGuestName(guest_name);
+if (nameErr) return res.status(400).json({ error: nameErr });</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Fonction pure, « truthy/falsy », et le template literal</span>
+  </div>
+  <p>
+    Ces fonctions sont <strong>pures</strong> : même entrée → même sortie, aucun effet de bord
+    (pas d'accès base, pas de log). Faciles à tester et à raisonner.
+  </p>
+  <p>
+    <code>if (!name || …)</code> exploite les valeurs <strong>« falsy »</strong> de JS : sont
+    considérées fausses <code>undefined</code>, <code>null</code>, <code>0</code>,
+    <code>""</code>, <code>NaN</code>, <code>false</code>. Donc <code>!name</code> attrape « pas
+    fourni » et « chaîne vide » d'un coup. Le <code>typeof name !== 'string'</code> ajoute une
+    garde de type (un client malveillant pourrait envoyer un nombre).
+  </p>
+  <p>
+    Les messages utilisent les <strong>template literals</strong> (backticks) :
+    <code>`… ${LIMITS.GUEST_NAME_MAX} …`</code> interpole une expression dans une chaîne, comme
+    une f-string Python.
+  </p>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Interpolation</th></tr>
+    <tr><td class="lang">Python</td><td><code>f"max {n} car."</code></td></tr>
+    <tr><td class="lang">Kotlin</td><td><code>"max $n car."</code></td></tr>
+    <tr><td class="lang">JS</td><td><code>`max ${n} car.`</code> (backticks obligatoires)</td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      Le choix « retourner null ou une string » (plutôt que lever une exception, ou retourner un
+      booléen) est un compromis pragmatique : la route récupère <em>directement</em> le message à
+      renvoyer au client, sans <code>try/catch</code> ni table de correspondance code→message.
+      C'est un mini « <em>errors as values</em> » à la Go — sauf qu'au lieu de
+      <code>(value, error)</code> on a juste <code>error | null</code>, parce que la validation ne
+      produit pas de valeur, seulement un verdict.
+    </p>
+    <p>
+      Le revers : il faut penser à tester <code>if (err)</code> à chaque appel. Un oubli ne
+      provoque pas d'erreur visible — la validation est simplement ignorée. C'est pourquoi le
+      projet teste systématiquement les cas d'erreur (voir <a href="#/tests-runner">Tests</a>).
+    </p>
+  </div>
+</div>
+
+<h2><code>validateQuestion</code> : validation de champs numériques</h2>
+
+<pre><code class="js">export function validateQuestion({ text, max_duration, countdown }) {
+  if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    return 'Le texte de la question est requis.';
+  }
+  if (text.length > LIMITS.QUESTION_TEXT_MAX) {
+    return `Le texte ne doit pas dépasser ${LIMITS.QUESTION_TEXT_MAX} caractères.`;
+  }
+  if (max_duration !== undefined) {
+    const d = Number(max_duration);
+    if (!Number.isInteger(d) || d < LIMITS.QUESTION_MIN_DURATION_S || d > LIMITS.QUESTION_MAX_DURATION_S) {
+      return `max_duration doit être un entier entre ${LIMITS.QUESTION_MIN_DURATION_S} et ${LIMITS.QUESTION_MAX_DURATION_S}.`;
+    }
+  }
+  // … idem countdown …
+  return null;
+}</code></pre>
+
+<p>Deux points de syntaxe :</p>
+<ul>
+  <li>
+    <strong>Le paramètre <code>{ text, max_duration, countdown }</code></strong> est un
+    <em>destructuring</em> : la fonction reçoit un objet et en extrait directement les champs.
+    Équivalent de <code>def f(*, text, max_duration, countdown)</code> en Python avec un dict.
+  </li>
+  <li>
+    <strong><code>Number(x)</code> + <code>Number.isInteger(d)</code></strong> : on convertit
+    explicitement (le client envoie souvent des chaînes) puis on vérifie que c'est bien un
+    entier. <code>Number("12")</code> donne <code>12</code>, mais <code>Number("12.5")</code> donne
+    <code>12.5</code> (rejeté par <code>isInteger</code>) et <code>Number("abc")</code> donne
+    <code>NaN</code> (aussi rejeté).
+  </li>
+</ul>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Piège : <code>max_duration !== undefined</code></div>
+  <p>
+    La validation des champs numériques est conditionnée à <code>!== undefined</code> : un champ
+    <em>absent</em> est accepté (la route appliquera un défaut). C'est ce qui permet une mise à
+    jour partielle (PUT qui ne change que le texte). Mais attention : <code>null</code> n'est
+    <em>pas</em> <code>undefined</code> — si un client envoie <code>max_duration: null</code>,
+    <code>Number(null)</code> vaut <code>0</code>, qui sera rejeté comme « hors bornes ». Comportement
+    voulu ici, mais c'est le genre de subtilité à garder en tête.
+  </p>
+</div>
+
+<h2><code>assertStatus</code> : la machine à états, version stricte</h2>
+
+<pre><code class="js">export function assertStatus(current, next) {
+  const from = STATUS_ORDER.indexOf(current);
+  const to = STATUS_ORDER.indexOf(next);
+  if (from === -1) throw new Error(`Statut inconnu : ${current}`);
+  if (to === -1) throw new Error(`Statut inconnu : ${next}`);
+  if (to <= from) throw new Error(`Transition invalide : ${current} → ${next}`);
+}</code></pre>
+
+<p>
+  Contrairement aux deux autres, celle-ci <strong>lève une exception</strong> au lieu de
+  retourner un message. La logique : une transition de statut illégale est un bug de
+  programmation (ou une attaque), pas une saisie utilisateur à corriger gentiment. Elle s'appuie
+  sur <code>STATUS_ORDER</code> de <a href="#/core-constants">constants.js</a> :
+  <code>indexOf</code> donne la position, et « avancer » signifie <code>to &gt; from</code>.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>throw</code> et les objets <code>Error</code></span>
+  </div>
+  <p>
+    <code>throw</code> lance une exception, comme <code>raise</code> en Python ou
+    <code>panic</code> en Go (mais ici c'est rattrapable normalement, pas catastrophique). On lance
+    par convention un objet <code>Error</code>, qui porte un <code>.message</code> et une
+    <code>.stack</code> (trace d'appel).
+  </p>
+  <p>
+    On verra plus loin une technique récurrente du projet pour <strong>attacher des données</strong>
+    à une Error — typiquement un code HTTP : <code>Object.assign(new Error('…'), { status: 409 })</code>.
+    Détaillé dans <a href="#/borne-sync-hubclient">hubClient.js</a>.
+  </p>
+</div>

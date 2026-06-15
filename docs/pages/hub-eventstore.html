@@ -1,0 +1,140 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/eventStore.js — cache LRU</h1>
+
+<p>
+  Le Hub manipule potentiellement beaucoup d'événements, chacun avec sa propre base
+  <code>db.sqlite</code>. Ouvrir un fichier SQLite a un coût, et garder des centaines de handles
+  ouverts épuiserait les descripteurs de fichiers du système. Ce module résout le problème avec un
+  <strong>cache LRU</strong> (Least Recently Used) limité à 10 bases ouvertes simultanément.
+</p>
+
+<h2>Le cœur : une <code>Map</code> ordonnée</h2>
+
+<pre><code class="js">const LRU_MAX = 10;
+
+// Map ordonnée par ordre d'accès : la première entrée est la moins récemment utilisée
+const _cache = new Map();    // eventId → Database
+
+export function openEventDb(eventId, dataDir) {
+  if (_cache.has(eventId)) {
+    // Rafraîchir la position LRU : supprimer + réinsérer en fin
+    const db = _cache.get(eventId);
+    _cache.delete(eventId);
+    _cache.set(eventId, db);
+    return db;
+  }
+
+  if (_cache.size >= LRU_MAX) evictOldest();
+
+  const dbPath = join(dataDir, 'events', eventId, 'db.sqlite');
+  const db = createEventDb(dbPath);     // crée le schéma si besoin (voir core)
+  _cache.set(eventId, db);
+  return db;
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">La <code>Map</code> et son ordre d'insertion garanti</span>
+  </div>
+  <p>
+    Une <code>Map</code> est une structure clé→valeur (comme un <code>dict</code> Python ou une
+    <code>map</code> Go), mais avec deux propriétés que l'objet <code>{}</code> classique n'offre
+    pas aussi bien : les clés peuvent être de n'importe quel type, et surtout <strong>l'ordre
+    d'insertion est garanti</strong> par la spécification du langage.
+  </p>
+  <p>
+    C'est exactement ce qui rend le LRU trivial : la <code>Map</code> mémorise dans quel ordre les
+    clés ont été ajoutées. En <strong>supprimant puis réinsérant</strong> une clé à chaque accès
+    (<code>delete</code> + <code>set</code>), on la repousse en fin de Map. Donc la
+    <strong>première</strong> entrée est toujours la moins récemment utilisée — celle à évincer.
+  </p>
+
+  <table class="compare">
+    <tr><th>Opération</th><th>Map JS</th><th>Python</th></tr>
+    <tr><td class="lang">Existence</td><td><code>_cache.has(k)</code></td><td><code>k in d</code></td></tr>
+    <tr><td class="lang">Lire</td><td><code>_cache.get(k)</code></td><td><code>d[k]</code></td></tr>
+    <tr><td class="lang">Écrire</td><td><code>_cache.set(k, v)</code></td><td><code>d[k] = v</code></td></tr>
+    <tr><td class="lang">Supprimer</td><td><code>_cache.delete(k)</code></td><td><code>del d[k]</code></td></tr>
+    <tr><td class="lang">Taille</td><td><code>_cache.size</code></td><td><code>len(d)</code></td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      L'équivalent Python direct serait <code>collections.OrderedDict</code> avec
+      <code>move_to_end()</code> — la <code>Map</code> JS a la même garantie d'ordre, mais on
+      « déplace en fin » manuellement (delete+set) car il n'y a pas de <code>move_to_end</code>
+      natif. La complexité reste O(1) pour toutes les opérations.
+    </p>
+    <p>
+      Pourquoi une <code>Map</code> et pas un objet <code>{}</code> ? Avec un objet, l'ordre des
+      clés est <em>presque</em> garanti mais avec des exceptions tordues (les clés numériques sont
+      réordonnées en premier !). Pour un LRU où l'ordre est la donnée centrale, la <code>Map</code>
+      est le bon outil — c'est précisément son cas d'usage canonique.
+    </p>
+  </div>
+</div>
+
+<h2>L'éviction</h2>
+<pre><code class="js">function evictOldest() {
+  const [oldestId, oldestDb] = _cache.entries().next().value;
+  oldestDb.close();              // ferme proprement le handle SQLite
+  _cache.delete(oldestId);
+}</code></pre>
+<p>
+  <code>_cache.entries()</code> renvoie un itérateur sur les paires <code>[clé, valeur]</code>,
+  dans l'ordre d'insertion. <code>.next().value</code> prend la <strong>première</strong> paire
+  (la plus ancienne). Le <code>const [oldestId, oldestDb] = …</code> est un
+  <strong>destructuring de tableau</strong> : il extrait les deux éléments de la paire en deux
+  variables d'un coup (≈ <code>oldest_id, oldest_db = ...</code> en Python). Avant de l'oublier du
+  cache, on <strong>ferme</strong> le handle — sinon fuite de descripteur de fichier.
+</p>
+
+<h2>Fermeture ciblée — l'invariant §11.11</h2>
+<pre><code class="js">export function closeEventDb(eventId) {
+  const db = _cache.get(eventId);
+  if (!db) return;
+  db.close();
+  _cache.delete(eventId);
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Fermer le handle AVANT tout rm -rf ou écrasement (§11.11)</div>
+  <p>
+    <code>closeEventDb</code> n'est pas qu'un utilitaire de cache : c'est une pièce d'un invariant
+    critique. Avant de <strong>supprimer</strong> le dossier d'un événement (purge RGPD) ou
+    d'<strong>écraser</strong> son <code>db.sqlite</code> (réception au push), il faut fermer le
+    handle SQLite ouvert. Raisons :
+  </p>
+  <ul>
+    <li>Un <code>rm -rf</code> d'un fichier encore ouvert laisse SQLite dans un état incohérent
+        (et sous certains systèmes le fichier « disparaît » mais reste verrouillé).</li>
+    <li>Écraser le fichier (via <code>renameSync</code>) pendant qu'un handle pointe dessus
+        corrompt la base : le handle voit l'ancien inode, les fichiers WAL/SHM ne correspondent
+        plus.</li>
+  </ul>
+  <p>
+    On retrouve <code>closeEventDb(id)</code> appelé explicitement dans
+    <a href="#/hub-routes-events">routes/events.js</a> (DELETE/purge) et
+    <a href="#/hub-routes-sync">routes/sync.js</a> (PUT /db, avant le <code>renameSync</code>).
+  </p>
+</div>
+
+<h2>Fonctions utilitaires (tests)</h2>
+<table class="api-table">
+  <tr><th>Fonction</th><th>Rôle</th></tr>
+  <tr><td>openEventDb(id, dataDir)</td><td>Retourne le handle (du cache ou nouvellement ouvert), rafraîchit sa position LRU, évince le plus ancien si &gt; 10.</td></tr>
+  <tr><td>closeEventDb(id)</td><td>Ferme et retire un handle précis. Invariant §11.11.</td></tr>
+  <tr><td>closeAllEventDbs()</td><td>Ferme tous les handles. Nettoyage de fin de suite de tests.</td></tr>
+  <tr><td>cacheSize()</td><td>Taille courante du cache. Permet aux tests de vérifier l'éviction LRU.</td></tr>
+</table>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Contraste avec la Borne</div>
+  <p>
+    La Borne n'a qu'<strong>un</strong> événement actif à la fois — pas besoin d'un LRU. Son
+    équivalent <a href="#/borne-eventdb">eventDb.js</a> est un cache à une seule entrée. C'est une
+    bonne illustration de « la structure de données suit le besoin réel » : même problème (éviter
+    de rouvrir une base), solution dimensionnée différemment.
+  </p>
+</div>

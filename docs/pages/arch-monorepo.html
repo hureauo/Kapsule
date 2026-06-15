@@ -1,0 +1,188 @@
+<div class="page-kicker">1 — Architecture</div>
+<h1>Monorepo &amp; NPM workspaces</h1>
+
+<p>
+  Tout le code de Kapsule vit dans <strong>un seul dépôt git</strong> (un « monorepo ») qui
+  contient plusieurs sous-projets indépendants : le package partagé, le serveur Hub, le serveur
+  Borne, et les deux fronts web. Ces sous-projets sont liés entre eux par les
+  <strong>workspaces NPM</strong>. Avant de comprendre ça, il faut savoir ce qu'est NPM.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">NPM et le fichier package.json</span>
+  </div>
+  <p>
+    <strong>NPM</strong> (Node Package Manager) est à Node ce que <code>pip</code> est à Python
+    ou <code>go mod</code> à Go : il installe les dépendances et lance des scripts. Chaque projet
+    JS a un fichier <span class="path">package.json</span> qui le décrit — c'est l'équivalent
+    combiné de <code>pyproject.toml</code> + <code>requirements.txt</code>, ou de <code>go.mod</code>.
+  </p>
+
+  <table class="compare">
+    <tr><th>Concept</th><th>Python</th><th>Go</th><th>JS / NPM</th></tr>
+    <tr><td class="lang">Manifeste</td><td>pyproject.toml</td><td>go.mod</td><td>package.json</td></tr>
+    <tr><td class="lang">Dépendances figées</td><td>requirements.txt</td><td>go.sum</td><td>package-lock.json</td></tr>
+    <tr><td class="lang">Installer</td><td>pip install</td><td>go get</td><td>npm install</td></tr>
+    <tr><td class="lang">Dossier installé</td><td>site-packages</td><td>$GOPATH/pkg</td><td>node_modules</td></tr>
+    <tr><td class="lang">Lancer une tâche</td><td>(make / tox)</td><td>(make)</td><td>npm run &lt;script&gt;</td></tr>
+  </table>
+
+  <p>Les champs essentiels d'un <span class="path">package.json</span> :</p>
+  <ul>
+    <li><code>"dependencies"</code> — paquets nécessaires en production (ex. <code>express</code>).</li>
+    <li><code>"devDependencies"</code> — paquets nécessaires seulement pour développer/tester (ex. <code>supertest</code>). Pas installés en prod si on fait <code>npm install --production</code>.</li>
+    <li><code>"scripts"</code> — des alias de commandes, lancés par <code>npm run &lt;nom&gt;</code> (sauf <code>test</code>, <code>start</code> qui ont un raccourci : <code>npm test</code>).</li>
+    <li><code>"main"</code> — le fichier d'entrée quand un autre module fait <code>import … from 'ce-paquet'</code>.</li>
+    <li><code>"private": true</code> — empêche une publication accidentelle sur le registre public npm.</li>
+  </ul>
+
+  <div class="js-deep">
+    <p>
+      <code>node_modules</code> est volumineux et jamais commité (il est dans
+      <span class="path">.gitignore</span>). On le reconstruit avec <code>npm install</code>,
+      qui lit <span class="path">package.json</span> et fige les versions exactes dans
+      <span class="path">package-lock.json</span> (à commiter, lui, pour des installs
+      reproductibles — comme <code>go.sum</code>).
+    </p>
+    <p>
+      Différence majeure avec Go : Node résout les imports <strong>à l'exécution</strong> en
+      remontant l'arborescence <code>node_modules</code> depuis le fichier courant. Il n'y a pas
+      de compilation préalable qui vérifie que tout est présent. Un import manquant n'explose
+      qu'au moment où la ligne s'exécute.
+    </p>
+  </div>
+</div>
+
+<h2>Le package.json racine de Kapsule</h2>
+
+<p>Voici le fichier <span class="path">package.json</span> à la racine du dépôt :</p>
+
+<pre><code class="js">{
+  "name": "kapsule",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*/server",
+    "apps/*/web"
+  ],
+  "scripts": {
+    "test": "if find packages apps -maxdepth 3 -name 'package.json' ... ; then npm test --workspaces --if-present; fi",
+    "dev:borne": "npm run dev --workspace=apps/borne/server",
+    "dev:hub": "npm run dev --workspace=apps/hub/server"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}</code></pre>
+
+<p>Trois choses importantes ici :</p>
+
+<h3>1. <code>"type": "module"</code></h3>
+<p>
+  Ce champ bascule <strong>tout le dépôt</strong> en modules ES (ESM) : on écrit
+  <code>import</code>/<code>export</code> et non <code>require()</code>. Comme les workspaces
+  héritent de ce réglage, l'ensemble du code Kapsule est en ESM. C'est détaillé dans
+  <a href="#/arch-modules">ESM : import / export</a>.
+</p>
+
+<h3>2. <code>"workspaces"</code></h3>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Les workspaces NPM (monorepo)</span>
+  </div>
+  <p>
+    Un <strong>workspace</strong> est un sous-projet, avec son propre
+    <span class="path">package.json</span>, qui vit dans le même dépôt. Le champ
+    <code>"workspaces"</code> du <span class="path">package.json</span> racine liste les chemins
+    (avec jokers <code>*</code>) où NPM doit chercher ces sous-projets.
+  </p>
+  <p>Ici, NPM considère comme workspaces :</p>
+  <ul>
+    <li><code>packages/*</code> → <span class="path">packages/core</span></li>
+    <li><code>apps/*/server</code> → <span class="path">apps/hub/server</span>, <span class="path">apps/borne/server</span></li>
+    <li><code>apps/*/web</code> → <span class="path">apps/hub/web</span>, <span class="path">apps/borne/web</span></li>
+  </ul>
+  <p>
+    <strong>Ce que ça change concrètement :</strong> un seul <code>npm install</code> lancé à la
+    racine installe les dépendances de <em>tous</em> les workspaces, et place un unique
+    <span class="path">node_modules</span> à la racine (les paquets communs sont mutualisés).
+    Surtout, NPM crée des <strong>liens symboliques</strong> entre workspaces : quand le serveur
+    Hub déclare dépendre de <code>@kapsule/core</code>, NPM le fait pointer vers le dossier local
+    <span class="path">packages/core</span> — pas besoin de publier quoi que ce soit.
+  </p>
+
+  <table class="compare">
+    <tr><th>Outil</th><th>Équivalent monorepo</th></tr>
+    <tr><td class="lang">Go</td><td><code>go.work</code> (workspaces Go, depuis 1.18)</td></tr>
+    <tr><td class="lang">Python</td><td>plusieurs paquets installés en <code>pip install -e</code> (editable)</td></tr>
+    <tr><td class="lang">JS</td><td><code>"workspaces"</code> dans le package.json racine</td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      Le lien symbolique est la clé : <span class="path">node_modules/@kapsule/core</span> est
+      un <em>symlink</em> vers <span class="path">../../packages/core</span>. Donc quand tu
+      modifies un fichier de <code>core</code>, les serveurs voient le changement
+      <strong>immédiatement</strong>, sans réinstaller ni rebuild. C'est l'équivalent exact d'un
+      <code>pip install -e</code> (editable install) en Python, mais automatique pour tous les
+      workspaces.
+    </p>
+    <p>
+      Le flag <code>--workspace=apps/hub/server</code> (visible dans les scripts
+      <code>dev:hub</code>) cible un workspace précis : « lance le script <code>dev</code>, mais
+      dans ce sous-projet-là ». Et <code>--workspaces</code> (pluriel) signifie « dans tous ».
+      Le <code>--if-present</code> évite l'erreur si un workspace n'a pas le script demandé.
+    </p>
+  </div>
+</div>
+
+<h3>3. <code>"scripts"</code> et <code>"engines"</code></h3>
+<p>
+  Les scripts <code>dev:borne</code> / <code>dev:hub</code> sont les raccourcis pour lancer
+  chaque serveur en développement (ils délèguent au script <code>dev</code> du workspace ciblé).
+  Le champ <code>"engines": { "node": ">=20" }</code> documente la version de Node requise — le
+  code utilise des fonctionnalités récentes (test runner natif, <code>fetch</code> global…).
+</p>
+
+<h2>La carte des workspaces</h2>
+
+<table class="api-table">
+  <tr><th>Workspace</th><th>Nom NPM</th><th>Rôle</th></tr>
+  <tr><td>packages/core</td><td>@kapsule/core</td><td>Code partagé : constantes, validation, schéma de base, checksum. <a href="#/core-index">→</a></td></tr>
+  <tr><td>apps/hub/server</td><td>(privé)</td><td>Serveur HTTP du Hub (Express + SQLite + worker). <a href="#/hub-index">→</a></td></tr>
+  <tr><td>apps/hub/web</td><td>(privé)</td><td>Front React du Hub (interface client). <a href="#/web-client-hub">→</a></td></tr>
+  <tr><td>apps/borne/server</td><td>(privé)</td><td>Serveur HTTP de la Borne (Express + SQLite + sync). <a href="#/borne-index">→</a></td></tr>
+  <tr><td>apps/borne/web</td><td>(privé)</td><td>Front React de la Borne (kiosque invité + admin local). <a href="#/web-mediarecorder">→</a></td></tr>
+</table>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Le préfixe <code>@kapsule/</code></div>
+  <p>
+    <code>@kapsule/core</code> est un <em>scoped package</em> : le <code>@kapsule/</code> est un
+    « scope » (espace de noms), comme un préfixe de module Go (<code>github.com/org/…</code>).
+    Ça évite les collisions de noms et regroupe les paquets d'un même projet. Ici le scope n'est
+    pas publié : il n'existe que localement grâce aux workspaces.
+  </p>
+</div>
+
+<h2>Comment un serveur importe le code partagé</h2>
+<p>
+  Le <span class="path">package.json</span> de <span class="path">apps/hub/server</span> déclare
+  simplement <code>"@kapsule/core"</code> dans ses <code>dependencies</code>. Ensuite, dans le
+  code, on écrit :
+</p>
+<pre><code class="js">import { LIMITS } from '@kapsule/core';
+import { sha256File } from '@kapsule/core/src/checksum.js';</code></pre>
+<p>
+  Le premier import résout vers le <code>"main"</code> / <code>"exports"</code> du package core
+  (son « barrel », voir <a href="#/core-index">core/index.js</a>). Le second cible un fichier
+  précis du package — utile pour le code <em>server-only</em> que le barrel n'expose pas
+  exprès (comme <code>checksum.js</code> qui dépend de modules Node). On détaille ce choix dans
+  la page de <a href="#/core-index">core/index.js</a>.
+</p>

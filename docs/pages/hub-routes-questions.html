@@ -1,0 +1,129 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/routes/questions.js</h1>
+
+<p>
+  Le CRUD des questions d'un événement. Ce routeur est monté <em>sous</em>
+  <code>/api/events/:eventId/questions</code>, ce qui introduit une subtilité Express
+  (<code>mergeParams</code>) et illustre l'invariant d'ordre des routes (§11.1) ainsi que la
+  construction d'un UPDATE SQL dynamique.
+</p>
+
+<h2><code>mergeParams: true</code></h2>
+<pre><code class="js">// Monté sous /api/events/:eventId/questions
+export function makeQuestionsRouter(dataDir) {
+  const router = Router({ mergeParams: true });
+  function getEventDb(req) {
+    return openEventDb(req.params.eventId, dataDir);
+  }
+  // …</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Express : <code>Router({ mergeParams: true })</code></span>
+  </div>
+  <p>
+    Quand un routeur est monté sous un chemin qui contient un paramètre — ici le
+    <code>:eventId</code> de <code>app.use('/api/events/:eventId/questions', …)</code> — ce
+    paramètre appartient au routeur <em>parent</em>. Par défaut, le routeur enfant ne le voit pas
+    dans <code>req.params</code>. L'option <code>mergeParams: true</code> demande à Express de
+    <strong>fusionner</strong> les paramètres du parent dans ceux de l'enfant, rendant
+    <code>req.params.eventId</code> accessible ici.
+  </p>
+  <p>
+    Sans cette option, <code>req.params.eventId</code> serait <code>undefined</code> dans ce
+    fichier, et <code>openEventDb(undefined, …)</code> échouerait. C'est un piège classique des
+    routeurs imbriqués.
+  </p>
+</div>
+
+<a class="see-also" href="#/hub-eventstore">→ notion : openEventDb (cache LRU des bases d'événement) — vue dans eventStore.js</a>
+
+<h2>Invariant §11.1 : routes fixes avant <code>/:id</code></h2>
+<pre><code class="js">// PUT /reorder/batch — déclarée AVANT /:id (sinon Express interprète "reorder" comme un id)
+router.put('/reorder/batch', requireUser, requireOwner, (req, res, next) => { … });
+
+// PUT /:id — déclarée APRÈS
+router.put('/:id', requireUser, requireOwner, (req, res, next) => { … });</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ L'ordre de déclaration des routes (§11.1)</div>
+  <p>
+    Express évalue les routes dans l'ordre et s'arrête à la première qui « matche ». Le motif
+    <code>/:id</code> matche <strong>n'importe quel segment</strong>, y compris
+    <code>"reorder"</code>. Si <code>/:id</code> était déclaré avant <code>/reorder/batch</code>,
+    une requête <code>PUT /reorder/batch</code> serait captée par <code>/:id</code> avec
+    <code>id = "reorder"</code> (puis échouerait, ou pire ferait une action sur une « question
+    reorder »). D'où la règle : <strong>toujours déclarer les routes à segment littéral avant les
+    routes paramétrées</strong>. Même principe pour <code>/export/csv</code> dans
+    <a href="#/hub-routes-gallery">gallery.js</a>.
+  </p>
+</div>
+
+<h2>Le gel d'édition</h2>
+<pre><code class="js">const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
+
+function checkFrozen(req, res) {
+  const event = req.event ?? getEvent(getDb(), req.params.eventId);
+  if (event &amp;&amp; FROZEN_STATUSES.has(event.status)) {
+    res.status(409).json({ error: `Édition impossible : événement en statut ${event.status}` });
+    return true;
+  }
+  return false;
+}</code></pre>
+<p>
+  Comme dans <a href="#/hub-routes-events">events.js</a>, on bloque la modification des questions
+  dès que l'événement est <code>live</code> ou au-delà. <code>req.event ?? getEvent(...)</code> :
+  on réutilise l'événement déjà chargé par <code>requireOwner</code> s'il existe, sinon on le
+  relit. La fonction renvoie <code>true</code> si elle a déjà répondu (gelé) — l'appelant fait
+  alors <code>if (checkFrozen(req, res)) return;</code>.
+</p>
+
+<h2>UPDATE dynamique sur champs partiels</h2>
+<p>
+  <code>PUT /:id</code> permet de ne mettre à jour que certains champs. On construit le SQL en
+  fonction de ce qui est fourni :
+</p>
+<pre><code class="js">const fields = [];
+const values = [];
+if (text !== undefined)         { fields.push('text=?');         values.push(text.trim()); }
+if (max_duration !== undefined) { fields.push('max_duration=?'); values.push(max_duration); }
+if (countdown !== undefined)    { fields.push('countdown=?');    values.push(countdown); }
+if (enabled !== undefined)      { fields.push('enabled=?');      values.push(enabled ? 1 : 0); }
+if (order_index !== undefined)  { fields.push('order_index=?');  values.push(order_index); }
+if (fields.length === 0) return res.status(400).json({ error: 'Aucun champ à mettre à jour' });
+
+fields.push('updated_at=CURRENT_TIMESTAMP');
+values.push(req.params.id);
+db.prepare(`UPDATE questions SET ${fields.join(', ')} WHERE id=?`).run(...values);</code></pre>
+<p>
+  Même technique que <code>updateEvent</code> dans <a href="#/hub-registry">registry.js</a> : on
+  accumule les fragments <code>colonne=?</code> et les valeurs en parallèle, puis on assemble. Ici
+  les noms de colonnes sont des <strong>littéraux dans le code</strong> (pas des clés d'objet
+  externes), donc pas de risque d'injection sur les noms ; les valeurs sont paramétrées. Noter
+  <code>enabled ? 1 : 0</code> : SQLite n'a pas de booléen, on stocke 0/1, et l'opérateur ternaire
+  convertit le booléen JS.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Valeurs par défaut dans le destructuring</span>
+  </div>
+  <p>
+    Dans <code>POST /</code> : <code>const { text, max_duration = 60, countdown = 3 } =
+    req.body;</code>. Si le corps ne contient pas <code>max_duration</code>, la variable prend
+    <code>60</code>. C'est l'équivalent d'un argument par défaut Python
+    (<code>def f(max_duration=60)</code>), mais appliqué à l'extraction d'un objet. Pratique pour
+    fournir des valeurs sensées sans <code>if</code> supplémentaires.
+  </p>
+</div>
+
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Notes</th></tr>
+  <tr><td>GET /</td><td>Liste les questions (ordre <code>order_index, id</code>).</td></tr>
+  <tr><td>PUT /reorder/batch</td><td>Réordonne en masse (transaction). <strong>Avant /:id</strong>.</td></tr>
+  <tr><td>POST /</td><td>Crée une question (validée par <a href="#/core-validate">validateQuestion</a>), <code>order_index</code> = max+1.</td></tr>
+  <tr><td>PUT /:id</td><td>Met à jour les champs fournis. 409 si gelé, 404 si introuvable.</td></tr>
+  <tr><td>DELETE /:id</td><td>Supprime une question (204).</td></tr>
+</table>

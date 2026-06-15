@@ -1,0 +1,146 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/middleware/auth.js</h1>
+
+<p>
+  Ce fichier contient deux middlewares d'authentification : <code>requireUser</code> (vérifie le
+  jeton JWT) et <code>requireOwner</code> (vérifie que l'utilisateur possède bien l'événement
+  ciblé). C'est la page où l'on explique <strong>JWT</strong> et la vérification de jeton.
+</p>
+
+<h2>Extraction du jeton : header OU query</h2>
+<pre><code class="js">function extractToken(req) {
+  const auth = req.headers.authorization;
+  if (auth &amp;&amp; auth.startsWith('Bearer ')) return auth.slice(7);   // "Bearer xxx" → "xxx"
+  if (req.query.token) return req.query.token;
+  return null;
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant §11.2 : accepter <code>?token=</code> en plus du header</div>
+  <p>
+    Le jeton est cherché d'abord dans l'en-tête <code>Authorization: Bearer …</code> (le standard),
+    <strong>puis</strong> dans le paramètre d'URL <code>?token=</code>. Ce second chemin est
+    indispensable : une balise <code>&lt;video src="…/file"&gt;</code>, un lien de téléchargement
+    ou un export CSV ouvert par le navigateur <strong>ne peuvent pas porter d'en-tête HTTP
+    personnalisé</strong>. Le seul moyen d'authentifier ces requêtes est de mettre le jeton dans
+    l'URL. Retirer le support <code>?token=</code> casserait la lecture vidéo et les
+    téléchargements dans la galerie. Voir <a href="#/web-client-hub">client.js</a> qui construit
+    ces URLs.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>jsonwebtoken</code> — signer et vérifier un JWT</span>
+  </div>
+  <p>
+    Un <strong>JWT</strong> (JSON Web Token) est une chaîne signée qui encode des données (ici
+    l'id et le rôle de l'utilisateur). Le serveur le <em>signe</em> à la connexion avec un secret,
+    et le <em>vérifie</em> à chaque requête. Comme la signature dépend du secret (que seul le
+    serveur connaît), un jeton ne peut être ni forgé ni modifié sans invalider la signature. Pas
+    besoin de stocker les sessions côté serveur — le jeton est auto-porteur.
+  </p>
+  <p>La bibliothèque <code>jsonwebtoken</code> expose deux fonctions :</p>
+  <ul>
+    <li><code>jwt.sign(payload, secret, options)</code> → crée un jeton (voir
+        <a href="#/hub-routes-auth">routes/auth</a> qui fait <code>sign({ sub, role }, …, { expiresIn: '24h' })</code>).</li>
+    <li><code>jwt.verify(token, secret, options)</code> → vérifie la signature et l'expiration,
+        et <strong>retourne le payload décodé</strong> ; <strong>lève</strong> si le jeton est
+        invalide/expiré.</li>
+  </ul>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent</th></tr>
+    <tr><td class="lang">Python</td><td>la lib <code>PyJWT</code> : <code>jwt.encode(...)</code> / <code>jwt.decode(...)</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>golang-jwt</code> : <code>token.SignedString(...)</code> / <code>jwt.Parse(...)</code></td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      Anatomie d'un JWT : trois parties séparées par des points,
+      <code>header.payload.signature</code>, chacune en base64url. Le <strong>header</strong>
+      déclare l'algorithme (<code>alg</code>), le <strong>payload</strong> porte les données
+      (<code>sub</code> = subject/id, <code>role</code>, <code>iat</code> = issued-at,
+      <code>exp</code> = expiration), la <strong>signature</strong> est le HMAC du
+      <code>header.payload</code> avec le secret. <code>verify</code> recalcule le HMAC et compare.
+      Important : le payload est seulement <em>signé</em>, pas <em>chiffré</em> — il est lisible
+      par quiconque (base64). On n'y met donc jamais de secret, juste un id et un rôle.
+    </p>
+  </div>
+</div>
+
+<h2><code>requireUser</code> et l'épinglage d'algorithme</h2>
+<pre><code class="js">export function requireUser(req, res, next) {
+  const token = extractToken(req);
+  if (!token) return res.status(401).json({ error: 'Token manquant' });
+  try {
+    req.user = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
+    next();
+  } catch {
+    res.status(401).json({ error: 'Token invalide ou expiré' });
+  }
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ <code>algorithms: ['HS256']</code> — défense contre l'attaque « alg:none » (§S5.1)</div>
+  <p>
+    On épingle explicitement l'algorithme accepté. Sans ce paramètre, certaines implémentations de
+    vérification acceptent le <code>alg</code> <strong>déclaré dans le jeton lui-même</strong> —
+    or un attaquant peut forger un jeton avec <code>"alg": "none"</code> (aucune signature) ou
+    tenter une confusion d'algorithme (RS256↔HS256). En forçant <code>['HS256']</code>, tout jeton
+    annonçant un autre algorithme est rejeté. Le projet teste explicitement qu'un jeton
+    <code>alg:none</code> renvoie 401 (voir <a href="#/tests-runner">Tests</a>).
+  </p>
+</div>
+
+<p>
+  Si la vérification réussit, le payload décodé est attaché à <code>req.user</code> (il contiendra
+  <code>{ sub, role, iat, exp }</code>) et <code>next()</code> passe au handler suivant. Sinon, le
+  <code>catch</code> répond 401. Noter le <code>catch {}</code> <strong>sans paramètre</strong> :
+  on n'a pas besoin de l'objet d'erreur, on sait que c'est « jeton invalide » (syntaxe
+  « optional catch binding »).
+</p>
+
+<a class="see-also" href="#/hub-index">→ notion JS : req / res / next et la chaîne de middleware (vue dans hub/index.js)</a>
+
+<h2><code>requireOwner</code> : le cloisonnement</h2>
+<pre><code class="js">export function requireOwner(req, res, next) {
+  const { eventId } = req.params;
+  if (!eventId) return res.status(400).json({ error: 'eventId manquant' });
+  const db = getDb();
+  const event = getEvent(db, eventId);
+  if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+  if (req.user.role !== 'admin' &amp;&amp; event.owner_id !== req.user.sub) {
+    return res.status(403).json({ error: 'Accès interdit' });
+  }
+  req.event = event;     // mémorise l'événement pour le handler suivant
+  next();
+}</code></pre>
+<p>
+  Ce middleware s'exécute <strong>après</strong> <code>requireUser</code> (qui a posé
+  <code>req.user</code>) et lit <code>eventId</code> dans l'URL. Règle d'accès : un
+  <strong>admin</strong> passe toujours ; un <strong>client</strong> ne passe que s'il est le
+  propriétaire (<code>event.owner_id === req.user.sub</code>). En bonus, il range l'événement déjà
+  chargé dans <code>req.event</code> pour éviter au handler de le relire — un pattern « charger une
+  fois, réutiliser » fréquent dans Express.
+</p>
+
+<table class="api-table">
+  <tr><th>Réponse</th><th>Cas</th></tr>
+  <tr><td>400</td><td><code>eventId</code> absent de l'URL.</td></tr>
+  <tr><td>404</td><td>Événement inexistant.</td></tr>
+  <tr><td>403</td><td>Événement existant mais appartenant à un autre client.</td></tr>
+  <tr><td>(passe)</td><td>Admin, ou propriétaire légitime → <code>req.event</code> peuplé.</td></tr>
+</table>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ L'ordre <code>requireUser</code> puis <code>requireOwner</code> est obligatoire</div>
+  <p>
+    <code>requireOwner</code> lit <code>req.user.sub</code> et <code>req.user.role</code> — qui
+    n'existent que si <code>requireUser</code> s'est exécuté avant. C'est pourquoi les routes les
+    déclarent toujours dans cet ordre : <code>router.get('/:eventId', requireUser, requireOwner,
+    handler)</code>. Inverser les deux ferait planter <code>requireOwner</code> sur un
+    <code>req.user</code> indéfini.
+  </p>
+</div>

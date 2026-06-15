@@ -1,0 +1,163 @@
+<div class="page-kicker">6 — Tests</div>
+<h1>node:test &amp; supertest</h1>
+
+<p>
+  Le projet teste chaque route avec un cas nominal et au moins un cas d'erreur. Deux choix
+  structurants : le <strong>test runner natif de Node</strong> (pas de Jest/Mocha) et
+  <strong>supertest</strong> pour attaquer les serveurs en mémoire <em>sans les démarrer</em>. On
+  prend ici <span class="path">apps/hub/server/test/auth.test.js</span> comme exemple représentatif.
+</p>
+
+<h2>L'ossature d'un fichier de test</h2>
+<pre><code class="js">import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import supertest from 'supertest';
+import { createApp } from '../src/index.js';
+import { getDb, closeRegistry, insertUser } from '../src/registry.js';
+
+let dir, app, request;
+
+before(async () =&gt; {
+  dir = mkdtempSync(join(tmpdir(), 'kapsule-hub-auth-'));   // dossier temporaire unique
+  app = createApp(dir);                                     // app construite, PAS démarrée
+  request = supertest(app);
+  // … seed de données de test (insertUser…) …
+});
+
+after(() =&gt; {
+  closeRegistry();
+  rmSync(dir, { recursive: true, force: true });            // nettoyage total
+});</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>node:test</code> — le runner intégré</span>
+  </div>
+  <p>
+    Depuis Node 18+, un <strong>framework de test est intégré</strong> au runtime
+    (<code>node:test</code>) — plus besoin d'installer Jest ou Mocha. Il fournit les primitives
+    classiques :
+  </p>
+  <ul>
+    <li><code>describe(nom, fn)</code> — groupe de tests.</li>
+    <li><code>it(nom, fn)</code> — un test individuel (« il fait ceci »).</li>
+    <li><code>before</code> / <code>after</code> — exécutés avant/après le groupe (setup/teardown).</li>
+  </ul>
+  <p>
+    Les assertions viennent de <code>node:assert/strict</code> (lui aussi intégré) :
+    <code>assert.equal(a, b)</code> (égalité stricte), <code>assert.ok(x)</code> (truthy). La
+    variante <code>/strict</code> utilise <code>===</code> par défaut.
+  </p>
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent</th></tr>
+    <tr><td class="lang">Python</td><td><code>pytest</code> / <code>unittest</code> (mais ici intégré au runtime)</td></tr>
+    <tr><td class="lang">Go</td><td><code>testing</code> de la stdlib (intégré, comme ici)</td></tr>
+  </table>
+  <p>On lance les tests via Docker (voir <a href="#/arch-docker">Docker</a>) :</p>
+  <pre><code>docker compose run --rm dev npm test                  # tous
+docker compose run --rm dev npm test -w @kapsule/core # un workspace</code></pre>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>supertest</code> — tester un serveur sans l'écouter</span>
+  </div>
+  <p>
+    <code>supertest(app)</code> prend une app Express et permet de lui envoyer des requêtes
+    <strong>sans ouvrir de port</strong> : il branche directement sur l'app en mémoire. On écrit
+    <code>await request.post('/api/auth/login').send({...})</code> et on inspecte
+    <code>res.status</code> / <code>res.body</code>. C'est ici que prend tout son sens le
+    <a href="#/arch-demarrage">« main module guard »</a> de <code>index.js</code> : comme
+    <code>createApp</code> est exporté <em>sans</em> <code>.listen()</code>, le test obtient l'app
+    pure et supertest l'attaque en mémoire — rapide, sans conflit de port, parallélisable.
+  </p>
+  <pre><code class="js">it('retourne un token JWT pour des identifiants valides', async () =&gt; {
+  const res = await request.post('/api/auth/login')
+    .send({ email: 'alice@test.com', password: 'password-alice' });
+  assert.equal(res.status, 200);
+  assert.ok(res.body.token);
+});</code></pre>
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent</th></tr>
+    <tr><td class="lang">Python</td><td><code>app.test_client()</code> (Flask) / <code>TestClient</code> (FastAPI)</td></tr>
+    <tr><td class="lang">Go</td><td><code>httptest.NewServer</code> / <code>httptest.NewRecorder</code></td></tr>
+  </table>
+</div>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Règle du projet : les tests ne dépendent JAMAIS de Docker</div>
+  <p>
+    Chaque suite crée un <code>DATA_DIR</code> temporaire avec <code>mkdtempSync(join(tmpdir(),
+    'kapsule-…'))</code>, y instancie le serveur via <code>createApp(dir)</code>, et le supprime en
+    <code>after</code> avec <code>rmSync(dir, { recursive: true, force: true })</code>. Les
+    serveurs s'instancient donc <strong>en mémoire de test</strong>, avec une base SQLite jetable —
+    aucun conteneur, aucun port, aucun état partagé entre suites. C'est ce qui rend les tests
+    rapides et reproductibles. (Le runner <em>lui-même</em> tourne dans le conteneur
+    <code>dev</code>, parce que Node n'est pas en local — mais le <em>code testé</em> ne dépend pas
+    de Docker.)
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>mkdtempSync</code> + <code>tmpdir</code> — isolation par dossier jetable</span>
+  </div>
+  <p>
+    <code>mkdtempSync(prefix)</code> crée un dossier temporaire au nom unique (suffixe aléatoire),
+    <code>tmpdir()</code> renvoie le dossier temp du système (<span class="path">/tmp</span>). Chaque
+    suite a ainsi son propre <code>DATA_DIR</code> isolé — deux suites ne se marchent pas dessus,
+    même lancées en parallèle. Le <code>rmSync(..., { force: true })</code> nettoie tout à la fin.
+    C'est le pattern d'isolation par filesystem, simple et fiable pour des tests qui touchent à des
+    fichiers (ce qui est le cas ici : SQLite, vidéos).
+  </p>
+</div>
+
+<h2>Tester un invariant de sécurité : le jeton <code>alg:none</code></h2>
+<pre><code class="js">it('retourne 401 pour un token alg:none (§S5.1/L1)', async () =&gt; {
+  const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ sub: 1, role: 'client', iat: ... })).toString('base64url');
+  const noneToken = `${header}.${payload}.`;            // signature vide
+  const res = await request.get('/api/events').set('Authorization', `Bearer ${noneToken}`);
+  assert.equal(res.status, 401);
+});</code></pre>
+<p>
+  Ce test <strong>forge à la main</strong> un JWT malveillant <code>alg:none</code> (sans
+  signature) et vérifie que le serveur le rejette (401) — c'est la preuve que l'épinglage
+  <code>algorithms: ['HS256']</code> de <a href="#/hub-middleware-auth">requireUser</a> fonctionne.
+  Tester explicitement les attaques connues est une bonne pratique : l'invariant de sécurité est
+  <em>vérifié</em>, pas seulement supposé. On construit le jeton en encodant header et payload en
+  <code>base64url</code> via <code>Buffer</code> (les briques d'un JWT).
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Muter la config ESM partagée dans un test</span>
+  </div>
+  <p>
+    Certains tests font <code>config.allowRegister = true</code> avant une assertion, puis le
+    remettent à <code>false</code>. C'est possible parce que <code>config</code> est un objet
+    <strong>partagé</strong> exporté par le module (un « live binding » ESM — voir
+    <a href="#/arch-modules">ESM</a> et <a href="#/hub-config">config.js</a>). Ça permet de tester
+    un comportement dépendant de la config sans relancer le serveur. À manier avec soin (effet de
+    bord global), d'où la remise à l'état initial juste après.
+  </p>
+</div>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Couverture : un cas nominal + un cas d'erreur par route</div>
+  <p>
+    La règle de <span class="path">CLAUDE.md</span> : « un endpoint n'est terminé que testé ».
+    Chaque route a au minimum un test du chemin heureux (200/201) et un test d'échec (400/401/403/
+    404/409). Les tests d'auth couvrent en plus le cloisonnement (Alice ne voit pas les événements
+    de Bob → 403) et les attaques (alg:none). Le worker, lui, est testé avec des handlers factices
+    injectés via <code>_setHandlers</code> (voir <a href="#/hub-worker">worker</a>) pour ne pas
+    dépendre de ffmpeg.
+  </p>
+</div>

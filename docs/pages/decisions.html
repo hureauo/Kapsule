@@ -1,0 +1,117 @@
+<div class="page-kicker">7 — Transversal</div>
+<h1>Décisions d'architecture</h1>
+
+<p>
+  Les choix non-évidents du projet, regroupés ici avec leur justification. Quand tu te demandes
+  « pourquoi est-ce fait comme ça plutôt qu'autrement ? », la réponse est probablement ici.
+</p>
+
+<h2>Pourquoi ESM (et pas CommonJS) ?</h2>
+<p>
+  Le projet est en <code>import</code>/<code>export</code> partout (<code>"type": "module"</code>).
+  Raisons : cohérence avec les fronts React (ESM natif côté navigateur), c'est le standard moderne
+  (CommonJS est l'héritage), et les imports dynamiques propres (<code>import()</code> dans le
+  worker). Le revers : quelques libs natives s'intègrent historiquement plus simplement en CJS, et
+  l'extension <code>.js</code> est obligatoire dans les imports relatifs. Détail :
+  <a href="#/arch-modules">ESM</a>.
+</p>
+
+<h2>Pourquoi better-sqlite3 (synchrone) plutôt qu'un ORM async ?</h2>
+<p>
+  SQLite est une base <strong>en-process</strong> (pas de serveur réseau) : une requête prend des
+  microsecondes. Une API synchrone évite l'overhead et la complexité de l'async pour un gain de
+  blocage nul en pratique — et rend les transactions <em>réellement</em> atomiques (aucun
+  <code>await</code> ne peut s'intercaler au milieu). Pas d'ORM : le SQL est simple, explicite, et
+  on garde le contrôle total des requêtes (utile pour les index, les jointures, les UPSERT). Détail :
+  <a href="#/core-eventdbschema">eventDbSchema</a>.
+</p>
+
+<h2>Pourquoi une base SQLite par événement ?</h2>
+<p>
+  Trois bénéfices : <strong>RGPD</strong> (purge = <code>rm -rf</code> d'un dossier),
+  <strong>transfert</strong> (le push envoie un fichier <code>db.sqlite</code> autonome, pas un
+  export partiel), <strong>isolation</strong> (un événement corrompu n'affecte pas les autres). Le
+  coût (plusieurs fichiers ouverts) est borné par un <a href="#/hub-eventstore">cache LRU côté
+  Hub</a> et un <a href="#/borne-eventdb">cache à 1 entrée côté Borne</a>. Détail :
+  <a href="#/arch-deux-apps">Deux apps, deux bases</a>.
+</p>
+
+<h2>Pourquoi le registry et l'event store sont séparés ?</h2>
+<p>
+  Conséquence directe de l'invariant RGPD §11.13 : les données « annuaire » (qui existe, quel
+  statut) sont distinctes des données « contenu » (prénoms, vidéos). Le registry survit à une purge
+  (il garde la trace qu'un événement a existé, sans données personnelles) ; l'event store est
+  jetable d'un bloc. Détail : <a href="#/invariants">§11.13</a>.
+</p>
+
+<h2>Pourquoi JWT dans <code>?token=</code> pour les vidéos ?</h2>
+<p>
+  Un <code>&lt;video src&gt;</code>, un <code>&lt;a download&gt;</code> ou un CSV ouvert par le
+  navigateur ne peuvent <strong>pas</strong> porter d'en-tête <code>Authorization</code> (le
+  navigateur charge la ressource lui-même). Le seul moyen d'authentifier ces requêtes est le jeton
+  en query. C'est l'invariant §11.2, présent des deux côtés : construction d'URL côté
+  <a href="#/web-client-hub">front</a>, extraction côté <a href="#/hub-middleware-auth">serveur</a>.
+</p>
+
+<h2>Pourquoi XMLHttpRequest et pas fetch pour l'upload ?</h2>
+<p>
+  Uniquement parce que <code>fetch</code> n'expose pas la progression d'<em>envoi</em>, alors que
+  <code>xhr.upload.onprogress</code> oui. Une vidéo de dizaines de Mo sur le Wi-Fi d'une salle a
+  besoin d'une barre de progression. Partout ailleurs, c'est <code>fetch</code>. Invariant §11.18,
+  détail : <a href="#/web-client-borne">client.js Borne</a>.
+</p>
+
+<h2>Pourquoi un worker séparé (et pas dans le serveur HTTP) ?</h2>
+<p>
+  Le traitement vidéo (ffmpeg) est <strong>CPU-bound</strong> et lent. Le faire dans un handler HTTP
+  bloquerait la boucle d'événements et figerait le serveur. Le <a href="#/hub-worker">worker</a> est
+  un processus distinct (même image Docker, commande différente) qui dépile les jobs en boucle. La
+  table <code>jobs</code> SQLite sert de file — pas de Redis/BullMQ à déployer, simplicité maximale
+  pour la charge attendue.
+</p>
+
+<h2>Pourquoi le worker fait du polling plutôt qu'une vraie file de messages ?</h2>
+<p>
+  Pour éviter une dépendance externe (Redis…). La table <code>jobs</code> <em>est</em> la file ; le
+  worker la scrute toutes les 5 s. Compromis : latence jusqu'à 5 s avant prise d'un job —
+  acceptable ici. Le « claim » est rendu atomique par une transaction (SELECT+UPDATE) pour rester
+  correct même avec plusieurs workers. Détail : <a href="#/hub-worker">worker</a>.
+</p>
+
+<h2>Pourquoi les tests instancient le serveur en mémoire (pas via Docker) ?</h2>
+<p>
+  <a href="#/tests-runner">supertest</a> attaque l'app Express directement en mémoire, sans ouvrir
+  de port — rapide, sans conflit, parallélisable. Chaque suite a un <code>DATA_DIR</code>
+  temporaire jetable. C'est permis par le <a href="#/arch-demarrage">« main module guard »</a> :
+  <code>createApp</code> est exporté sans <code>.listen()</code>. Le runner tourne dans Docker (Node
+  absent en local) mais le code testé, lui, ne dépend pas de Docker.
+</p>
+
+<h2>Pourquoi des factory functions pour les routeurs ?</h2>
+<p>
+  <code>makeXxxRouter(dataDir, cfg)</code> permet d'<strong>injecter</strong> le dossier de données
+  et la config — au lieu de variables globales. Bénéfice : testabilité (on passe un
+  <code>dataDir</code> temporaire et une config de test), et découplage. Côté Borne, la config est
+  carrément <a href="#/borne-index">injectée</a> dans chaque routeur (vs import direct côté Hub) —
+  deux styles cohérents, l'un privilégiant la pureté, l'autre la concision.
+</p>
+
+<h2>Pourquoi argon2 (Hub) mais timingSafeEqual (Borne) ?</h2>
+<p>
+  Le Hub a des <strong>comptes</strong> avec mots de passe → hachage <a href="#/hub-routes-auth">argon2</a>
+  (lent, salé, résistant au brute-force ; <code>verify</code> est déjà constant-time). La Borne a un
+  <strong>unique</strong> mot de passe admin comparé <em>en clair</em> → on le protège avec
+  <a href="#/borne-middleware-auth">timingSafeEqual</a> (comparaison à temps constant). Deux contextes,
+  deux outils adaptés.
+</p>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Le fil conducteur de ces décisions</div>
+  <p>
+    La plupart de ces choix privilégient la <strong>simplicité et l'absence de dépendances</strong>
+    (SQLite plutôt qu'un SGBD réseau, polling plutôt qu'une file de messages, runner natif plutôt
+    que Jest), tout en respectant deux contraintes fortes : le <strong>RGPD</strong> (séparation des
+    données, purge atomique) et le <strong>fonctionnement hors-ligne</strong> de la Borne (tout est
+    local, la synchro est reprenable). Quand tu ajoutes du code, garde ces deux boussoles.
+  </p>
+</div>

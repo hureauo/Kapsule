@@ -1,0 +1,146 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/routes/admin.js</h1>
+
+<p>
+  Les endpoints réservés aux administrateurs : gérer les bornes (créer/lister/supprimer) et obtenir
+  une vue d'ensemble de la plateforme (tous les événements, l'espace disque, les jobs en échec).
+  Tout le routeur est protégé par un double middleware.
+</p>
+
+<h2>Protection : <code>requireUser</code> + <code>requireAdmin</code></h2>
+<pre><code class="js">function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Réservé aux admins' });
+  next();
+}
+
+export function makeAdminRouter(dataDir) {
+  const router = Router();
+  router.use(requireUser, requireAdmin);   // s'applique à TOUTES les routes du routeur
+  // …</code></pre>
+<p>
+  <code>router.use(requireUser, requireAdmin)</code> applique ces deux middlewares à
+  <strong>toutes</strong> les routes déclarées ensuite — pas besoin de les répéter sur chaque
+  route. <code>requireAdmin</code> s'appuie sur <code>req.user.role</code> posé par
+  <a href="#/hub-middleware-auth">requireUser</a> : d'où l'ordre obligatoire (user d'abord, admin
+  ensuite).
+</p>
+
+<h2>Créer une borne : un jeton montré une seule fois</h2>
+<pre><code class="js">router.post('/boxes', (req, res) => {
+  const { name } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'name requis' });
+
+  const token = randomBytes(32).toString('hex');                  // 256 bits aléatoires
+  const token_hash = createHash('sha256').update(token).digest('hex');
+
+  const db = getDb();
+  if (getBoxByTokenHash(db, token_hash)) {                        // collision quasi impossible
+    return res.status(500).json({ error: 'Collision de token, réessayez' });
+  }
+  const result = insertBox(db, { name: name.trim(), token_hash });
+  res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), token });  // token EN CLAIR ici
+});</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>randomBytes</code> — générer un secret cryptographique</span>
+  </div>
+  <p>
+    <code>randomBytes(32)</code> (de <code>node:crypto</code>) génère 32 octets
+    <strong>cryptographiquement aléatoires</strong> (≠ <code>Math.random()</code>, qui n'est pas
+    sûr). <code>.toString('hex')</code> les encode en 64 caractères hexadécimaux. Le résultat est
+    un jeton imprévisible de 256 bits — impossible à deviner par force brute.
+  </p>
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent</th></tr>
+    <tr><td class="lang">Python</td><td><code>secrets.token_hex(32)</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>crypto/rand</code> + <code>hex.EncodeToString</code></td></tr>
+  </table>
+</div>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Le jeton en clair n'est renvoyé qu'à la création</div>
+  <p>
+    <code>POST /boxes</code> renvoie <code>{ id, name, token }</code> avec le <strong>jeton en
+    clair</strong> — c'est la <em>seule et unique fois</em> qu'il est visible. L'admin doit le
+    copier pour le configurer sur la Borne (<code>BOX_TOKEN</code>). En base, seul
+    <code>token_hash</code> est stocké. <code>GET /boxes</code> ne renvoie jamais le jeton (ni son
+    hash — voir ci-dessous). Si l'admin le perd, il faut recréer une borne. C'est le même principe
+    que les « personal access tokens » de GitHub.
+  </p>
+</div>
+
+<h2>Lister les bornes sans fuiter le hash</h2>
+<pre><code class="js">router.get('/boxes', (req, res) => {
+  const db = getDb();
+  const boxes = listBoxes(db).map(({ token_hash: _t, ...b }) => b);   // retire token_hash
+  res.json(boxes);
+});</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Retirer un champ par destructuring + rest</span>
+  </div>
+  <p>
+    <code>({ token_hash: _t, ...b }) =&gt; b</code> est une astuce idiomatique : on
+    <strong>destructure</strong> chaque box en extrayant <code>token_hash</code> (renommé
+    <code>_t</code>, qu'on ignore) et en collectant <strong>tout le reste</strong> dans
+    <code>b</code> via le <em>rest</em> <code>...b</code>. On retourne <code>b</code> — donc l'objet
+    sans <code>token_hash</code>. C'est le moyen JS concis de produire « le même objet mais sans tel
+    champ », sans le muter. Le <code>_t</code> préfixé d'un underscore signale « variable
+    volontairement inutilisée » (convention reconnue par les linters).
+  </p>
+  <div class="js-deep">
+    <p>
+      Pourquoi ne pas juste faire <code>delete box.token_hash</code> ? Parce que ça
+      <strong>muterait</strong> l'objet renvoyé par better-sqlite3 (effet de bord). La version par
+      destructuring crée un <em>nouvel</em> objet sans le champ — approche immuable, plus sûre.
+      Même si ici l'objet est jetable, c'est une bonne habitude à reconnaître quand tu la croises.
+    </p>
+  </div>
+</div>
+
+<h2>La vue d'ensemble : taille disque par événement</h2>
+<pre><code class="js">function dirSize(dirPath) {                       // taille récursive d'un dossier
+  let total = 0;
+  try {
+    for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+      const full = join(dirPath, entry.name);
+      if (entry.isDirectory()) total += dirSize(full);        // récursion
+      else { try { total += statSync(full).size; } catch {} }  // fichier disparu → ignore
+    }
+  } catch {}                                     // dossier absent → 0
+  return total;
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Récursion sur le système de fichiers + <code>withFileTypes</code></span>
+  </div>
+  <p>
+    <code>readdirSync(dir, { withFileTypes: true })</code> liste le contenu d'un dossier en
+    renvoyant des objets <code>Dirent</code> qui savent dire <code>isDirectory()</code> /
+    <code>isFile()</code> — sans avoir à faire un <code>stat</code> séparé sur chacun (plus
+    efficace). La fonction s'appelle elle-même sur les sous-dossiers (<strong>récursion</strong>)
+    et somme les tailles des fichiers. Les <code>try/catch</code> vides gèrent les races (un fichier
+    supprimé entre la liste et le <code>stat</code>) sans planter le calcul.
+  </p>
+</div>
+
+<p>
+  <code>GET /overview</code> assemble : tous les événements (jointure avec l'email du
+  propriétaire) + leur taille disque calculée par <code>dirSize</code>, l'espace libre du volume
+  (<code>statfs</code>), les 20 derniers jobs en échec, et les bornes avec leur dernier contact.
+  C'est l'écran « santé de la plateforme » de l'admin.
+</p>
+
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Notes</th></tr>
+  <tr><td>POST /boxes</td><td>Crée une borne, renvoie le jeton en clair (une seule fois).</td></tr>
+  <tr><td>GET /boxes</td><td>Liste les bornes, sans <code>token_hash</code>.</td></tr>
+  <tr><td>DELETE /boxes/:id</td><td>Supprime une borne (404 si <code>changes === 0</code>).</td></tr>
+  <tr><td>GET /overview</td><td>Vue globale : événements + tailles, disque, jobs échoués, bornes.</td></tr>
+</table>

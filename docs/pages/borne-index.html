@@ -1,0 +1,117 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/index.js</h1>
+
+<p>
+  Le montage Express de la Borne. Très proche de <a href="#/hub-index">hub/index.js</a> — même
+  structure <code>createApp</code> + guard de démarrage — avec deux différences : tous les routeurs
+  reçoivent la <strong>config injectée</strong>, et toutes les routes sont montées sous un préfixe
+  <code>/api</code> commun.
+</p>
+
+<h2>Le corps de <code>createApp</code></h2>
+<pre><code class="js">export function createApp(dataDir, cfg = config) {
+  openRegistry(dataDir);
+  const app = express();
+  app.use(express.json());
+
+  const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg) };   // config + middleware prêt
+  app.post('/api/admin/login', makeAuthRouter(cfg));
+  app.use('/api', makeEventsRouter(dataDir, routerCfg));
+  app.use('/api', makeQuestionsRouter(dataDir, routerCfg));
+  app.use('/api', makeSessionsRouter(dataDir, routerCfg));
+  app.use('/api', makeVideosRouter(dataDir, routerCfg));
+  app.use('/api', makeSyncRouter(dataDir, routerCfg));
+
+  app.get('/api/health', async (req, res, next) =&gt; { /* … disque + événement actif … */ });
+
+  app.use((err, req, res, next) =&gt; { /* error handler, idem Hub */ });
+  return app;
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Injection de config par le spread : <code>{ ...cfg, requireAdmin: requireAdmin(cfg) }</code></span>
+  </div>
+  <p>
+    <code>createApp(dataDir, cfg = config)</code> prend la config <strong>en paramètre</strong>
+    (avec le module <code>config</code> comme défaut). Cela permet aux tests de passer une config
+    sur mesure. Ensuite :
+  </p>
+  <pre><code class="js">const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg) };</code></pre>
+  <p>
+    Le spread <code>...cfg</code> copie tous les champs de la config dans un nouvel objet, puis on
+    y <strong>ajoute</strong> une propriété <code>requireAdmin</code> : le middleware d'auth déjà
+    « armé » avec cette config (rappel : <a href="#/borne-middleware-auth">requireAdmin(cfg)</a> est
+    une factory). Chaque routeur reçoit donc <code>routerCfg</code> et y trouve à la fois les
+    réglages (<code>hubUrl</code>, <code>adminPassword</code>…) et le middleware
+    <code>requireAdmin</code> prêt à l'emploi — sans devoir réimporter la config ni recréer le
+    middleware. C'est de l'injection de dépendances « à la main », légère et explicite.
+  </p>
+</div>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Pourquoi injecter la config plutôt que l'importer ? (vs Hub)</div>
+  <p>
+    Le Hub importe directement <code>config</code> dans chaque fichier qui en a besoin. La Borne,
+    elle, la <strong>fait circuler</strong> via <code>cfg</code> et <code>routerCfg</code>. Les deux
+    marchent ; l'approche Borne rend les routeurs <em>purs</em> vis-à-vis de la config (ils ne
+    dépendent pas d'un module global), donc plus faciles à tester en isolation avec une config
+    arbitraire. C'est un choix de style cohérent avec les factories à closure de la Borne. Voir
+    aussi <a href="#/decisions">Décisions d'architecture</a>.
+  </p>
+</div>
+
+<h2>Le montage sous <code>/api</code> partagé</h2>
+<p>
+  Contrairement au Hub qui monte chaque routeur sous un préfixe distinct
+  (<code>/api/events</code>, <code>/api/admin</code>…), la Borne monte <strong>tous</strong> les
+  routeurs sous <code>/api</code> :
+</p>
+<pre><code class="js">app.use('/api', makeEventsRouter(dataDir, routerCfg));
+app.use('/api', makeSessionsRouter(dataDir, routerCfg));
+// …</code></pre>
+<p>
+  Chaque routeur déclare donc ses chemins complets en interne (<code>/events</code>,
+  <code>/sessions</code>, <code>/videos</code>…). C'est un choix d'organisation : les routeurs Borne
+  mélangent routes publiques (kiosque) et admin sur des chemins variés, et les regrouper sous un
+  seul <code>/api</code> évite de fragmenter. L'ordre de montage reste important pour les mêmes
+  raisons qu'au Hub (premier match gagne).
+</p>
+
+<h2>Le health check expose l'événement actif</h2>
+<pre><code class="js">app.get('/api/health', async (req, res, next) =&gt; {
+  const stats = await statfs(dataDir);
+  const activeEvent = getActiveEvent();
+  res.json({ ok: true, activeEvent: activeEvent?.id ?? null, disk: { free_bytes, total_bytes } });
+});</code></pre>
+<p>
+  Le health check de la Borne ajoute <code>activeEvent</code> : utile pour superviser « quel
+  événement la borne sert actuellement ». L'<code>activeEvent?.id ?? null</code> combine optional
+  chaining (si pas d'actif, <code>undefined</code>) et <code>?? null</code> (normalisé en
+  <code>null</code>).
+</p>
+
+<h2>Démarrage (rappel) + le pull automatique</h2>
+<pre><code class="js">if (process.argv[1] === new URL(import.meta.url).pathname) {
+  mkdirSync(config.dataDir, { recursive: true });
+  const app = createApp(config.dataDir);
+  app.listen(config.port, () =&gt; console.log(`borne-server démarré sur le port ${config.port}`));
+}</code></pre>
+<a class="see-also" href="#/arch-demarrage">→ notion JS : le main module guard (vue dans Flux de démarrage)</a>
+<div class="callout warn">
+  <div class="callout-title">⚠ Où démarre le pull automatique ?</div>
+  <p>
+    Le code de <code>index.js</code> montré ici ne lance pas explicitement
+    <code>startAutoPull</code> dans cet extrait. Le démarrage du cycle de synchronisation
+    automatique est porté par <a href="#/borne-sync-autopull">autoPull.js</a> (fonction
+    <code>startAutoPull(dataDir)</code>) — à appeler au bootstrap de la Borne quand un Hub est
+    configuré. Reporte-toi à cette page pour le détail du cycle et à
+    <span class="path">ROADMAP.md</span> pour son état d'intégration.
+  </p>
+</div>
+
+<table class="api-table">
+  <tr><th>Export</th><th>Détail</th></tr>
+  <tr><td>createApp(dataDir, cfg)</td><td>Construit l'app Borne. <code>cfg</code> injectable (défaut : module <code>config</code>).</td></tr>
+</table>

@@ -1,0 +1,129 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/sync/autoPull.js</h1>
+
+<p>
+  Le pull automatique : un cycle qui tourne périodiquement pour (1) envoyer au Hub les statuts
+  <code>live</code>/<code>closed</code> des événements locaux (heartbeats), et (2) tirer les
+  nouveaux événements assignés. C'est la page de référence pour <code>setInterval</code> et le
+  pattern « timer de fond ».
+</p>
+
+<h2>Le timer</h2>
+<pre><code class="js">let _timer = null;
+let _lastPull = null;   // ISO du dernier pull réussi
+export function getLastPull() { return _lastPull; }
+
+export function startAutoPull(dataDir) {
+  if (_timer !== null) return;                                  // déjà démarré → no-op
+  runCycle(dataDir).catch(() =&gt; {});                            // premier cycle immédiat
+  _timer = setInterval(() =&gt; runCycle(dataDir).catch(() =&gt; {}), config.pullIntervalMs);
+}
+
+export function stopAutoPull() {
+  if (_timer !== null) { clearInterval(_timer); _timer = null; }
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>setInterval</code> / <code>clearInterval</code></span>
+  </div>
+  <p>
+    <code>setInterval(fn, ms)</code> exécute <code>fn</code> <strong>toutes les <code>ms</code>
+    millisecondes</strong>, indéfiniment, et retourne un identifiant de timer.
+    <code>clearInterval(id)</code> l'arrête. Ici l'intervalle est
+    <a href="#/borne-config">config.pullIntervalMs</a> (5 min par défaut). C'est le moteur du pull
+    périodique.
+  </p>
+  <p>
+    Deux gardes idiomatiques : <code>if (_timer !== null) return</code> empêche de démarrer deux
+    timers (idempotence) ; <code>_timer = null</code> après <code>clearInterval</code> permet de
+    redémarrer proprement. Le <code>runCycle(...).catch(() =&gt; {})</code> avant le
+    <code>setInterval</code> lance un <strong>premier cycle immédiat</strong> — sinon il faudrait
+    attendre 5 min avant le premier pull au démarrage.
+  </p>
+  <table class="compare">
+    <tr><th>Langage</th><th>Analogie</th></tr>
+    <tr><td class="lang">Python</td><td>un <code>threading.Timer</code> récurrent, ou une boucle <code>asyncio</code> avec <code>sleep</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>time.NewTicker(d)</code> + <code>for range ticker.C</code></td></tr>
+  </table>
+  <div class="js-deep">
+    <p>
+      Chaque tick fait <code>runCycle(...).catch(() =&gt; {})</code> : on lance le cycle async sans
+      l'attendre (le callback de <code>setInterval</code> n'est pas <code>await</code>-é par le
+      timer), et on absorbe les erreurs. Conséquence à connaître : si un cycle dure plus longtemps
+      que l'intervalle, plusieurs cycles peuvent se chevaucher. Ici ce n'est pas un problème car les
+      opérations sont idempotentes et le pull saute les événements non-<code>loaded</code>, mais
+      c'est une subtilité de <code>setInterval</code> + async à garder en tête (contrairement à un
+      <code>setTimeout</code> qui se reprogramme à la fin de chaque exécution).
+    </p>
+  </div>
+</div>
+
+<h2>Un cycle : heartbeats puis pull conditionnel</h2>
+<pre><code class="js">async function runCycle(dataDir) {
+  if (!config.hubUrl || !config.boxToken) return;     // mode autonome → ne rien faire
+
+  await sendHeartbeats();
+
+  const db = getRegistry();
+  const hasLoaded = db.prepare("SELECT 1 FROM local_events WHERE status = 'loaded' LIMIT 1").get();
+  const hasNone = db.prepare('SELECT COUNT(*) as n FROM local_events').get().n === 0;
+
+  if (hasLoaded || hasNone) {
+    try {
+      await pullAssigned(dataDir);
+      _lastPull = new Date().toISOString();
+    } catch { /* réseau — silencieux, retenté au prochain cycle */ }
+  }
+}</code></pre>
+
+<p>Deux gardes intelligentes :</p>
+<ul>
+  <li>
+    <strong>Mode autonome</strong> : si pas de <code>hubUrl</code> ou pas de <code>boxToken</code>,
+    le cycle ne fait rien. Une borne 100 % offline n'essaie jamais de joindre un Hub.
+  </li>
+  <li>
+    <strong>Pull conditionnel</strong> : on ne pulle que s'il existe au moins un événement
+    <code>loaded</code> (susceptible de recevoir des mises à jour) <em>ou</em> qu'il n'y a aucun
+    événement local (bootstrap initial). Si tous les événements sont déjà <code>live</code>/
+    <code>closed</code>/<code>pushed</code>, inutile de solliciter le Hub — on évite du trafic
+    réseau superflu.
+  </li>
+</ul>
+
+<h2>Les heartbeats</h2>
+<pre><code class="js">async function sendHeartbeats() {
+  const db = getRegistry();
+  const events = db.prepare("SELECT * FROM local_events WHERE status IN ('live','closed')").all();
+  for (const ev of events) {
+    try {
+      await hubFetch(`/api/sync/events/${ev.id}/status`, {
+        method: 'POST', body: JSON.stringify({ status: ev.status }),
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch { /* best effort — silencieux */ }
+  }
+}</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Pourquoi des heartbeats « best-effort » ?</div>
+  <p>
+    Quand un événement passe <code>live</code> (premier invité) ou <code>closed</code> (clôture)
+    sur la Borne, le Hub doit le savoir pour mettre à jour son propre statut. Mais la Borne peut
+    être hors-ligne à ce moment précis. La solution : <strong>réémettre</strong> le statut à chaque
+    cycle, en <em>best-effort</em> (le <code>try/catch</code> silencieux ignore les échecs réseau).
+    Si le Hub est injoignable maintenant, le prochain cycle réessaiera. C'est un mécanisme de
+    convergence : tant que la Borne a parfois du réseau, le Hub finit par recevoir les statuts. Le
+    Hub, de son côté, ignore les transitions « en arrière » (voir
+    <a href="#/hub-routes-sync">POST /status</a>), donc réémettre plusieurs fois est sans danger.
+  </p>
+</div>
+
+<table class="api-table">
+  <tr><th>Export</th><th>Détail</th></tr>
+  <tr><td>startAutoPull(dataDir)</td><td>Démarre le cycle (immédiat + toutes les <code>pullIntervalMs</code>). Idempotent.</td></tr>
+  <tr><td>stopAutoPull()</td><td>Arrête le timer.</td></tr>
+  <tr><td>getLastPull()</td><td>ISO du dernier pull réussi (affiché dans <code>/sync/status</code>).</td></tr>
+</table>

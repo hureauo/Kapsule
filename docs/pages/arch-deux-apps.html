@@ -1,0 +1,118 @@
+<div class="page-kicker">1 — Architecture</div>
+<h1>Deux apps, deux bases SQLite</h1>
+
+<p>
+  Kapsule, c'est deux serveurs Node distincts (Hub et Borne) qui ont une structure de code
+  jumelle mais des rôles opposés. Comprendre leur découpage de données est le préalable à tout
+  le reste, parce que <strong>la même donnée n'est pas stockée au même endroit</strong> selon
+  qu'elle est « annuaire » ou « contenu d'un événement ».
+</p>
+
+<h2>Le principe : registry vs event store</h2>
+
+<p>Chaque serveur a <strong>deux types de bases SQLite</strong> :</p>
+
+<table class="api-table">
+  <tr><th>Base</th><th>Combien</th><th>Contenu</th></tr>
+  <tr><td>registry.sqlite</td><td>une seule, globale</td><td>L'annuaire : qui/quoi existe. Pas de données invité.</td></tr>
+  <tr><td>db.sqlite</td><td>une par événement</td><td>Le contenu d'un événement : questions, sessions, vidéos.</td></tr>
+</table>
+
+<p>
+  Les fichiers sont rangés ainsi sur le disque (sous le <code>DATA_DIR</code>) :
+</p>
+
+<pre><code>data/
+├── registry.sqlite              ← l'annuaire global
+└── events/
+    ├── &lt;uuid-event-1&gt;/
+    │   ├── db.sqlite            ← base de CET événement
+    │   ├── videos/             ← fichiers vidéo bruts
+    │   │   └── &lt;uuid&gt;.mp4
+    │   └── derived/            ← miniatures, archive.zip (Hub)
+    └── &lt;uuid-event-2&gt;/
+        └── …</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant RGPD (§11.13) : pourquoi cette séparation existe</div>
+  <p>
+    <strong>Aucune donnée invité</strong> (prénom, vidéo, session) ne doit se trouver dans
+    <span class="path">registry.sqlite</span>. Tout ce qui est personnel vit dans
+    <span class="path">events/&lt;id&gt;/</span>. Conséquence directe : pour supprimer toutes les
+    données personnelles d'un événement (droit à l'effacement), il suffit de
+    <code>rm -rf events/&lt;id&gt;/</code> — un seul dossier, atomique. Si une donnée invité
+    fuyait dans le registry, la purge deviendrait incomplète et le RGPD violé. Cet invariant
+    contraint le schéma des deux <span class="path">registry.js</span>.
+  </p>
+</div>
+
+<h2>Hub : ce que contiennent ses bases</h2>
+
+<p><strong>registry.sqlite</strong> (Hub) — <a href="#/hub-registry">détail</a> :</p>
+<ul>
+  <li><code>users</code> — les comptes clients et admins (email, hash de mot de passe).</li>
+  <li><code>boxes</code> — les Bornes enregistrées (nom, hash du token).</li>
+  <li><code>events</code> — la fiche de chaque événement (nom, propriétaire, statut, dates). <strong>Pas</strong> les questions ni les vidéos.</li>
+  <li><code>jobs</code> — la file de traitement (probe, thumbnail, archive).</li>
+  <li><code>sync_log</code> — journal des synchronisations.</li>
+</ul>
+
+<p><strong>db.sqlite</strong> d'un événement (Hub) — schéma défini dans <a href="#/core-eventdbschema">core/eventDbSchema.js</a> :</p>
+<ul>
+  <li><code>event_meta</code>, <code>questions</code>, <code>sessions</code>, <code>videos</code>, <code>derived</code>.</li>
+</ul>
+
+<h2>Borne : ce que contiennent ses bases</h2>
+
+<p><strong>registry.sqlite</strong> (Borne) — <a href="#/borne-registry">détail</a>, volontairement minimal :</p>
+<ul>
+  <li><code>local_events</code> — les événements présents localement (id, nom, origine hub/local, statut, lequel est « actif »).</li>
+  <li><code>push_state</code> — l'avancement d'un push (quelles vidéos ont déjà été envoyées).</li>
+</ul>
+
+<p><strong>db.sqlite</strong> d'un événement (Borne) :</p>
+<ul>
+  <li>
+    <strong>Le même schéma que le Hub</strong> — c'est tout l'intérêt du package partagé : les
+    deux serveurs appellent <code>createEventDb()</code> de
+    <a href="#/core-eventdbschema">core/eventDbSchema.js</a>. Donc un <code>db.sqlite</code> créé
+    sur la Borne est directement exploitable par le Hub après le push (c'est littéralement le
+    même fichier qui est transféré).
+  </li>
+</ul>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Pourquoi une base par événement plutôt qu'une grande base ?</div>
+  <p>
+    Trois raisons : <strong>(1) RGPD</strong> — la purge est un <code>rm -rf</code> de dossier.
+    <strong>(2) Transfert</strong> — le push envoie un fichier <code>db.sqlite</code> autonome,
+    pas un export partiel d'une grande base. <strong>(3) Isolation</strong> — un événement
+    corrompu n'affecte pas les autres. Le coût (plusieurs fichiers SQLite ouverts) est géré par
+    un petit cache LRU côté Hub (<a href="#/hub-eventstore">eventStore.js</a>) et un cache à une
+    entrée côté Borne (<a href="#/borne-eventdb">eventDb.js</a>).
+  </p>
+</div>
+
+<h2>Symétrie du code</h2>
+<p>
+  Les deux serveurs partagent la même ossature de fichiers — ce qui aide : une fois qu'on
+  comprend le Hub, la Borne se lit vite.
+</p>
+
+<table class="api-table">
+  <tr><th>Rôle</th><th>Hub</th><th>Borne</th></tr>
+  <tr><td>Config</td><td><a href="#/hub-config">config.js</a></td><td><a href="#/borne-config">config.js</a></td></tr>
+  <tr><td>Annuaire</td><td><a href="#/hub-registry">registry.js</a></td><td><a href="#/borne-registry">registry.js</a></td></tr>
+  <tr><td>Cache event DB</td><td><a href="#/hub-eventstore">eventStore.js</a> (LRU 10)</td><td><a href="#/borne-eventdb">eventDb.js</a> (1 entrée)</td></tr>
+  <tr><td>Auth</td><td><a href="#/hub-middleware-auth">JWT users/owner</a></td><td><a href="#/borne-middleware-auth">JWT admin unique</a></td></tr>
+  <tr><td>Montage Express</td><td><a href="#/hub-index">index.js</a></td><td><a href="#/borne-index">index.js</a></td></tr>
+  <tr><td>Synchronisation</td><td>reçoit (<a href="#/hub-routes-sync">routes/sync</a>)</td><td>émet (<a href="#/borne-sync-push">sync/push</a>, <a href="#/borne-sync-pull">pull</a>)</td></tr>
+  <tr><td>Spécifique</td><td><a href="#/hub-worker">worker</a> (ffmpeg)</td><td><a href="#/web-mediarecorder">capture vidéo</a> (front)</td></tr>
+</table>
+
+<p>
+  La grande différence : le <strong>Hub a un worker</strong> (traitement vidéo asynchrone après
+  réception) et la <strong>Borne a la capture</strong> (enregistrement vidéo côté navigateur) +
+  toute la logique de <strong>synchronisation sortante</strong>. On voit l'enchaînement complet
+  dans <a href="#/flux-push-pull">Flux complet : pull &amp; push</a>.
+</p>

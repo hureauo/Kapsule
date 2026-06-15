@@ -1,0 +1,128 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/middleware/validateParams.js</h1>
+
+<p>
+  Plusieurs routes du Hub prennent un identifiant d'événement ou de vidéo dans l'URL, puis
+  l'utilisent pour construire un <strong>chemin de fichier</strong>
+  (<code>events/&lt;id&gt;/…</code>). Si on ne valide pas cet identifiant, un attaquant peut y
+  glisser <code>..</code> et sortir du répertoire de données. Ce middleware impose que chaque
+  paramètre soit un <strong>UUID v4 strict</strong> avant tout accès disque.
+</p>
+
+<p>Le fichier (commentaires d'origine inclus, ils sont excellents) :</p>
+<pre><code class="js">// Validation des paramètres d'URL qui finissent dans un chemin de fichier.
+//
+// Pourquoi : Express n'autorise pas '/' dans un segment :param, mais laisse passer
+// '..' (ou son encodage %2e%2e). Sans contrôle, un :id/:videoId valant '..' permet à
+// path.join(dataDir, 'events', id, …) de SORTIR du répertoire de données → écriture/lecture
+// de fichier arbitraire (audit SECURITY.md H1).
+
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function validateUuidParams(...names) {
+  return function (req, res, next) {
+    for (const name of names) {
+      const value = req.params[name];
+      if (!value || !UUID_V4.test(value)) {
+        return res.status(400).json({ error: `Paramètre ${name} invalide` });
+      }
+    }
+    next();
+  };
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Path traversal (audit SECURITY.md H1)</div>
+  <p>
+    Le danger concret : une requête vers <code>/api/sync/events/..%2f..%2fetc/files/x</code>
+    pourrait, sans garde, faire écrire multer dans <code>/etc</code> ou lire un fichier hors du
+    dossier de données. La parade est de <strong>n'autoriser que des UUID v4</strong> : un UUID ne
+    contient ni <code>/</code> ni <code>.</code>, donc aucun chemin malveillant ne peut passer. Et
+    surtout, la validation a lieu <strong>avant</strong> que multer ne calcule sa destination —
+    aucun octet n'est écrit sur disque tant que l'UUID n'est pas validé.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">RegExp littérale et <code>.test()</code></span>
+  </div>
+  <p>
+    <code>/^[0-9a-f]{8}-…$/i</code> est une <strong>expression régulière littérale</strong> :
+    en JS, on l'écrit entre slashes (pas entre guillemets), avec des drapeaux après le slash final
+    — ici <code>i</code> pour « insensible à la casse ». <code>regex.test(chaine)</code> renvoie
+    <code>true</code>/<code>false</code> selon que la chaîne correspond.
+  </p>
+  <p>
+    Décodage du motif UUID v4 : 8 hex, tiret, 4 hex, tiret, <code>4</code> + 3 hex (le
+    <code>4</code> impose la version 4), tiret, un caractère parmi <code>8/9/a/b</code> + 3 hex (le
+    « variant »), tiret, 12 hex. Les ancres <code>^</code> et <code>$</code> forcent la
+    correspondance sur <strong>toute</strong> la chaîne (sinon un préfixe valide suivi de
+    <code>../</code> passerait).
+  </p>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Test regex</th></tr>
+    <tr><td class="lang">Python</td><td><code>re.fullmatch(pattern, s)</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>regexp.MustCompile(p).MatchString(s)</code></td></tr>
+    <tr><td class="lang">JS</td><td><code>/p/.test(s)</code></td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      La regex littérale est <strong>compilée une fois</strong> au chargement du module (elle est
+      au niveau fichier, pas dans la fonction). C'est l'équivalent d'un
+      <code>regexp.MustCompile</code> hissé hors de la boucle en Go. La recréer à chaque appel
+      serait du gaspillage. Petit piège à connaître : si on ajoutait le drapeau <code>g</code>
+      (global), <code>.test()</code> deviendrait <em>stateful</em> (il mémorise
+      <code>lastIndex</code> entre appels) et donnerait des résultats alternés — à éviter pour de
+      la validation. Ici pas de <code>g</code>, donc <code>.test()</code> est sans état.
+    </p>
+  </div>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Une factory de middleware + les rest params <code>...names</code></span>
+  </div>
+  <p>
+    <code>validateUuidParams</code> n'est pas un middleware : c'est une <strong>fonction qui
+    retourne un middleware</strong>. On l'appelle avec les noms de paramètres à valider, elle
+    renvoie la fonction <code>(req, res, next)</code> adaptée :
+  </p>
+  <pre><code class="js">// dans routes/sync.js
+router.put('/events/:id/files/:videoId',
+  validateUuidParams('id', 'videoId'),    // ← valide DEUX params
+  uploadVideo.single('file'),
+  handler);</code></pre>
+  <p>
+    <code>...names</code> est un <strong>rest parameter</strong> : il collecte tous les arguments
+    dans un tableau <code>names = ['id', 'videoId']</code>. C'est l'inverse du spread
+    <code>...</code> (qui étale) ; ici il rassemble. Équivalent de <code>*args</code> en Python ou
+    <code>names ...string</code> en Go.
+  </p>
+  <p>
+    Ce pattern « factory » est partout dans Express : il permet de <strong>configurer</strong> un
+    middleware avant de le brancher. On l'a déjà vu avec les <code>makeXxxRouter(dataDir)</code> et
+    on le reverra avec la config injectée côté <a href="#/borne-middleware-auth">Borne</a>.
+  </p>
+
+  <div class="js-deep">
+    <p>
+      Pourquoi une factory plutôt qu'un middleware qui lirait une liste fixe ? Parce que les
+      paramètres à valider varient selon la route : certaines n'ont que <code>:id</code>, d'autres
+      <code>:id</code> + <code>:videoId</code>. La factory capture ces noms dans une
+      <strong>closure</strong> (le middleware retourné « se souvient » de <code>names</code>). La
+      closure est le mécanisme JS qui rend ce pattern possible — on l'explore en détail dans
+      <a href="#/web-mediarecorder">useMediaRecorder</a>.
+    </p>
+  </div>
+</div>
+
+<table class="api-table">
+  <tr><th>Élément</th><th>Détail</th></tr>
+  <tr><td>validateUuidParams(...names)</td><td>Retourne un middleware qui répond 400 si l'un des params nommés n'est pas un UUID v4. Sinon <code>next()</code>.</td></tr>
+  <tr><td>Garantie</td><td>Aucun accès disque (y compris multer) tant que les params ne sont pas validés — placé en <strong>premier</strong> dans la chaîne.</td></tr>
+</table>

@@ -1,0 +1,211 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/sync/push.js — séquence push</h1>
+
+<p>
+  Le push : envoyer un événement clôturé vers le Hub (vidéos + base). C'est la pièce de
+  synchronisation la plus riche. On y voit la <strong>séquence en 5 étapes</strong>, un
+  <strong>état module partagé</strong> pour la progression, la lecture d'un fichier avec
+  <code>for await</code>, la construction de <code>FormData</code>/<code>Blob</code>, et la gestion
+  d'erreur avec <code>finally</code>. Le côté réception est dans
+  <a href="#/hub-routes-sync">hub/routes/sync.js</a>.
+</p>
+
+<h2>L'état partagé de progression</h2>
+<pre><code class="js">const _state = { running: false, total: 0, done: 0, currentFile: null, lastError: null };
+export function getPushState() { return { ..._state }; }   // copie défensive
+
+export function _setPushRunning(v) { _state.running = v; }  // test-only</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Un objet module-level comme état partagé</span>
+  </div>
+  <p>
+    Le push tourne en <a href="#/borne-routes-sync">tâche de fond</a> ; comment le client connaît-il
+    sa progression ? Via <code>_state</code>, un objet au niveau du module (singleton, comme
+    <code>_db</code> dans <a href="#/hub-registry">registry.js</a>). Le push le met à jour au fil de
+    l'eau (<code>_state.done++</code>, <code>_state.currentFile = …</code>), et
+    <code>GET /sync/status</code> le lit via <code>getPushState()</code>.
+  </p>
+  <p>
+    <code>getPushState()</code> renvoie <code>{ ..._state }</code> — une <strong>copie</strong>, pas
+    la référence. Ainsi l'appelant ne peut pas modifier l'état interne par accident, et il obtient un
+    instantané cohérent. C'est une « copie défensive » : pattern utile dès qu'on expose un état
+    mutable interne.
+  </p>
+  <p>
+    <code>_setPushRunning</code> est exporté <em>uniquement pour les tests</em> (forcer le flag pour
+    vérifier les gardes qui en dépendent, comme « 409 si push déjà en cours »). Le préfixe
+    <code>_</code> signale « interne, ne pas utiliser en prod ».
+  </p>
+</div>
+
+<h2>La séquence en 5 étapes</h2>
+<pre><code class="js">export async function pushEvent(eventId, dataDir) {
+  // … vérifie event.status === 'closed' …
+
+  // Marquer running AVANT tout await (synchrone) pour que les gardes voient l'état tout de suite
+  _state.running = true; _state.total = 0; _state.done = 0; _state.currentFile = null; _state.lastError = null;
+
+  try {
+    // ── 1. Checkpoint WAL + sha256 de chaque vidéo + du db.sqlite ──
+    const edb = new Database(dbPath, { readonly: true });
+    const videos = edb.prepare('SELECT id, filename, size, checksum FROM videos').all();
+    edb.close();
+    const dbChecksum = await checkpointAndHash(dbPath);     // §11.8 : checkpoint AVANT hash
+    const { size: dbSize } = statSync(dbPath);
+
+    // ── 2. POST manifest → liste des fichiers manquants ──
+    await hubFetchJson(`/api/sync/events/${eventId}/status`, { method: 'POST', body: JSON.stringify({ status: 'closed' }) }).catch(() =&gt; {});
+    const { missing } = await hubFetchJson(`/api/sync/events/${eventId}/manifest`, { method: 'POST', body: JSON.stringify(manifest) });
+
+    // ── 3. Upload des vidéos manquantes ──
+    _state.total = missing.length;
+    for (const videoId of missing) {
+      const video = videos.find(v =&gt; v.id === videoId);
+      if (!video) continue;
+      _state.currentFile = video.filename;
+      await uploadFileWithRetry(`/api/sync/events/${eventId}/files/${videoId}`, join(videosDir, video.filename), video.filename);
+      registry.prepare('UPDATE push_state SET uploaded_at = CURRENT_TIMESTAMP WHERE event_id = ? AND video_id = ?').run(eventId, videoId);
+      _state.done++;
+    }
+
+    // ── 4. Upload du db.sqlite ──
+    _state.currentFile = 'db.sqlite';
+    await uploadFileWithRetry(`/api/sync/events/${eventId}/db`, dbPath, 'db.sqlite');
+
+    // ── 5. Finalize + statut local ──
+    await hubFetchJson(`/api/sync/events/${eventId}/finalize`, { method: 'POST' });
+    updateEventStatus(eventId, 'pushed');
+    registry.prepare('UPDATE local_events SET pushed_at = CURRENT_TIMESTAMP … WHERE id = ?').run(eventId);
+
+  } catch (err) {
+    const msg = err.status === 401 ? 'Token borne révoqué…' : (err.message ?? 'Erreur inconnue');
+    _state.lastError = { message: msg, status: err.status ?? null };
+    throw err;
+  } finally {
+    _state.running = false;                                 // TOUJOURS remettre à false
+  }
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ <code>_state.running = true</code> AVANT le premier <code>await</code></div>
+  <p>
+    On positionne <code>running = true</code> de façon <strong>synchrone</strong>, tout en haut,
+    avant le moindre <code>await</code>. Pourquoi ? Parce qu'un second appel à
+    <code>POST /sync/push</code> (ou un <code>GET /sync/status</code>) peut arriver
+    <em>immédiatement</em> après le lancement. Si on attendait le premier <code>await</code> pour
+    marquer <code>running</code>, il y aurait une fenêtre où deux pushs pourraient démarrer en
+    parallèle (le verrou n'est pas encore posé). En le posant avant tout point de suspension, on
+    garantit que la garde <code>if (state.running) return 409</code> (dans
+    <a href="#/borne-routes-sync">routes/sync.js</a>) voit l'état correct dès le départ. C'est une
+    subtilité de concurrence propre au modèle async.
+  </p>
+</div>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ §11.8 : checkpoint WAL avant de hasher/envoyer le db.sqlite</div>
+  <p>
+    L'étape 1 appelle <code>checkpointAndHash</code> qui fait
+    <code>db.pragma('wal_checkpoint(TRUNCATE)')</code> <strong>avant</strong> de calculer le
+    checksum. Rappel : en mode WAL, les dernières écritures vivent dans le fichier
+    <span class="path">-wal</span> séparé. Sans checkpoint, on hasherait (et enverrait) un
+    <code>db.sqlite</code> <em>incomplet</em>. Le checkpoint replie le WAL dans le fichier principal,
+    garantissant que le fichier envoyé contient toutes les données. Voir
+    <a href="#/core-eventdbschema">eventDbSchema (WAL)</a>.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le bloc <code>try / catch / finally</code></span>
+  </div>
+  <p>
+    La séquence est dans un <code>try</code>, avec :
+  </p>
+  <ul>
+    <li><code>catch (err)</code> : on enregistre l'erreur dans <code>_state.lastError</code> (pour
+        que <code>/sync/status</code> l'affiche, ex. « token révoqué » sur un 401), puis on
+        <strong>relance</strong> (<code>throw err</code>) — le <code>.catch(()=>{})</code> de
+        l'appelant l'absorbera.</li>
+    <li><code>finally</code> : <code>_state.running = false</code> <strong>quoi qu'il arrive</strong>
+        — succès, erreur, ou exception. C'est crucial : si <code>running</code> restait à
+        <code>true</code> après un échec, plus aucun push ne pourrait jamais être lancé (la garde
+        409 bloquerait à vie). Le <code>finally</code> est la garantie de libération du verrou.</li>
+  </ul>
+</div>
+
+<h2>L'upload d'un fichier : <code>for await</code> + <code>FormData</code>/<code>Blob</code></h2>
+<pre><code class="js">async function uploadFileWithRetry(path, filePath, filename) {
+  const url = `${config.hubUrl}${path}`;
+  for (let attempt = 1; attempt &lt;= MAX_ATTEMPTS; attempt++) {
+    try {
+      const form = new FormData();
+      const chunks = [];
+      for await (const chunk of createReadStream(filePath)) chunks.push(chunk);   // lit le fichier
+      const blob = new Blob(chunks);
+      form.append('file', blob, filename);
+
+      const res = await globalThis.fetch(url, { method: 'PUT', headers: { 'X-Box-Token': config.boxToken }, body: form });
+      if (!res.ok) { /* … lève une Error enrichie de status … */ }
+      return await res.json();
+    } catch (err) {
+      if (err.status &gt;= 400 &amp;&amp; err.status &lt; 500) throw err;   // erreur client → ne pas réessayer
+      if (attempt &lt; MAX_ATTEMPTS) await sleep(backoffMs(attempt));
+    }
+  }
+  throw Object.assign(new Error(`upload ${path} : ${MAX_ATTEMPTS} tentatives échouées …`), { cause: lastErr });
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>for await…of</code> et <code>FormData</code>/<code>Blob</code></span>
+  </div>
+  <p>
+    <code>for await (const chunk of createReadStream(filePath))</code> lit un
+    <a href="#/core-checksum">stream</a> morceau par morceau avec une boucle asynchrone — la version
+    « pull » de la lecture par événements vue dans checksum.js. Chaque itération attend le prochain
+    chunk. On accumule les chunks, puis on les emballe dans un <strong><code>Blob</code></strong>
+    (un objet « données binaires » du standard web). <code>FormData</code> construit un corps
+    <code>multipart/form-data</code> : <code>form.append('file', blob, filename)</code> ajoute le
+    fichier sous le champ <code>file</code> (celui que <a href="#/hub-routes-sync">multer côté
+    Hub</a> attend via <code>.single('file')</code>).
+  </p>
+  <p>
+    On passe <code>body: form</code> à <code>fetch</code> sans poser de <code>Content-Type</code> :
+    <code>fetch</code> détecte le FormData et génère le bon en-tête multipart (avec boundary). Voir
+    le piège FormData dans <a href="#/borne-sync-hubclient">hubClient.js</a>.
+  </p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Ne pas réessayer sur erreur client (4xx)</div>
+  <p>
+    Dans le <code>catch</code> : <code>if (err.status &gt;= 400 &amp;&amp; err.status &lt; 500) throw
+    err;</code>. Une erreur <strong>4xx</strong> (ex. 422 checksum mismatch, 409 mauvais statut)
+    vient d'un problème <em>côté requête</em> — réessayer à l'identique donnerait le même résultat.
+    On relance donc immédiatement sans retry. En revanche, une <strong>5xx</strong> ou une panne
+    réseau peut être transitoire → on applique le backoff. Distinguer « erreur permanente » de
+    « erreur transitoire » est la clé d'une politique de retry correcte.
+  </p>
+</div>
+
+<h2>Pourquoi le push est reprenable</h2>
+<p>
+  Si le push échoue (réseau coupé) à la 3ᵉ vidéo sur 10, relancer
+  <code>POST /sync/push/:eventId</code> recommence la séquence : le <strong>manifest</strong>
+  (étape 2) demande au Hub ce qui lui manque encore, et le Hub répond les 7 vidéos restantes (il a
+  gardé les 3 premières). On n'ré-uploade pas ce qui est déjà transféré. C'est l'invariant §11.12
+  côté Hub (le Hub recalcule <code>missing</code>) combiné à la table <code>push_state</code> locale.
+  Détail complet dans <a href="#/flux-push-pull">Flux push/pull</a>.
+</p>
+
+<table class="api-table">
+  <tr><th>Export</th><th>Détail</th></tr>
+  <tr><td>pushEvent(eventId, dataDir)</td><td>Pousse un événement closed (manifest → vidéos → db → finalize). Met à jour <code>_state</code>. Async, reprenable.</td></tr>
+  <tr><td>getPushState()</td><td>Copie de l'état de progression (lu par <code>/sync/status</code>).</td></tr>
+  <tr><td>_setPushRunning(v)</td><td>Test-only : force le flag <code>running</code>.</td></tr>
+</table>

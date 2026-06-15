@@ -1,0 +1,130 @@
+<div class="page-kicker">1 — Architecture</div>
+<h1>Flux de démarrage d'un serveur</h1>
+
+<p>
+  Que se passe-t-il entre <code>node src/index.js</code> et le premier handler HTTP qui répond ?
+  Le chemin est le même pour le Hub et la Borne. Suivons-le sur le Hub.
+</p>
+
+<h2>Le point d'entrée : un fichier à double usage</h2>
+
+<p>Le bas de <span class="path">apps/hub/server/src/index.js</span> :</p>
+
+<pre><code class="js">export function createApp(dataDir, opts = {}) {
+  openRegistry(dataDir);              // 1. ouvre/crée registry.sqlite
+  const app = express();             // 2. crée l'app Express
+  app.use(express.json());           // 3. parse les corps JSON
+  app.use('/api/auth', makeAuthRouter());          // 4. monte les routeurs
+  app.use('/api/events', makeEventsRouter(dataDir));
+  // … autres routeurs …
+  app.use((err, req, res, next) => { /* error handler */ });  // 5. en dernier
+  return app;
+}
+
+// 6. Démarrage réel — UNIQUEMENT si ce fichier est lancé directement
+if (process.argv[1] === new URL(import.meta.url).pathname) {
+  mkdirSync(config.dataDir, { recursive: true });
+  const app = createApp(config.dataDir);
+  app.listen(config.port, () => {
+    console.log(`hub-server démarré sur le port ${config.port}`);
+  });
+}</code></pre>
+
+<p>
+  La structure est délibérée : <code>createApp()</code> <strong>construit</strong> l'application
+  sans la démarrer, et le bloc <code>if</code> final ne la <strong>démarre</strong> (avec
+  <code>.listen()</code>) que si le fichier est exécuté directement. Pourquoi cette gymnastique ?
+  Pour les tests.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le « main module guard » : process.argv &amp; import.meta.url</span>
+  </div>
+  <p>
+    Ce <code>if</code> est l'équivalent ESM du fameux <code>if __name__ == "__main__":</code> de
+    Python : « exécute ceci seulement si le fichier est le point d'entrée, pas s'il est importé
+    par un autre module ».
+  </p>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Idiome</th></tr>
+    <tr><td class="lang">Python</td><td><code>if __name__ == "__main__":</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>func main()</code> dans <code>package main</code></td></tr>
+    <tr><td class="lang">JS (ESM)</td><td><code>if (process.argv[1] === new URL(import.meta.url).pathname)</code></td></tr>
+  </table>
+
+  <ul>
+    <li><code>process.argv</code> est le tableau des arguments du programme. <code>argv[0]</code>
+        est le binaire <code>node</code>, <code>argv[1]</code> est le chemin du script lancé
+        (≈ <code>sys.argv</code> en Python, <code>os.Args</code> en Go).</li>
+    <li><code>import.meta.url</code> est l'URL du <em>module courant</em> (ex.
+        <code>file:///app/.../index.js</code>). On la convertit en chemin de fichier avec
+        <code>new URL(...).pathname</code> pour la comparer à <code>argv[1]</code>.</li>
+  </ul>
+  <p>
+    Si les deux sont égaux → le fichier a été lancé par <code>node src/index.js</code> → on
+    démarre le serveur. Sinon → il a été <code>import</code>é (par un test, qui veut juste
+    <code>createApp</code>) → on ne démarre rien.
+  </p>
+
+  <div class="js-deep">
+    <p>
+      Rappel d'<a href="#/arch-modules">ESM</a> : en modules ES, les variables CommonJS
+      <code>__filename</code> / <code>require.main</code> n'existent pas. <code>import.meta</code>
+      est l'objet standard ESM qui porte les métadonnées du module ; <code>import.meta.url</code>
+      est sa seule propriété universellement disponible. D'où la conversion
+      <code>new URL(import.meta.url).pathname</code> pour obtenir un chemin système comparable.
+    </p>
+    <p>
+      Conséquence pratique : dans les tests, on fait <code>import { createApp } from
+      '../src/index.js'</code> et on obtient l'app <em>sans</em> qu'un serveur se mette à écouter
+      sur un port. C'est ce qui permet à <a href="#/tests-runner">supertest</a> d'attaquer l'app
+      en mémoire. Le même guard est présent dans le <a href="#/hub-worker">worker</a> et la
+      <a href="#/borne-index">Borne</a>.
+    </p>
+  </div>
+</div>
+
+<h2>L'ordre des opérations dans <code>createApp</code></h2>
+
+<ol>
+  <li>
+    <strong><code>openRegistry(dataDir)</code></strong> — ouvre (ou crée + initialise le schéma
+    de) <span class="path">registry.sqlite</span>. C'est un singleton : le premier appel crée la
+    connexion, les suivants la réutilisent. Voir <a href="#/hub-registry">registry.js</a>.
+  </li>
+  <li>
+    <strong><code>express()</code></strong> — instancie l'application Express (l'objet qui
+    recevra les routes). Voir <a href="#/hub-index">index.js</a>.
+  </li>
+  <li>
+    <strong><code>express.json()</code></strong> — un middleware global qui parse le corps JSON
+    des requêtes entrantes et le pose dans <code>req.body</code>.
+  </li>
+  <li>
+    <strong>Montage des routeurs</strong> — chaque famille d'endpoints (<code>/api/auth</code>,
+    <code>/api/events</code>…) est branchée. <strong>L'ordre compte</strong> — c'est un point
+    subtil d'Express détaillé dans <a href="#/hub-index">index.js</a>.
+  </li>
+  <li>
+    <strong>Le gestionnaire d'erreurs</strong> — monté en <em>dernier</em>, avec une signature
+    spéciale à 4 arguments. Voir <a href="#/hub-index">index.js</a>.
+  </li>
+</ol>
+
+<h2>Et le worker ?</h2>
+<p>
+  Le worker (Hub) a son propre point d'entrée <span class="path">src/worker/index.js</span> avec
+  le même guard. Au lieu de <code>app.listen()</code>, il lance une boucle infinie qui dépile les
+  jobs. Les deux processus (backend HTTP et worker) tournent en parallèle, dans deux conteneurs,
+  sur le même volume de données. Voir <a href="#/hub-worker">hub/worker</a>.
+</p>
+
+<h2>Et la Borne ?</h2>
+<p>
+  Identique, plus une étape : au démarrage, la Borne lance aussi le <strong>pull automatique</strong>
+  (<code>startAutoPull</code>) qui interroge le Hub périodiquement. On le voit dans
+  <a href="#/borne-index">borne/index.js</a> et <a href="#/borne-sync-autopull">autoPull.js</a>.
+</p>

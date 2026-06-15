@@ -1,0 +1,180 @@
+<div class="page-kicker">1 — Architecture</div>
+<h1>Docker &amp; variables d'environnement</h1>
+
+<p>
+  Tout Kapsule s'exécute dans Docker — il n'y a aucune dépendance Node installée sur la machine
+  de dev. Il y a trois fichiers compose, chacun pour un usage précis. Le code ne « connaît » pas
+  Docker : il lit sa configuration depuis des <strong>variables d'environnement</strong> que
+  Docker lui injecte.
+</p>
+
+<h2>Les trois fichiers compose</h2>
+
+<table class="api-table">
+  <tr><th>Fichier</th><th>Usage</th></tr>
+  <tr><td>docker-compose.yml</td><td>Développement : un service <code>dev</code> (node:20-alpine) qui lance les tests. C'est lui qu'on utilise pour <code>npm test</code>.</td></tr>
+  <tr><td>docker-compose.hub.yml</td><td>Déploiement du Hub : <code>backend</code> + <code>worker</code> + <code>frontend</code>.</td></tr>
+  <tr><td>docker-compose.borne.yml</td><td>Déploiement de la Borne : <code>backend</code> + <code>frontend</code>.</td></tr>
+</table>
+
+<h3>Le service de dev</h3>
+<pre><code class="js">services:
+  dev:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app                          // le code du repo monté dans le conteneur
+    environment:
+      - NODE_ENV=development
+    // better-sqlite3 est natif → besoin de python3/make/g++ pour compiler à l'install
+    entrypoint: sh -c "apk add --no-cache python3 make g++ &amp;&amp; \"$$@\"" --
+    command: ["npm", "test"]</code></pre>
+<p>
+  Le point notable : <code>better-sqlite3</code> est un module <strong>natif</strong> (du C++
+  compilé). Son installation exige une chaîne de compilation, d'où le <code>apk add python3 make
+  g++</code> avant toute commande. C'est aussi pour ça que les commandes Docker du projet
+  prennent un moment au premier lancement.
+</p>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Les commandes de dev passent toujours par Docker</div>
+  <p>
+    Exemples tirés de <span class="path">CLAUDE.md</span> :
+  </p>
+  <pre><code>docker compose run --rm dev npm test                 # tous les tests
+docker compose run --rm dev npm test -w @kapsule/core # un seul workspace
+docker compose up dev:borne                           # serveur Borne en dev</code></pre>
+  <p>
+    Le <code>-w @kapsule/core</code> est le raccourci de <code>--workspace</code> (voir
+    <a href="#/arch-monorepo">Monorepo</a>).
+  </p>
+</div>
+
+<h2>Le Hub : trois conteneurs, une image</h2>
+
+<p>
+  Dans <span class="path">docker-compose.hub.yml</span>, <code>backend</code> et
+  <code>worker</code> utilisent la <strong>même image</strong> (même Dockerfile) mais des
+  commandes différentes :
+</p>
+<pre><code class="js">backend:
+  build: { context: ., dockerfile: apps/hub/server/Dockerfile }
+  // (commande par défaut du Dockerfile : node src/index.js)
+
+worker:
+  build: { context: ., dockerfile: apps/hub/server/Dockerfile }
+  command: ["node", "src/worker/index.js"]   // même image, autre point d'entrée
+  depends_on: [backend]</code></pre>
+<p>
+  C'est élégant : le serveur HTTP et le worker partagent tout le code et les dépendances (dont
+  ffmpeg installé dans le Dockerfile), seul leur <em>process d'entrée</em> change. Les deux
+  montent le même volume <code>hub_data</code> sur <span class="path">/app/data</span> — ils
+  voient donc les mêmes bases et les mêmes fichiers vidéo, ce qui permet au worker de traiter ce
+  que le backend a reçu.
+</p>
+
+<h2>Les variables d'environnement</h2>
+
+<p>
+  Docker passe la config au code via le bloc <code>environment</code>. Côté Hub :
+</p>
+<pre><code class="js">environment:
+  - JWT_SECRET=${JWT_SECRET:-change-me}    // ${VAR:-defaut} = valeur de l'hôte ou défaut
+  - DATA_DIR=/app/data
+  - PORT=3001
+  - ALLOW_REGISTER=${ALLOW_REGISTER:-false}</code></pre>
+
+<p>Côté Borne, il y a en plus les paramètres de synchronisation :</p>
+<pre><code class="js">- ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+- HUB_URL=${HUB_URL:-}            // vide = mode autonome, sans Hub
+- BOX_TOKEN=${BOX_TOKEN:-}        // jeton d'identification auprès du Hub
+- PULL_INTERVAL_MS=${PULL_INTERVAL_MS:-300000}   // 5 min</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">process.env — lire l'environnement en Node</span>
+  </div>
+  <p>
+    Node expose les variables d'environnement dans l'objet global <code>process.env</code>.
+    Chaque valeur est une <strong>chaîne</strong> (ou <code>undefined</code> si absente) — il faut
+    convertir soi-même les nombres et booléens. C'est l'équivalent de <code>os.environ</code> en
+    Python ou <code>os.Getenv</code> en Go.
+  </p>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Lire une variable</th></tr>
+    <tr><td class="lang">Python</td><td><code>os.environ.get("PORT", "3001")</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>os.Getenv("PORT")</code></td></tr>
+    <tr><td class="lang">JS</td><td><code>process.env.PORT ?? "3001"</code></td></tr>
+  </table>
+
+  <p>C'est exactement ce que fait <a href="#/hub-config">hub/config.js</a> :</p>
+  <pre><code class="js">const env = process.env;
+export const config = {
+  port: parseInt(env.PORT ?? '3001', 10),   // chaîne → entier (base 10)
+  jwtSecret: env.JWT_SECRET ?? 'change-me',
+  dataDir: env.DATA_DIR ?? '/app/data',
+  allowRegister: env.ALLOW_REGISTER === 'true',  // chaîne → booléen explicite
+};</code></pre>
+
+  <h4>L'opérateur <code>??</code> (nullish coalescing)</h4>
+  <p>
+    <code>a ?? b</code> renvoie <code>a</code> sauf si <code>a</code> est <code>null</code> ou
+    <code>undefined</code>, auquel cas <code>b</code>. C'est plus sûr que le <code>||</code>
+    classique pour des valeurs par défaut.
+  </p>
+
+  <div class="js-deep">
+    <p>
+      <strong>Pourquoi <code>??</code> et pas <code>||</code> ?</strong> Le <code>||</code> se
+      déclenche sur toute valeur « falsy » : <code>0</code>, <code>""</code>, <code>false</code>,
+      <code>NaN</code>… Donc <code>parseInt(env.PORT) || 3001</code> donnerait <code>3001</code>
+      si <code>PORT</code> valait <code>"0"</code> — rarement voulu. Avec <code>??</code>, seuls
+      <code>null</code>/<code>undefined</code> déclenchent le défaut : <code>0</code> et
+      <code>""</code> sont conservés. Ici, sur <code>env.PORT ?? '3001'</code>, ça garantit
+      qu'une variable explicitement vide n'est pas silencieusement écrasée.
+    </p>
+    <p>
+      Le second argument de <code>parseInt(x, 10)</code> est la <strong>base</strong>. On le met
+      toujours à <code>10</code> : sans lui, une chaîne comme <code>"0x10"</code> serait
+      interprétée en hexadécimal. Habitude défensive standard en JS.
+    </p>
+  </div>
+</div>
+
+<h2>Le Dockerfile (exemple Borne)</h2>
+<pre><code class="js">FROM node:20-alpine
+RUN apk add --no-cache python3 make g++       // pour compiler better-sqlite3
+
+WORKDIR /app
+// On copie d'abord les manifestes seuls → la couche "npm ci" est cachée
+// tant que les dépendances ne changent pas (optimisation du cache Docker)
+COPY package.json package-lock.json ./
+COPY packages/core/package.json ./packages/core/
+COPY apps/borne/server/package.json ./apps/borne/server/
+RUN npm ci --omit=dev                          // install reproductible, sans devDependencies
+
+COPY packages/core/src ./packages/core/src     // ensuite seulement, le code
+COPY apps/borne/server/src ./apps/borne/server/src
+
+WORKDIR /app/apps/borne/server
+CMD ["node", "src/index.js"]</code></pre>
+<p>
+  Le pattern « copier les <span class="path">package.json</span> avant le code source » est une
+  optimisation classique : Docker met en cache chaque couche, et tant que les manifestes ne
+  changent pas, l'étape <code>npm ci</code> (longue) n'est pas rejouée même si tu modifies du
+  code. <code>npm ci</code> installe exactement ce qui est figé dans le lockfile (« clean
+  install »), et <code>--omit=dev</code> ignore les <code>devDependencies</code> (pas de
+  supertest en prod).
+</p>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Statut des fronts</div>
+  <p>
+    Les Dockerfiles <span class="path">web</span> (frontend) sont annotés « sera complété en
+    phase … » dans les compose — la partie front/nginx est en cours selon
+    <span class="path">ROADMAP.md</span>. Le présent doc se concentre sur le code applicatif
+    (serveurs + logique front), qui lui est implémenté.
+  </p>
+</div>

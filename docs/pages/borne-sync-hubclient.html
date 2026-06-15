@@ -1,0 +1,161 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/sync/hubClient.js</h1>
+
+<p>
+  Le client HTTP que la Borne utilise pour parler au Hub. Il ajoute le jeton de borne en en-tête,
+  réessaie sur erreur réseau avec un <strong>backoff exponentiel</strong>, et expose une variante
+  qui parse le JSON et lève sur erreur. C'est la page de référence pour le <code>fetch</code> natif
+  de Node et l'attachement de données à une <code>Error</code>.
+</p>
+
+<h2><code>hubFetch</code> : fetch + retry réseau</h2>
+<pre><code class="js">import { config } from '../config.js';
+
+const MAX_ATTEMPTS = 5;
+function backoffMs(attempt) {
+  // min(2000 · 2^(n-1), 30000) — n commence à 1
+  return Math.min(2000 * Math.pow(2, attempt - 1), 30000);
+}
+function sleep(ms) { return new Promise(resolve =&gt; setTimeout(resolve, ms)); }
+
+export async function hubFetch(path, options = {}) {
+  const url = `${config.hubUrl}${path}`;
+  const headers = { 'X-Box-Token': config.boxToken, ...options.headers };
+
+  // Ne pas poser Content-Type si FormData (multipart géré par fetch)
+  if (options.body &amp;&amp; typeof options.body === 'string') {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  let lastError;
+  for (let attempt = 1; attempt &lt;= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(url, { ...options, headers });
+      return res;
+    } catch (err) {
+      lastError = err;
+      if (attempt &lt; MAX_ATTEMPTS) await sleep(backoffMs(attempt));
+    }
+  }
+  throw Object.assign(
+    new Error(`hubFetch ${path} : ${MAX_ATTEMPTS} tentatives échouées — ${lastError?.message}`),
+    { cause: lastError }
+  );
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>fetch</code> natif (Node 18+)</span>
+  </div>
+  <p>
+    <code>fetch(url, options)</code> est l'API standard pour faire des requêtes HTTP — la même que
+    dans les navigateurs, désormais <strong>intégrée à Node</strong> (depuis la version 18, plus
+    besoin du paquet <code>node-fetch</code>). Elle retourne une Promise d'un objet
+    <code>Response</code>. <code>options</code> porte <code>method</code>, <code>headers</code>,
+    <code>body</code>…
+  </p>
+  <p>
+    Détail subtil : <code>fetch</code> ne <strong>rejette pas</strong> sur un statut HTTP d'erreur
+    (404, 500…) — il rejette seulement sur une <em>erreur réseau</em> (Hub injoignable, DNS,
+    timeout). C'est pourquoi le <code>try/catch</code> ici n'attrape que les pannes réseau ; les
+    statuts d'erreur HTTP sont gérés séparément dans <code>hubFetchJson</code> (voir plus bas).
+  </p>
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent</th></tr>
+    <tr><td class="lang">Python</td><td><code>requests.get(...)</code> / <code>httpx</code> (mais async ici)</td></tr>
+    <tr><td class="lang">Go</td><td><code>http.Client.Do(req)</code></td></tr>
+  </table>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Backoff exponentiel</span>
+  </div>
+  <p>
+    En cas d'échec réseau, réessayer <em>immédiatement</em> est contre-productif (le réseau est
+    peut-être saturé). On attend donc de plus en plus longtemps entre les tentatives :
+    <code>backoffMs(n) = min(2000 · 2^(n-1), 30000)</code> donne 2 s, 4 s, 8 s, 16 s, plafonné à
+    30 s. C'est un <strong>backoff exponentiel avec plafond</strong>, pattern standard pour les
+    appels réseau résilients. <code>Math.pow(2, n-1)</code> est la puissance de 2 ;
+    <code>Math.min(..., 30000)</code> impose le plafond.
+  </p>
+  <div class="callout danger">
+    <div class="callout-title">⛔ Le backoff est un invariant du projet</div>
+    <p>
+      La formule <code>min(2000·2^(n-1), 30000)</code> et les 5 tentatives sont spécifiées dans les
+      invariants (§11.18). On la retrouve <strong>identique</strong> dans
+      <a href="#/borne-sync-push">push.js</a> (upload des fichiers) et côté front dans
+      <a href="#/web-client-borne">l'upload XHR</a>. C'est volontaire : tout transfert Borne↔Hub
+      utilise la même politique de reprise, pour un comportement prévisible sur réseau instable.
+    </p>
+  </div>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>Object.assign(new Error(...), { ... })</code> — enrichir une erreur</span>
+  </div>
+  <p>
+    Un objet <code>Error</code> n'a par défaut que <code>message</code> et <code>stack</code>. Pour
+    y attacher des données (un code HTTP, une cause…), on utilise
+    <code>Object.assign(cible, source)</code> qui copie les propriétés de <code>source</code> dans
+    <code>cible</code> et <strong>retourne</strong> <code>cible</code> :
+  </p>
+  <pre><code class="js">throw Object.assign(new Error('Hub 409: …'), { status: 409, body });</code></pre>
+  <p>
+    L'erreur lancée porte alors <code>.status</code> et <code>.body</code>, que l'appelant peut
+    inspecter (<code>if (err.status === 401) …</code>). C'est l'idiome JS pour des « erreurs
+    typées » sans créer de classe d'erreur custom. On le retrouve partout dans le code de synchro.
+  </p>
+  <table class="compare">
+    <tr><th>Langage</th><th>Analogie</th></tr>
+    <tr><td class="lang">Python</td><td>une exception custom avec des attributs (<code>class HubError(Exception): status = …</code>)</td></tr>
+    <tr><td class="lang">Go</td><td>un type d'erreur avec des champs (<code>type HubError struct { Status int }</code>)</td></tr>
+  </table>
+</div>
+
+<h2><code>hubFetchJson</code> : parser et lever sur statut d'erreur</h2>
+<pre><code class="js">export async function hubFetchJson(path, options = {}) {
+  const res = await hubFetch(path, options);
+  const body = await res.json().catch(() =&gt; ({}));    // parse JSON, {} si corps vide/non-JSON
+  if (!res.ok) {                                       // res.ok = statut 200-299
+    throw Object.assign(
+      new Error(`Hub ${res.status}: ${body.error ?? res.statusText}`),
+      { status: res.status, body }
+    );
+  }
+  return body;
+}</code></pre>
+<p>
+  Cette variante ajoute la couche « statut HTTP » au-dessus de <code>hubFetch</code> :
+  <code>res.ok</code> est <code>true</code> pour 200-299. Si le Hub répond une erreur (4xx/5xx), on
+  lève une <code>Error</code> enrichie de <code>status</code> et <code>body</code>. Le
+  <code>res.json().catch(() =&gt; ({}))</code> protège contre une réponse sans corps JSON valide (on
+  retombe sur un objet vide). C'est la fonction qu'utilisent <a href="#/borne-sync-pull">pull.js</a>
+  et <a href="#/borne-sync-push">push.js</a> pour leurs appels métier.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le spread des en-têtes et le piège FormData</span>
+  </div>
+  <p>
+    <code>{ 'X-Box-Token': config.boxToken, ...options.headers }</code> : on pose le jeton par
+    défaut, puis on étale les en-têtes fournis par l'appelant (qui peuvent surcharger). Le test
+    <code>if (options.body &amp;&amp; typeof options.body === 'string')</code> ne pose
+    <code>Content-Type: application/json</code> <strong>que</strong> pour un corps texte. Pour un
+    upload <code>FormData</code> (multipart), on laisse <code>fetch</code> gérer le
+    <code>Content-Type</code> lui-même — il y ajoute la « boundary » nécessaire au multipart. Poser
+    manuellement <code>Content-Type</code> sur du FormData casserait l'upload. Piège classique.
+  </p>
+</div>
+
+<table class="api-table">
+  <tr><th>Export</th><th>Détail</th></tr>
+  <tr><td>hubFetch(path, options)</td><td>Requête au Hub avec jeton + retry réseau (5×, backoff). Retourne la <code>Response</code> brute.</td></tr>
+  <tr><td>hubFetchJson(path, options)</td><td>Idem + parse JSON et lève (avec <code>status</code>/<code>body</code>) si statut ≥ 400.</td></tr>
+</table>

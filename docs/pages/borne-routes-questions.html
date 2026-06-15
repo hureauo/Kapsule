@@ -1,0 +1,73 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/routes/questions.js</h1>
+
+<p>
+  Le CRUD des questions côté Borne. Quasi identique à
+  <a href="#/hub-routes-questions">hub/routes/questions.js</a> dans sa logique (validation, ordre
+  des routes §11.1, UPDATE dynamique), avec deux nuances : il opère sur l'événement
+  <strong>actif</strong> (pas un <code>:eventId</code> dans l'URL), et il expose une route publique
+  pour le kiosque.
+</p>
+
+<h2>Public vs admin : deux vues des questions</h2>
+<pre><code class="js">// PUBLIC (kiosque) — uniquement les questions activées
+router.get('/questions', (req, res, next) =&gt; {
+  const db = requireActiveDb(req, res);
+  if (!db) return;
+  const questions = db.prepare('SELECT * FROM questions WHERE enabled=1 ORDER BY order_index, id').all();
+  res.json(questions);
+});
+
+// ADMIN — toutes les questions (même désactivées)
+router.get('/questions/all', auth, (req, res, next) =&gt; {
+  const db = requireActiveDb(req, res);
+  if (!db) return;
+  const questions = db.prepare('SELECT * FROM questions ORDER BY order_index, id').all();
+  res.json(questions);
+});</code></pre>
+<p>
+  La route publique <code>/questions</code> ne renvoie que les questions <code>enabled=1</code> :
+  c'est ce que l'invité voit dans le kiosque. La route admin <code>/questions/all</code> renvoie
+  <em>tout</em>, y compris les désactivées, pour que l'opérateur puisse les gérer. Distinction
+  classique « vue publique filtrée / vue admin complète ».
+</p>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ §11.1 encore : <code>/questions/all</code> et <code>/questions/reorder/batch</code> avant <code>/questions/:id</code></div>
+  <p>
+    Comme partout, les routes à segment littéral (<code>/all</code>, <code>/reorder/batch</code>)
+    sont déclarées <strong>avant</strong> <code>/questions/:id</code>, sinon <code>"all"</code> ou
+    <code>"reorder"</code> seraient interprétés comme un <code>:id</code>. Le commentaire du code le
+    rappelle explicitement.
+  </p>
+</div>
+
+<h2>Le reste : identique au Hub</h2>
+<p>
+  La validation (<a href="#/core-validate">validateQuestion</a>), le réordonnancement en
+  transaction, et l'UPDATE dynamique sur champs partiels fonctionnent exactement comme côté Hub —
+  inutile de les re-détailler ici.
+</p>
+<a class="see-also" href="#/hub-routes-questions">→ détail : validation, reorder, UPDATE dynamique (vu dans hub/routes/questions.js)</a>
+
+<div class="callout info">
+  <div class="callout-title">ℹ La différence de fond : « actif » plutôt que « par id »</div>
+  <p>
+    Le Hub gère les questions <em>de n'importe quel événement</em> via <code>:eventId</code> dans
+    l'URL (+ <code>requireOwner</code>). La Borne ne gère que les questions de l'<strong>événement
+    actif</strong> — d'où <code>requireActiveDb</code> au lieu d'un paramètre d'URL. C'est la
+    conséquence directe du modèle « une borne = un événement actif » (voir
+    <a href="#/borne-eventdb">eventDb.js</a>). Toute la pré-résolution d'événement disparaît : pas
+    de <code>mergeParams</code>, pas de <code>requireOwner</code>.
+  </p>
+</div>
+
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Auth</th><th>Rôle</th></tr>
+  <tr><td>GET /questions</td><td>public</td><td>Questions activées (kiosque).</td></tr>
+  <tr><td>GET /questions/all</td><td>admin</td><td>Toutes les questions. <strong>Avant /:id</strong>.</td></tr>
+  <tr><td>PUT /questions/reorder/batch</td><td>admin</td><td>Réordonne (transaction). <strong>Avant /:id</strong>.</td></tr>
+  <tr><td>POST /questions</td><td>admin</td><td>Crée une question (validée).</td></tr>
+  <tr><td>PUT /questions/:id</td><td>admin</td><td>Met à jour les champs fournis.</td></tr>
+  <tr><td>DELETE /questions/:id</td><td>admin</td><td>Supprime une question.</td></tr>
+</table>

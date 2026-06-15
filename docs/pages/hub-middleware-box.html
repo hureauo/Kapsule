@@ -1,0 +1,92 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/middleware/boxAuth.js</h1>
+
+<p>
+  Les routes de synchronisation (<a href="#/hub-routes-sync">routes/sync.js</a>) ne sont pas
+  appelées par un humain via le navigateur, mais par une <strong>Borne</strong>. Elles
+  s'authentifient donc différemment : pas de JWT, mais un <strong>jeton de borne</strong> envoyé
+  dans l'en-tête <code>X-Box-Token</code>. C'est le rôle de <code>requireBox</code>.
+</p>
+
+<p>Le fichier entier :</p>
+<pre><code class="js">import { createHash } from 'node:crypto';
+import { getDb, getBoxByTokenHash, updateBoxSeen } from '../registry.js';
+
+export function requireBox(req, res, next) {
+  const raw = req.headers['x-box-token'];
+  if (!raw) return res.status(401).json({ error: 'X-Box-Token manquant' });
+
+  const hash = createHash('sha256').update(raw).digest('hex');
+  const db = getDb();
+  const box = getBoxByTokenHash(db, hash);
+  if (!box) return res.status(401).json({ error: 'Token borne invalide' });
+
+  updateBoxSeen(db, box.id);
+  // Pas de sync_log ici — chaque route pose son propre log avec l'action précise
+  req.box = box;
+  next();
+}</code></pre>
+
+<h2>Comment ça marche</h2>
+<ol>
+  <li>
+    On lit l'en-tête <code>x-box-token</code>. <strong>Détail JS</strong> : les noms d'en-têtes
+    sont <em>normalisés en minuscules</em> par Node, donc on accède toujours à
+    <code>req.headers['x-box-token']</code> même si la Borne a envoyé <code>X-Box-Token</code>. La
+    notation crochets <code>['x-box-token']</code> est obligatoire car le nom contient des tirets
+    (impossible en notation pointée).
+  </li>
+  <li>
+    On calcule le <strong>SHA-256</strong> du jeton reçu, puis on cherche une borne ayant ce hash.
+  </li>
+  <li>
+    Si trouvée → on note la date de dernier contact (<code>updateBoxSeen</code>), on attache la
+    borne à <code>req.box</code>, et on passe la main.
+  </li>
+</ol>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ On stocke le hash du jeton, jamais le jeton en clair</div>
+  <p>
+    La table <code>boxes</code> ne contient que <code>token_hash</code>, pas le jeton lui-même. À
+    la création d'une borne (<a href="#/hub-routes-admin">routes/admin.js</a>), le jeton en clair
+    est renvoyé <strong>une seule fois</strong> à l'admin (pour le configurer sur la Borne), puis
+    seul son hash est conservé. Si la base fuite, les jetons restent inutilisables (on ne peut pas
+    inverser un SHA-256). C'est le même principe que le hachage des mots de passe — sauf qu'ici on
+    utilise un simple SHA-256 (et non argon2) car le jeton est déjà une chaîne aléatoire de 256
+    bits, non « devinable » par force brute.
+  </p>
+</div>
+
+<a class="see-also" href="#/core-checksum">→ notion JS : createHash / node:crypto (vue dans core/checksum.js)</a>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Hacher une chaîne (vs un fichier)</span>
+  </div>
+  <p>
+    Dans <a href="#/core-checksum">checksum.js</a> on hachait un <em>fichier</em> en streaming.
+    Ici on hache une simple <em>chaîne</em>, donc tout tient sur une ligne :
+    <code>createHash('sha256').update(raw).digest('hex')</code>. <code>update()</code> alimente le
+    hash (on peut l'appeler plusieurs fois), <code>digest('hex')</code> finalise et renvoie
+    l'empreinte en hexadécimal. C'est une API « chaînable » (chaque méthode retourne l'objet).
+  </p>
+</div>
+
+<h2>Pourquoi pas de <code>sync_log</code> ici ?</h2>
+<p>
+  Le commentaire le dit : le middleware ne journalise pas le contact. Ce sont les
+  <strong>routes</strong> qui posent leur propre entrée dans <code>sync_log</code> avec l'action
+  précise (<code>pull</code>, <code>push_manifest</code>, <code>push_file</code>,
+  <code>finalize</code>…). Le middleware se contente de mettre à jour <code>last_seen_at</code>
+  (utile pour l'écran admin « cette borne a été vue il y a X minutes »). Séparation des
+  responsabilités : l'authentification authentifie, la route journalise son métier.
+</p>
+
+<table class="api-table">
+  <tr><th>Élément</th><th>Détail</th></tr>
+  <tr><td>requireBox(req, res, next)</td><td>Middleware. 401 si en-tête absent ou hash inconnu. Sinon pose <code>req.box</code> et appelle <code>next()</code>.</td></tr>
+  <tr><td>Effet de bord</td><td>Met à jour <code>boxes.last_seen_at</code> à chaque appel authentifié.</td></tr>
+  <tr><td>Monté où</td><td><code>router.use(requireBox)</code> en tête de <a href="#/hub-routes-sync">routes/sync.js</a> → protège toutes les routes de synchro.</td></tr>
+</table>

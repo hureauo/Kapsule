@@ -1,0 +1,130 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/routes/sessions.js</h1>
+
+<p>
+  Une <strong>session</strong> est le passage d'un invité : il donne son prénom + consentement, puis
+  enregistre des réponses. Ce fichier gère la création de session, la consultation des réponses, et
+  la complétion. Il illustre deux idées importantes : le <strong>consentement strict</strong> (RGPD)
+  et le <strong>capability token</strong> (l'UUID de session sert de droit d'accès).
+</p>
+
+<h2>Création de session : consentement obligatoire et strict</h2>
+<pre><code class="js">router.post('/sessions', (req, res, next) =&gt; {       // PUBLIC (kiosque)
+  const ctx = requireActiveDb(res);
+  if (!ctx) return;
+  const { active, db } = ctx;
+  const { guest_name, consent } = req.body;
+
+  // Événement clôturé : plus de nouvelles sessions
+  if (active.status === 'closed') {
+    return res.status(409).json({ error: 'event_closed', message: "L'événement est terminé" });
+  }
+  // Invariant RGPD : consent doit être exactement true (booléen)
+  if (consent !== true) {
+    return res.status(400).json({ error: 'Le consentement est obligatoire' });
+  }
+  const nameErr = validateGuestName(guest_name);
+  if (nameErr) return res.status(400).json({ error: nameErr });
+
+  // Passage live si c'est la première session
+  const sessionCount = db.prepare('SELECT COUNT(*) as n FROM sessions').get().n;
+  if (sessionCount === 0 &amp;&amp; active.status === 'loaded') updateEventStatus(active.id, 'live');
+
+  const id = uuidv4();
+  db.prepare('INSERT INTO sessions (id, guest_name, consent_at) VALUES (?, ?, CURRENT_TIMESTAMP)')
+    .run(id, guest_name.trim());
+  res.status(201).json(db.prepare('SELECT * FROM sessions WHERE id=?').get(id));
+});</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ <code>consent !== true</code> : l'égalité stricte protège le RGPD</div>
+  <p>
+    On exige <code>consent === true</code> (testé via <code>!== true</code>) — le booléen exact, pas
+    une valeur « truthy ». Un <code>consent: "yes"</code>, <code>consent: 1</code> ou
+    <code>consent: "true"</code> (chaîne) sont <strong>refusés</strong>. Pourquoi cette rigueur ?
+    Parce que le consentement RGPD doit être un acte explicite et non ambigu. Accepter une valeur
+    floue affaiblirait la preuve de consentement. La date <code>consent_at</code> est posée par
+    SQLite (<code>CURRENT_TIMESTAMP</code>) — on conserve <em>quand</em> l'invité a consenti.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Égalité stricte <code>===</code> vs lâche <code>==</code></span>
+  </div>
+  <p>
+    JS a deux égalités : <code>==</code> (lâche, avec conversion de type) et <code>===</code>
+    (stricte, sans conversion). <code>1 == true</code> est <code>true</code> (!), mais
+    <code>1 === true</code> est <code>false</code>. <strong>Toujours utiliser <code>===</code></strong>
+    — c'est la règle du projet, et c'est ce qui rend <code>consent !== true</code> fiable. Le
+    <code>==</code> est une source de bugs notoire en JS (les règles de conversion sont contre-intuitives).
+  </p>
+  <table class="compare">
+    <tr><th>Expression</th><th>Résultat</th></tr>
+    <tr><td class="lang"><code>1 == true</code></td><td><code>true</code> (conversion)</td></tr>
+    <tr><td class="lang"><code>1 === true</code></td><td><code>false</code> (types différents)</td></tr>
+    <tr><td class="lang"><code>"" == false</code></td><td><code>true</code> (piège !)</td></tr>
+  </table>
+</div>
+
+<h2>La machine à états : <code>loaded → live</code> automatique</h2>
+<p>
+  Quand la <strong>première</strong> session est créée sur un événement <code>loaded</code>, il
+  passe automatiquement <code>live</code> :
+</p>
+<pre><code class="js">if (sessionCount === 0 &amp;&amp; active.status === 'loaded') updateEventStatus(active.id, 'live');</code></pre>
+<p>
+  C'est une transition <em>déclenchée par l'usage</em>, pas par l'admin : dès qu'un invité commence,
+  l'événement est « en cours ». Ce <code>live</code> sera ensuite remonté au Hub via les
+  <a href="#/borne-sync-autopull">heartbeats</a>. La clôture (<code>closed</code>), elle, est
+  manuelle (<a href="#/borne-routes-events">PUT /events/:id/close</a>) ou via le heartbeat.
+</p>
+
+<h2>Le capability token : l'UUID de session = droit d'accès</h2>
+<pre><code class="js">// Le UUID de session fait office de capability token — pas besoin d'auth supplémentaire
+router.get('/sessions/:id/answers', (req, res, next) =&gt; {
+  const ctx = requireActiveDb(res);
+  if (!ctx) return;
+  const { db } = ctx;
+  const session = db.prepare('SELECT id FROM sessions WHERE id=?').get(req.params.id);
+  if (!session) return res.status(404).json({ error: 'Session introuvable' });
+  const answers = db.prepare('SELECT question_id, id as video_id, recorded_at FROM videos WHERE session_id=?').all(req.params.id);
+  res.json(answers);
+});</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Qu'est-ce qu'un « capability token » ?</div>
+  <p>
+    Ces routes sont <strong>publiques</strong> (pas de <code>auth</code>) — un invité n'a pas de
+    compte. Comment protéger l'accès aux réponses d'une session ? Par l'<strong>UUID de session
+    lui-même</strong> : il est aléatoire (impossible à deviner), et le connaître <em>est</em> le
+    droit d'accéder à cette session. C'est le principe de la <em>capability</em> : « posséder la
+    référence = avoir le droit ». L'invité reçoit son UUID à la création de session et l'utilise pour
+    revoir/compléter ses réponses, sans authentification classique. C'est adapté à un kiosque où il
+    n'y a pas de login invité. Même principe que les liens « secrets » de partage (Google Docs, etc.).
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le helper <code>requireActiveDb</code> et le retour <code>null</code></span>
+  </div>
+  <p>
+    Toutes les routes commencent par <code>const ctx = requireActiveDb(res); if (!ctx) return;</code>.
+    Ce helper local renvoie <code>{ active, db }</code> si un événement est actif, ou répond 404 et
+    renvoie <code>null</code> sinon. Le pattern « le helper répond <em>et</em> signale par
+    <code>null</code> » évite de répéter la vérification dans chaque route. Le
+    <code>const { active, db } = ctx</code> est un destructuring d'objet pour récupérer les deux
+    valeurs.
+  </p>
+</div>
+
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Auth</th><th>Rôle</th></tr>
+  <tr><td>POST /sessions</td><td>public</td><td>Crée une session (consentement strict). Passe l'événement live à la 1ʳᵉ.</td></tr>
+  <tr><td>GET /sessions/:id/answers</td><td>public (capability)</td><td>Les réponses d'une session (via son UUID).</td></tr>
+  <tr><td>PUT /sessions/:id/complete</td><td>public (capability)</td><td>Marque la session terminée (<code>completed_at</code>).</td></tr>
+  <tr><td>GET /sessions</td><td>admin</td><td>Toutes les sessions (avec compte de vidéos).</td></tr>
+</table>

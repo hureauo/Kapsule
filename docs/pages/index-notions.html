@@ -1,0 +1,117 @@
+<div class="page-kicker">7 — Transversal</div>
+<h1>Index des notions JS</h1>
+
+<p>
+  Toutes les notions JavaScript / Node expliquées dans la doc, avec un lien vers la page où chacune
+  est <strong>introduite et détaillée</strong>. Sers-t'en pour retrouver une explication sans relire
+  tout le code, ou pour réviser. Les notions suivent globalement l'ordre d'apparition dans le code.
+</p>
+
+<h2>Modules &amp; outillage</h2>
+<table class="api-table">
+  <tr><th>Notion</th><th>Expliquée dans</th></tr>
+  <tr><td>NPM, package.json, dependencies/devDependencies, scripts</td><td><a href="#/arch-monorepo">Monorepo &amp; NPM workspaces</a></td></tr>
+  <tr><td>Workspaces NPM (monorepo, symlinks)</td><td><a href="#/arch-monorepo">Monorepo &amp; NPM workspaces</a></td></tr>
+  <tr><td>ESM vs CommonJS (import/export vs require)</td><td><a href="#/arch-modules">ESM : import / export</a></td></tr>
+  <tr><td>Export nommé / par défaut / renommage <code>as</code></td><td><a href="#/arch-modules">ESM : import / export</a></td></tr>
+  <tr><td>Le barrel + <code>export *</code></td><td><a href="#/core-index">core/index.js</a></td></tr>
+  <tr><td>import() dynamique + Promise.all</td><td><a href="#/hub-worker">hub/worker</a></td></tr>
+  <tr><td>Shebang <code>#!/usr/bin/env node</code></td><td><a href="#/hub-create-admin">create-admin</a></td></tr>
+</table>
+
+<h2>Langage de base</h2>
+<table class="api-table">
+  <tr><th>Notion</th><th>Expliquée dans</th></tr>
+  <tr><td><code>process.env</code> + nullish <code>??</code> + <code>parseInt</code></td><td><a href="#/arch-docker">Docker &amp; variables d'env</a></td></tr>
+  <tr><td><code>process.argv</code> + <code>import.meta.url</code> (main guard)</td><td><a href="#/arch-demarrage">Flux de démarrage</a></td></tr>
+  <tr><td>Objet comme enum + <code>const</code> (mutation vs réassignation)</td><td><a href="#/core-constants">core/constants.js</a></td></tr>
+  <tr><td>Fonction pure, truthy/falsy, template literals</td><td><a href="#/core-validate">core/validate.js</a></td></tr>
+  <tr><td><code>throw</code> et les objets <code>Error</code></td><td><a href="#/core-validate">core/validate.js</a></td></tr>
+  <tr><td>Égalité stricte <code>===</code> vs lâche <code>==</code></td><td><a href="#/borne-routes-sessions">borne/routes/sessions.js</a></td></tr>
+  <tr><td>Destructuring (objet, tableau) + valeurs par défaut</td><td><a href="#/hub-registry">hub/registry.js</a>, <a href="#/hub-routes-questions">questions.js</a></td></tr>
+  <tr><td>Spread <code>...</code> et rest params</td><td><a href="#/hub-registry">hub/registry.js</a>, <a href="#/hub-middleware-validate">validateParams</a></td></tr>
+  <tr><td>Retirer un champ par destructuring + rest</td><td><a href="#/hub-routes-admin">hub/routes/admin.js</a></td></tr>
+  <tr><td>Fonctions fléchées (concises)</td><td><a href="#/hub-routes-gallery">hub/routes/gallery.js</a></td></tr>
+  <tr><td>Closures (+ le piège du timer)</td><td><a href="#/web-mediarecorder">useMediaRecorder</a></td></tr>
+  <tr><td><code>Object.assign(new Error, {...})</code> — erreurs enrichies</td><td><a href="#/borne-sync-hubclient">hubClient</a></td></tr>
+</table>
+
+<h2>Structures de données</h2>
+<table class="api-table">
+  <tr><th>Notion</th><th>Expliquée dans</th></tr>
+  <tr><td><code>Set</code> (ensemble)</td><td><a href="#/hub-routes-events">hub/routes/events.js</a></td></tr>
+  <tr><td><code>Map</code> (+ ordre d'insertion, LRU)</td><td><a href="#/hub-eventstore">hub/eventStore.js</a>, <a href="#/hub-routes-events">events.js</a></td></tr>
+  <tr><td><code>Buffer</code> (octets bruts)</td><td><a href="#/hub-worker-ffmpeg">ffmpeg &amp; jobs</a></td></tr>
+  <tr><td><code>RegExp</code> littérale + <code>.test()</code></td><td><a href="#/hub-middleware-validate">validateParams</a></td></tr>
+</table>
+
+<h2>Asynchrone</h2>
+<table class="api-table">
+  <tr><th>Notion</th><th>Expliquée dans</th></tr>
+  <tr><td>async/await + event loop (vs goroutines/asyncio)</td><td><a href="#/hub-routes-auth">hub/routes/auth.js</a></td></tr>
+  <tr><td>Construire une Promise « à la main »</td><td><a href="#/core-checksum">core/checksum.js</a></td></tr>
+  <tr><td><code>for…of</code> + await (séquentiel)</td><td><a href="#/hub-routes-sync">hub/routes/sync.js</a></td></tr>
+  <tr><td><code>for await…of</code> (stream en boucle)</td><td><a href="#/borne-sync-push">sync/push.js</a></td></tr>
+  <tr><td>Tâche de fond (appeler async sans await + .catch)</td><td><a href="#/borne-routes-sync">borne/routes/sync.js</a></td></tr>
+  <tr><td><code>try/catch/finally</code> (libération garantie)</td><td><a href="#/borne-sync-push">sync/push.js</a>, <a href="#/borne-sync-pull">pull.js</a></td></tr>
+  <tr><td>Boucle <code>while(true)</code> + <code>sleep</code> (polling)</td><td><a href="#/hub-worker">hub/worker</a></td></tr>
+  <tr><td><code>setInterval</code> / <code>clearInterval</code></td><td><a href="#/borne-sync-autopull">sync/autoPull.js</a></td></tr>
+  <tr><td>Backoff exponentiel</td><td><a href="#/borne-sync-hubclient">hubClient</a></td></tr>
+</table>
+
+<h2>Node : modules natifs</h2>
+<table class="api-table">
+  <tr><th>Notion</th><th>Expliquée dans</th></tr>
+  <tr><td>Préfixe <code>node:</code></td><td><a href="#/core-checksum">core/checksum.js</a></td></tr>
+  <tr><td>Streams + <code>.on('data'/'end'/'error')</code></td><td><a href="#/core-checksum">core/checksum.js</a></td></tr>
+  <tr><td><code>.pipe()</code> (contre-pression)</td><td><a href="#/hub-routes-gallery">hub/routes/gallery.js</a></td></tr>
+  <tr><td><code>createHash</code> (hash chaîne/fichier)</td><td><a href="#/core-checksum">checksum</a>, <a href="#/hub-middleware-box">boxAuth</a></td></tr>
+  <tr><td><code>randomBytes</code> (secret crypto)</td><td><a href="#/hub-routes-admin">hub/routes/admin.js</a></td></tr>
+  <tr><td><code>timingSafeEqual</code> (temps constant)</td><td><a href="#/borne-middleware-auth">borne/middleware/auth.js</a></td></tr>
+  <tr><td><code>child_process.spawn</code></td><td><a href="#/hub-worker-ffmpeg">ffmpeg &amp; jobs</a></td></tr>
+  <tr><td><code>readline</code> (entrée clavier)</td><td><a href="#/hub-create-admin">create-admin</a></td></tr>
+  <tr><td><code>fs</code> : <code>unlink</code> callback, <code>statfs</code>, récursion fichiers</td><td><a href="#/borne-routes-videos">videos.js</a>, <a href="#/borne-routes-events">events.js</a>, <a href="#/hub-routes-admin">admin.js</a></td></tr>
+  <tr><td>Migration schéma (<code>PRAGMA table_info</code> + <code>ALTER</code>)</td><td><a href="#/borne-registry">borne/registry.js</a></td></tr>
+</table>
+
+<h2>Bibliothèques</h2>
+<table class="api-table">
+  <tr><th>Notion</th><th>Expliquée dans</th></tr>
+  <tr><td><strong>better-sqlite3</strong> (Database, pragma, prepare/run/get/all, transaction, WAL)</td><td><a href="#/core-eventdbschema">core/eventDbSchema.js</a></td></tr>
+  <tr><td>Singleton SQLite (pattern open/get/close)</td><td><a href="#/hub-registry">hub/registry.js</a></td></tr>
+  <tr><td>UPSERT (<code>ON CONFLICT DO UPDATE</code> + <code>excluded</code>)</td><td><a href="#/hub-worker-ffmpeg">ffmpeg &amp; jobs</a></td></tr>
+  <tr><td><strong>Express</strong> (app.use, ordre des routes, error handler 4-args)</td><td><a href="#/hub-index">hub/index.js</a></td></tr>
+  <tr><td>req / res / next (chaîne de middleware)</td><td><a href="#/hub-index">hub/index.js</a></td></tr>
+  <tr><td><code>Router</code> + factory + <code>mergeParams</code></td><td><a href="#/hub-routes-auth">auth.js</a>, <a href="#/hub-routes-questions">questions.js</a></td></tr>
+  <tr><td>Factory de middleware (closure)</td><td><a href="#/hub-middleware-validate">validateParams</a>, <a href="#/borne-middleware-auth">borne auth</a></td></tr>
+  <tr><td><strong>jsonwebtoken</strong> (sign/verify, algorithms pin)</td><td><a href="#/hub-middleware-auth">hub/middleware/auth.js</a></td></tr>
+  <tr><td><strong>argon2</strong> (hash/verify mot de passe)</td><td><a href="#/hub-routes-auth">hub/routes/auth.js</a></td></tr>
+  <tr><td><strong>express-rate-limit</strong></td><td><a href="#/hub-routes-auth">hub/routes/auth.js</a></td></tr>
+  <tr><td><strong>multer</strong> (diskStorage, fileFilter, limits, single)</td><td><a href="#/hub-routes-sync">hub/routes/sync.js</a></td></tr>
+  <tr><td><strong>archiver</strong> (ZIP en streaming)</td><td><a href="#/hub-worker-ffmpeg">ffmpeg &amp; jobs</a></td></tr>
+  <tr><td>Range requests (206, Content-Range)</td><td><a href="#/hub-routes-gallery">hub/routes/gallery.js</a></td></tr>
+  <tr><td>Injection CSV (préfixe de formule)</td><td><a href="#/hub-routes-gallery">hub/routes/gallery.js</a></td></tr>
+</table>
+
+<h2>Front (navigateur)</h2>
+<table class="api-table">
+  <tr><th>Notion</th><th>Expliquée dans</th></tr>
+  <tr><td><code>fetch</code> navigateur + <code>instanceof</code></td><td><a href="#/web-client-hub">hub/web client.js</a></td></tr>
+  <tr><td><code>localStorage</code></td><td><a href="#/web-client-hub">hub/web client.js</a></td></tr>
+  <tr><td><code>fetch</code> natif Node + piège FormData</td><td><a href="#/borne-sync-hubclient">hubClient</a></td></tr>
+  <tr><td><code>XMLHttpRequest</code> + <code>upload.onprogress</code></td><td><a href="#/web-client-borne">borne/web client.js</a></td></tr>
+  <tr><td><code>FormData</code> / <code>Blob</code> / <code>File</code></td><td><a href="#/borne-sync-push">push.js</a>, <a href="#/web-client-borne">client.js Borne</a></td></tr>
+  <tr><td>React : hooks, <code>useState</code> vs <code>useRef</code></td><td><a href="#/web-mediarecorder">useMediaRecorder</a></td></tr>
+  <tr><td><code>useEffect</code> (effet + nettoyage au démontage)</td><td><a href="#/web-mediarecorder">useMediaRecorder</a></td></tr>
+  <tr><td><code>MediaRecorder</code> + <code>isTypeSupported</code></td><td><a href="#/web-mediarecorder">useMediaRecorder</a></td></tr>
+  <tr><td><code>URL.createObjectURL</code> / <code>revokeObjectURL</code></td><td><a href="#/web-mediarecorder">useMediaRecorder</a></td></tr>
+</table>
+
+<h2>Tests</h2>
+<table class="api-table">
+  <tr><th>Notion</th><th>Expliquée dans</th></tr>
+  <tr><td><code>node:test</code> (describe/it/before/after) + <code>node:assert</code></td><td><a href="#/tests-runner">node:test &amp; supertest</a></td></tr>
+  <tr><td><code>supertest</code> (app en mémoire, sans listen)</td><td><a href="#/tests-runner">node:test &amp; supertest</a></td></tr>
+  <tr><td><code>mkdtempSync</code> + <code>tmpdir</code> (isolation jetable)</td><td><a href="#/tests-runner">node:test &amp; supertest</a></td></tr>
+  <tr><td>Muter la config ESM partagée en test</td><td><a href="#/tests-runner">node:test &amp; supertest</a></td></tr>
+</table>

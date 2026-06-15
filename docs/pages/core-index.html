@@ -1,0 +1,91 @@
+<div class="page-kicker">2 — Le package partagé</div>
+<h1>core/index.js — le « barrel »</h1>
+
+<p>
+  <span class="path">packages/core</span> est le code partagé entre le Hub et la Borne :
+  constantes, fonctions de validation, schéma de la base d'événement, calcul de checksum. Son
+  fichier <span class="path">index.js</span> est minuscule mais structurant — c'est le point
+  d'entrée du package.
+</p>
+
+<p>Le fichier complet :</p>
+<pre><code class="js">export * from './constants.js';
+export * from './validate.js';
+// eventDbSchema.js uses better-sqlite3 (native module) — server-only, not exported from the barrel
+// checksum.js uses node:crypto + node:fs — server-only, not exported from the barrel</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le pattern « barrel » et <code>export *</code></span>
+  </div>
+  <p>
+    Un <strong>barrel</strong> est un fichier qui ne fait que <em>ré-exporter</em> le contenu
+    d'autres fichiers, pour offrir un point d'import unique. <code>export * from './x.js'</code>
+    signifie « réexporte tous les exports nommés de <code>x.js</code> ». Résultat : les autres
+    workspaces écrivent <code>import { LIMITS, validateQuestion } from '@kapsule/core'</code> sans
+    savoir dans quel fichier précis chaque chose est définie.
+  </p>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Analogie</th></tr>
+    <tr><td class="lang">Python</td><td>un <code>__init__.py</code> qui fait <code>from .constants import *</code></td></tr>
+    <tr><td class="lang">Go</td><td>regrouper plusieurs fichiers dans le même <code>package</code> (l'API du package est l'union des fichiers)</td></tr>
+  </table>
+
+  <p>
+    Quand <code>import { X } from '@kapsule/core'</code> est résolu, Node lit le champ
+    <code>"main"</code> (ou <code>"exports"</code>) du <span class="path">package.json</span> de
+    core, qui pointe vers ce <span class="path">index.js</span>.
+  </p>
+
+  <div class="js-deep">
+    <p>
+      <strong>Attention au revers du barrel :</strong> <code>export *</code> ne combine que les
+      exports <em>nommés</em>, pas les <code>export default</code>. Et si deux fichiers
+      réexportés exposent le même nom, il y a conflit. Ici ce n'est pas un souci (noms distincts),
+      mais c'est pourquoi les barils restent simples.
+    </p>
+    <p>
+      Autre subtilité : importer le barrel charge <strong>tous</strong> les modules qu'il
+      réexporte. C'est précisément la raison pour laquelle <code>eventDbSchema.js</code> et
+      <code>checksum.js</code> sont <em>volontairement absents</em> du barrel (voir ci-dessous) :
+      les inclure ferait charger <code>better-sqlite3</code> (binaire natif) et
+      <code>node:crypto</code> partout — y compris dans le code navigateur qui n'en a pas besoin
+      et ne peut même pas les exécuter.
+    </p>
+  </div>
+</div>
+
+<h2>Ce que le barrel exporte… et ce qu'il cache exprès</h2>
+
+<table class="api-table">
+  <tr><th>Fichier</th><th>Dans le barrel ?</th><th>Pourquoi</th></tr>
+  <tr><td>constants.js</td><td>✅ oui</td><td>JS pur, utilisable partout (serveur ET navigateur).</td></tr>
+  <tr><td>validate.js</td><td>✅ oui</td><td>JS pur, fonctions de validation partageables front/back.</td></tr>
+  <tr><td>eventDbSchema.js</td><td>❌ non</td><td>Dépend de <code>better-sqlite3</code> (natif, serveur uniquement).</td></tr>
+  <tr><td>checksum.js</td><td>❌ non</td><td>Dépend de <code>node:crypto</code> + <code>node:fs</code> (serveur uniquement).</td></tr>
+</table>
+
+<p>
+  Les deux fichiers « server-only » restent importables, mais par leur <strong>chemin direct</strong> :
+</p>
+<pre><code class="js">// le barrel — pour le code partageable
+import { LIMITS, validateGuestName } from '@kapsule/core';
+
+// chemin direct — pour le code serveur uniquement
+import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
+import { sha256File }   from '@kapsule/core/src/checksum.js';</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">ℹ La leçon de conception ici</div>
+  <p>
+    Le barrel sépare le code <strong>isomorphe</strong> (qui tourne aussi bien dans Node que dans
+    un navigateur — les constantes, la validation) du code <strong>server-only</strong> (qui a
+    besoin de modules Node natifs). C'est une frontière nette : si tu ajoutes un utilitaire à
+    core, demande-toi « peut-il tourner dans un navigateur ? ». Si oui → barrel. Si non (il
+    importe un <code>node:…</code> ou un module natif) → chemin direct, hors barrel.
+  </p>
+</div>
+
+<p>On détaille maintenant chacun de ces fichiers, en commençant par les constantes.</p>

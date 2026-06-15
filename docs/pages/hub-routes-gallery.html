@@ -1,0 +1,178 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/routes/gallery.js — Range &amp; CSV</h1>
+
+<p>
+  La galerie : c'est par ces routes que le client consulte et télécharge les vidéos d'un événement
+  <em>après</em> traitement. Toutes exigent <code>requireUser</code> + <code>requireOwner</code> et
+  un événement au statut <code>pushed</code>/<code>processed</code>. C'est la page de référence pour
+  les <strong>requêtes Range</strong> (streaming vidéo) et la <strong>protection contre l'injection
+  CSV</strong>.
+</p>
+
+<h2>Le streaming Range-aware</h2>
+<pre><code class="js">function streamFile(res, filePath, contentType) {
+  const stat = statSync(filePath);
+  const { size } = stat;
+  const range = res.req.headers.range;
+
+  if (range) {
+    const [startStr, endStr] = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(startStr, 10);
+    const end = endStr ? parseInt(endStr, 10) : size - 1;
+    const chunkSize = end - start + 1;
+    res.writeHead(206, {                              // 206 Partial Content
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunkSize,
+      'Content-Type': contentType,
+    });
+    createReadStream(filePath, { start, end }).pipe(res);  // ne lit QUE la tranche demandée
+  } else {
+    res.writeHead(200, { 'Accept-Ranges': 'bytes', 'Content-Length': size, 'Content-Type': contentType });
+    createReadStream(filePath).pipe(res);
+  }
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Les requêtes HTTP « Range » et le code 206</span>
+  </div>
+  <p>
+    Pour lire une vidéo, le navigateur n'en télécharge pas tout le contenu d'un bloc : il demande
+    des <strong>tranches d'octets</strong> via l'en-tête <code>Range: bytes=1000000-2000000</code>.
+    Le serveur répond <code>206 Partial Content</code> avec l'en-tête <code>Content-Range</code>
+    précisant la tranche envoyée et la taille totale. C'est ce qui permet à l'utilisateur de
+    <strong>sauter</strong> dans la vidéo (scrubbing) sans tout charger.
+  </p>
+  <p>
+    Le code lit l'en-tête, calcule <code>start</code>/<code>end</code>, et ouvre le stream sur
+    <em>juste cette portion</em> du fichier : <code>createReadStream(filePath, { start, end })</code>.
+    Puis <code>.pipe(res)</code> branche ce flux de lecture sur la réponse — Node copie les octets du
+    fichier vers le client en streaming, sans tout charger en mémoire.
+  </p>
+
+  <table class="compare">
+    <tr><th>Notion</th><th>Détail</th></tr>
+    <tr><td class="lang">200</td><td>Réponse complète (pas de Range demandé).</td></tr>
+    <tr><td class="lang">206</td><td>Tranche partielle, avec <code>Content-Range</code>.</td></tr>
+    <tr><td class="lang">.pipe()</td><td>Connecte un stream lisible à un stream inscriptible (≈ <code>io.Copy</code> en Go).</td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      <code>.pipe()</code> gère automatiquement la <strong>contre-pression</strong>
+      (backpressure) : si le client lit lentement (réseau saturé), Node ralentit la lecture du
+      fichier pour ne pas remplir la mémoire avec des octets en attente d'envoi. C'est l'avantage
+      des streams sur un <code>res.send(fs.readFileSync(...))</code> qui chargerait toute la vidéo
+      en RAM. Pour une borne vidéo où les fichiers font des centaines de Mo, c'est indispensable.
+    </p>
+  </div>
+</div>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant §11.3 : sans Range, pas de scrubbing</div>
+  <p>
+    Si le serveur ignorait l'en-tête <code>Range</code> et renvoyait toujours 200 avec tout le
+    fichier, le lecteur vidéo du navigateur ne pourrait pas se positionner à un instant T — il
+    devrait re-télécharger depuis le début. Le support Range (206 + <code>Content-Range</code>) est
+    donc <strong>obligatoire</strong> pour toute route servant une vidéo. C'est implémenté
+    identiquement côté <a href="#/borne-routes-videos">Borne</a>.
+  </p>
+</div>
+
+<h2>Routes vidéo et l'ordre §11.1</h2>
+<pre><code class="js">// GET /videos/export/csv  ─── déclarée AVANT /:videoId (§11.1)
+router.get('/videos/export/csv', requirePushed, (req, res) => { … });
+// GET /videos/:videoId/file
+router.get('/videos/:videoId/file', requirePushed, (req, res, next) => { … });</code></pre>
+<p>
+  Comme dans <a href="#/hub-routes-questions">questions.js</a> : la route littérale
+  <code>/videos/export/csv</code> est déclarée <strong>avant</strong> <code>/videos/:videoId/…</code>,
+  sinon <code>"export"</code> serait pris pour un <code>:videoId</code>. C'est l'application directe
+  de l'invariant §11.1.
+</p>
+
+<h2>L'export CSV et l'injection de formule</h2>
+<pre><code class="js">// Neutralise les préfixes de formule CSV (§S4/M1) : un prénom `=cmd|'/c calc'!A1`
+// s'exécuterait à l'ouverture dans Excel/LibreOffice. On préfixe d'une apostrophe.
+const sanitizeCsv = (v) => {
+  const s = String(v ?? '');
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+};
+const escapeCsv = (v) => `"${sanitizeCsv(v).replace(/"/g, '""')}"`;</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ CSV injection (§S4/M1) : une donnée peut devenir une formule</div>
+  <p>
+    Un invité pourrait saisir comme prénom <code>=1+1</code> ou pire
+    <code>=cmd|'/c calc'!A1</code>. Tel quel dans un CSV, Excel/LibreOffice
+    <strong>interprète</strong> les cellules commençant par <code>=</code>, <code>+</code>,
+    <code>-</code>, <code>@</code> comme des <em>formules</em> — un vecteur d'exécution de commande
+    à l'ouverture du fichier. La parade : si une valeur commence par un de ces caractères, on la
+    préfixe d'une apostrophe <code>'</code> (Excel l'interprète alors comme du texte littéral).
+    <code>escapeCsv</code> ajoute par-dessus l'échappement CSV standard (guillemets doublés).
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Arrow functions concises et <code>String(v ?? '')</code></span>
+  </div>
+  <p>
+    <code>const sanitizeCsv = (v) =&gt; { … }</code> est une <strong>fonction fléchée</strong> :
+    une syntaxe compacte pour définir une fonction (≈ <code>lambda</code> Python mais avec corps
+    possible). <code>String(v ?? '')</code> convertit n'importe quelle valeur en chaîne, en
+    remplaçant <code>null</code>/<code>undefined</code> par chaîne vide d'abord — sinon
+    <code>String(null)</code> donnerait <code>"null"</code> dans le CSV. <code>.replace(/"/g,
+    '""')</code> : le drapeau <code>g</code> (global) remplace <em>toutes</em> les occurrences de
+    guillemet par deux guillemets (échappement CSV).
+  </p>
+</div>
+
+<h2>La route archive : 202 « pas encore prêt »</h2>
+<pre><code class="js">router.get('/archive', requirePushed, (req, res, next) => {
+  const archiveJob = db.prepare(`SELECT * FROM jobs WHERE event_id = ? AND type = 'archive'
+                                 ORDER BY created_at DESC LIMIT 1`).get(req.params.eventId);
+  const zipPath = join(dataDir, 'events', req.params.eventId, 'derived', 'archive.zip');
+  if (!archiveJob || archiveJob.status !== 'done' || !existsSync(zipPath)) {
+    return res.status(202).json({ pending: true });    // 202 Accepted = en cours
+  }
+  res.setHeader('Content-Disposition', `attachment; filename="event-${req.params.eventId}.zip"`);
+  streamFile(res, zipPath, 'application/zip');
+});</code></pre>
+<p>
+  L'archive ZIP est produite <em>après coup</em> par le <a href="#/hub-worker">worker</a>. Tant que
+  le job <code>archive</code> n'est pas <code>done</code> (et le fichier présent), la route répond
+  <strong>202</strong> (« accepté, traitement en cours ») plutôt que 404. Le front peut ainsi
+  afficher « préparation de l'archive… » et re-tenter. Quand c'est prêt, la même route sert le ZIP
+  via <code>streamFile</code> (Range-aware là aussi).
+</p>
+
+<h2>Suppression d'une vidéo : invalider l'archive</h2>
+<pre><code class="js">router.delete('/videos/:videoId', requirePushed, (req, res, next) => {
+  // … supprime le fichier + la ligne en base (derived en cascade) …
+  db.prepare(`INSERT INTO jobs (event_id, type, status) VALUES (?, 'archive', 'pending')`)
+    .run(req.params.eventId);    // ré-enfile un job archive → le ZIP sera régénéré sans cette vidéo
+  res.status(204).end();
+});</code></pre>
+<p>
+  Supprimer une vidéo rend l'archive ZIP périmée (elle contient encore l'ancienne vidéo). Plutôt
+  que de modifier le ZIP, on <strong>ré-enfile un job <code>archive</code></strong> : le worker
+  régénérera le ZIP complet. C'est le pattern « invalider et recalculer » plutôt que « patcher en
+  place ». La suppression en base profite du <code>ON DELETE CASCADE</code> du schéma
+  (<a href="#/core-eventdbschema">eventDbSchema</a>) : supprimer la vidéo supprime sa ligne
+  <code>derived</code> automatiquement.
+</p>
+
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Notes</th></tr>
+  <tr><td>GET /videos/export/csv</td><td>CSV des vidéos (anti-injection). <strong>Avant /:videoId</strong>.</td></tr>
+  <tr><td>GET /videos</td><td>Liste JSON (avec miniatures, durées).</td></tr>
+  <tr><td>GET /videos/:videoId/file</td><td>Stream Range-aware (lecture in-page).</td></tr>
+  <tr><td>GET /videos/:videoId/download</td><td>Idem + <code>Content-Disposition: attachment</code>.</td></tr>
+  <tr><td>GET /videos/:videoId/thumbnail</td><td>Sert la miniature JPEG.</td></tr>
+  <tr><td>GET /archive</td><td>Sert le ZIP, ou 202 si pas encore généré.</td></tr>
+  <tr><td>DELETE /videos/:videoId</td><td>Supprime la vidéo + ré-enfile l'archive.</td></tr>
+</table>

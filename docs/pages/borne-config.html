@@ -1,0 +1,56 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/config.js</h1>
+
+<p>
+  Comme côté Hub, un objet <code>config</code> construit depuis les variables d'environnement. La
+  Borne a quelques réglages en plus, liés à son mode mono-utilisateur et à la synchronisation avec
+  le Hub.
+</p>
+
+<p>Le fichier entier :</p>
+<pre><code class="js">const env = process.env;
+
+export const config = {
+  port: parseInt(env.PORT ?? '3001', 10),
+  adminPassword: env.ADMIN_PASSWORD ?? 'admin123',
+  jwtSecret: env.JWT_SECRET ?? 'change-me',
+  dataDir: env.DATA_DIR ?? '/app/data',
+  hubUrl: env.HUB_URL ?? '',
+  boxToken: env.BOX_TOKEN ?? '',
+  pullIntervalMs: parseInt(env.PULL_INTERVAL_MS ?? '300000', 10),
+};</code></pre>
+
+<a class="see-also" href="#/arch-docker">→ notion JS : process.env, ??, parseInt (vue dans arch-docker)</a>
+
+<h2>Les réglages spécifiques à la Borne</h2>
+<table class="api-table">
+  <tr><th>Champ</th><th>Variable</th><th>Défaut</th><th>Rôle</th></tr>
+  <tr><td>adminPassword</td><td>ADMIN_PASSWORD</td><td>'admin123'</td><td>Mot de passe unique de l'admin local (pas de comptes multiples sur la Borne).</td></tr>
+  <tr><td>hubUrl</td><td>HUB_URL</td><td>'' (vide)</td><td>URL du Hub. <strong>Vide = mode autonome</strong> (pas de synchro).</td></tr>
+  <tr><td>boxToken</td><td>BOX_TOKEN</td><td>'' (vide)</td><td>Jeton d'identification auprès du Hub (en-tête <code>X-Box-Token</code>).</td></tr>
+  <tr><td>pullIntervalMs</td><td>PULL_INTERVAL_MS</td><td>300000 (5 min)</td><td>Période du pull automatique.</td></tr>
+  <tr><td>port, jwtSecret, dataDir</td><td>(idem Hub)</td><td>—</td><td>Mêmes rôles que côté Hub.</td></tr>
+</table>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Différence clé avec le Hub : un seul admin, un mot de passe</div>
+  <p>
+    Le Hub a une table <code>users</code> avec emails et rôles. La Borne, elle, n'a
+    <strong>qu'un admin local</strong> identifié par un simple mot de passe
+    (<code>ADMIN_PASSWORD</code>). C'est cohérent avec son usage : un seul opérateur configure la
+    borne sur place. Pas de base d'utilisateurs, pas d'inscription. La page
+    <a href="#/borne-middleware-auth">borne/middleware/auth.js</a> montre comment ce mot de passe
+    unique est comparé de façon sûre.
+  </p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Le mode autonome (<code>hubUrl</code> vide)</div>
+  <p>
+    Si <code>HUB_URL</code> n'est pas défini, la Borne fonctionne <strong>seule</strong> : on peut
+    créer des événements locaux directement (origine <code>'local'</code>), enregistrer des vidéos,
+    mais il n'y a ni pull ni push. C'est ce que vérifie <a href="#/borne-sync-autopull">autoPull.js</a>
+    (<code>if (!config.hubUrl || !config.boxToken) return;</code>) : sans URL ni jeton, le cycle de
+    synchro ne fait rien. Utile pour une borne 100 % offline qui n'a jamais de réseau.
+  </p>
+</div>

@@ -1,0 +1,55 @@
+<div class="page-kicker">Démarrer</div>
+<h1>Glossaire métier &amp; technique</h1>
+
+<p>Le vocabulaire qui revient partout dans le code et la doc.</p>
+
+<h2>Termes métier</h2>
+
+<table class="api-table">
+  <tr><th>Terme</th><th>Signification</th></tr>
+  <tr><td>Borne</td><td>L'appareil physique sur place : Raspberry Pi (serveur) + iPad en kiosque (interface invité). Fonctionne hors-ligne. Code dans <span class="path">apps/borne/</span>.</td></tr>
+  <tr><td>Hub</td><td>Le serveur central (VPS) où le client prépare l'événement et récupère les vidéos. Code dans <span class="path">apps/hub/</span>.</td></tr>
+  <tr><td>Kiosque</td><td>Le mode plein écran de l'iPad où l'invité interagit : pas de barre d'adresse, pas de sortie possible. C'est le front public de la Borne.</td></tr>
+  <tr><td>Événement</td><td>Un mariage, une soirée… L'unité de travail. Possède des questions, des sessions, des vidéos. Identifié par un UUID v4.</td></tr>
+  <tr><td>Question</td><td>Une invite à laquelle l'invité répond en vidéo (« Quel est votre meilleur souvenir ? »). Configurable (durée max, compte à rebours).</td></tr>
+  <tr><td>Session</td><td>Le passage d'un invité : il donne son prénom + consentement, puis enregistre une ou plusieurs réponses. Identifiée par un UUID qui sert aussi de jeton d'accès (« capability token »).</td></tr>
+  <tr><td>Invité (guest)</td><td>La personne qui enregistre. Ses données (prénom, vidéos) sont sensibles RGPD.</td></tr>
+  <tr><td>Consentement (consent)</td><td>L'invité doit cocher explicitement <code>consent: true</code> avant d'enregistrer. Stocké avec horodatage.</td></tr>
+</table>
+
+<h2>Termes de synchronisation</h2>
+
+<table class="api-table">
+  <tr><th>Terme</th><th>Signification</th></tr>
+  <tr><td>Pull</td><td>La Borne <strong>tire</strong> depuis le Hub : récupère un événement préparé (questions, réglages) pour le rendre disponible localement. Avant l'événement.</td></tr>
+  <tr><td>Push</td><td>La Borne <strong>pousse</strong> vers le Hub : envoie les vidéos enregistrées et la base de l'événement. Après l'événement.</td></tr>
+  <tr><td>Manifest</td><td>La liste des fichiers (vidéos + base) avec leur taille et checksum, envoyée au Hub au début du push. Le Hub répond quels fichiers lui <em>manquent</em> → permet de reprendre un push interrompu.</td></tr>
+  <tr><td>Heartbeat</td><td>Signal périodique que la Borne envoie au Hub pour dire « cet événement est passé live / closed ». Best-effort (échec silencieux).</td></tr>
+  <tr><td>Bundle</td><td>Le paquet renvoyé par le Hub lors d'un pull : l'événement + ses questions + ses réglages (<code>event_meta</code>).</td></tr>
+  <tr><td>Box token</td><td>Jeton secret identifiant une Borne auprès du Hub (header <code>X-Box-Token</code>). Stocké hashé côté Hub.</td></tr>
+</table>
+
+<h2>Termes techniques (stockage)</h2>
+
+<table class="api-table">
+  <tr><td>registry.sqlite</td><td>La base « annuaire » de chaque serveur. <strong>Hub</strong> : users, boxes, events, jobs, sync_log. <strong>Borne</strong> : local_events, push_state. <strong>Ne contient jamais de données invité</strong> (invariant RGPD §11.13).</td></tr>
+  <tr><td>db.sqlite (event store)</td><td>Une base <em>par événement</em>, dans <span class="path">events/&lt;id&gt;/db.sqlite</span>. Contient questions, sessions, videos, derived. C'est là que vivent les données invité.</td></tr>
+  <tr><td>event_meta</td><td>Table clé/valeur dans le db.sqlite d'un événement (texte de consentement, timeout d'inactivité, nom…).</td></tr>
+  <tr><td>derived</td><td>Données <em>dérivées</em> d'une vidéo, calculées par le worker : miniature, durée, dimensions.</td></tr>
+  <tr><td>Job</td><td>Une tâche de traitement asynchrone côté Hub (sonder une vidéo, générer une miniature, créer le ZIP). Stockée dans la table <code>jobs</code>, exécutée par le worker.</td></tr>
+  <tr><td>Worker</td><td>Un processus séparé du serveur Hub qui dépile les jobs en boucle. Voir <a href="#/hub-worker">hub/worker</a>.</td></tr>
+  <tr><td>WAL</td><td><em>Write-Ahead Logging</em> : un mode de journalisation SQLite. Détaillé dans <a href="#/core-eventdbschema">core/eventDbSchema.js</a>.</td></tr>
+  <tr><td>Checksum</td><td>Empreinte SHA-256 d'un fichier, pour vérifier qu'un transfert n'a pas corrompu la vidéo. Voir <a href="#/core-checksum">core/checksum.js</a>.</td></tr>
+</table>
+
+<h2>Termes JavaScript / Node (survol)</h2>
+<p>Chacun a son encadré détaillé dans la page de code concernée — voir aussi l'<a href="#/index-notions">index des notions</a>.</p>
+
+<table class="api-table">
+  <tr><td>NPM</td><td>Le gestionnaire de paquets de Node (équivalent <code>pip</code> / <code>go mod</code>). Voir <a href="#/arch-monorepo">Monorepo</a>.</td></tr>
+  <tr><td>Workspace</td><td>Un sous-projet du monorepo géré par NPM. Voir <a href="#/arch-monorepo">Monorepo</a>.</td></tr>
+  <tr><td>Module ESM</td><td>Un fichier <code>.js</code> avec <code>import</code>/<code>export</code>. Voir <a href="#/arch-modules">ESM</a>.</td></tr>
+  <tr><td>Express</td><td>Le framework HTTP (équivalent Flask / Gin / Ktor). Voir <a href="#/hub-index">hub/index.js</a>.</td></tr>
+  <tr><td>Middleware</td><td>Une fonction qui s'intercale dans le traitement d'une requête HTTP. Voir <a href="#/hub-index">hub/index.js</a>.</td></tr>
+  <tr><td>Promise / async / await</td><td>Le modèle de concurrence de JS. Voir <a href="#/hub-routes-auth">hub/routes/auth.js</a>.</td></tr>
+</table>

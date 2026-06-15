@@ -1,0 +1,138 @@
+<div class="page-kicker">5 — Le code front (web)</div>
+<h1>hub/web client.js</h1>
+
+<p>
+  Le client API du front Hub : un module qui centralise tous les appels HTTP vers le serveur. C'est
+  du <strong>code navigateur</strong> (pas Node) — la première fois qu'on quitte le serveur. Notions
+  clés : <code>fetch</code> côté navigateur, <code>localStorage</code> pour le jeton, et un objet de
+  méthodes fléchées.
+</p>
+
+<h2>Gestion du jeton dans <code>localStorage</code></h2>
+<pre><code class="js">const TOKEN_KEY = 'hub_token';
+export function getToken() { return localStorage.getItem(TOKEN_KEY); }
+export function saveToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+export function isAuthenticated() { return !!getToken(); }</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>localStorage</code> — stockage navigateur persistant</span>
+  </div>
+  <p>
+    <code>localStorage</code> est un stockage clé→valeur (chaînes uniquement) fourni par le
+    navigateur, <strong>persistant</strong> entre les sessions (survit à la fermeture de l'onglet,
+    contrairement à <code>sessionStorage</code>). On y range le JWT après login ; il est relu à
+    chaque appel API pour authentifier. <code>!!getToken()</code> convertit la valeur (chaîne ou
+    <code>null</code>) en booléen (<code>!!</code> = double négation = « est-ce truthy ? »).
+  </p>
+  <table class="compare">
+    <tr><th>API</th><th>Effet</th></tr>
+    <tr><td class="lang">getItem(k)</td><td>lit (ou <code>null</code>)</td></tr>
+    <tr><td class="lang">setItem(k, v)</td><td>écrit</td></tr>
+    <tr><td class="lang">removeItem(k)</td><td>supprime</td></tr>
+  </table>
+  <div class="js-deep">
+    <p>
+      Pourquoi <code>localStorage</code> et pas un cookie ? Parce que le jeton doit être lu en JS
+      pour être mis dans l'en-tête <code>Authorization</code> (un cookie <code>HttpOnly</code> n'est
+      pas lisible en JS). Le compromis sécurité : <code>localStorage</code> est accessible à tout JS
+      de la page, donc vulnérable au XSS — mais le projet n'a pas de contenu tiers et échappe ses
+      sorties. C'est un choix courant pour les SPA. Le revers : pour les ressources que le navigateur
+      charge seul (<code>&lt;video&gt;</code>, téléchargements), on ne peut pas ajouter d'en-tête, d'où
+      le <code>?token=</code> (invariant §11.2).
+    </p>
+  </div>
+</div>
+
+<h2>Le wrapper <code>apiFetch</code></h2>
+<pre><code class="js">async function apiFetch(path, opts = {}) {
+  const token = getToken();
+  const headers = { ...(opts.headers ?? {}) };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (opts.body &amp;&amp; typeof opts.body === 'object' &amp;&amp; !(opts.body instanceof FormData)) {
+    headers['Content-Type'] = 'application/json';
+    opts = { ...opts, body: JSON.stringify(opts.body) };       // objet → JSON
+  }
+  const res = await fetch(`/api${path}`, { ...opts, headers });
+  if (!res.ok) {
+    const data = await res.json().catch(() =&gt; ({}));
+    throw Object.assign(new Error(data.error ?? `HTTP ${res.status}`), { status: res.status });
+  }
+  if (res.status === 204) return null;                          // No Content
+  return res.json();
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>fetch</code> côté navigateur + <code>instanceof</code></span>
+  </div>
+  <p>
+    Même <code>fetch</code> que côté <a href="#/borne-sync-hubclient">Node</a> (l'API est commune).
+    Ce wrapper : attache le jeton en <code>Authorization: Bearer …</code>, sérialise
+    automatiquement un corps objet en JSON (sauf si c'est du <code>FormData</code>, qu'on laisse
+    tel quel), gère les erreurs (lève une <code>Error</code> enrichie de <code>status</code>) et le
+    cas 204 (pas de corps).
+  </p>
+  <p>
+    <code>opts.body instanceof FormData</code> teste si le corps est un objet
+    <code>FormData</code> (upload de fichier). <code>instanceof</code> vérifie le type d'un objet
+    (≈ <code>isinstance</code> Python). On ne sérialise en JSON que les corps objets ordinaires —
+    un FormData doit rester intact pour que le navigateur gère le multipart (même piège que
+    <a href="#/borne-sync-hubclient">côté Node</a>).
+  </p>
+</div>
+
+<h2>L'objet <code>api</code> : des méthodes fléchées</h2>
+<pre><code class="js">export const api = {
+  login: (email, password) =&gt; apiFetch('/auth/login', { method: 'POST', body: { email, password } }),
+  listEvents: () =&gt; apiFetch('/events'),
+  createEvent: (name, event_date) =&gt; apiFetch('/events', { method: 'POST', body: { name, event_date } }),
+  getEvent: (id) =&gt; apiFetch(`/events/${id}`),
+  deleteEvent: (id, confirm) =&gt; apiFetch(`/events/${id}`, { method: 'DELETE', body: { confirm } }),
+  // … une méthode par endpoint …
+};</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Un objet de fonctions fléchées comme « SDK »</span>
+  </div>
+  <p>
+    <code>api</code> est un objet dont chaque propriété est une <strong>fonction fléchée</strong>
+    qui appelle <code>apiFetch</code> avec le bon chemin et la bonne méthode. C'est un mini-SDK :
+    le reste du front écrit <code>api.listEvents()</code> au lieu de manipuler des URLs et des
+    en-têtes. Centraliser ainsi les appels rend le code appelant lisible et facilite les
+    changements (un seul endroit à modifier si l'API évolue).
+  </p>
+  <p>
+    Les fonctions fléchées concises <code>(x) =&gt; expr</code> retournent <code>expr</code> sans
+    <code>return</code> ni accolades. Ici chaque méthode est un one-liner qui délègue à
+    <code>apiFetch</code>.
+  </p>
+</div>
+
+<h2>Les URLs avec <code>?token=</code> (invariant §11.2)</h2>
+<pre><code class="js">// URL directe avec ?token= pour téléchargements (le navigateur ne peut pas ajouter d'en-tête)
+videoStreamUrl: (eventId, videoId) =&gt; `/api/events/${eventId}/videos/${videoId}/file?token=${getToken()}`,
+videoDownloadUrl: (eventId, videoId) =&gt; `/api/events/${eventId}/videos/${videoId}/download?token=${getToken()}`,
+csvExportUrl: (eventId) =&gt; `/api/events/${eventId}/videos/export/csv?token=${getToken()}`,</code></pre>
+<p>
+  Ces méthodes ne font pas de <code>fetch</code> : elles <strong>construisent des URLs</strong> à
+  mettre dans un <code>&lt;video src&gt;</code>, un <code>&lt;a href&gt;</code> ou un lien CSV. Comme
+  le navigateur charge ces ressources lui-même (sans passer par <code>apiFetch</code>), il ne peut
+  pas ajouter l'en-tête <code>Authorization</code> — d'où le jeton en query
+  (<code>?token=</code>). C'est exactement le besoin que satisfait l'extraction
+  <code>?token=</code> côté serveur (<a href="#/hub-middleware-auth">requireUser</a>). Les deux
+  bouts de l'invariant §11.2 se rejoignent ici.
+</p>
+
+<table class="api-table">
+  <tr><th>Élément</th><th>Détail</th></tr>
+  <tr><td>getToken/saveToken/clearToken</td><td>Gèrent le JWT dans <code>localStorage</code> (clé <code>hub_token</code>).</td></tr>
+  <tr><td>apiFetch(path, opts)</td><td>Wrapper : jeton + JSON auto + gestion erreurs/204. Préfixe <code>/api</code>.</td></tr>
+  <tr><td>api.*</td><td>Une méthode par endpoint (login, events, questions, galerie, admin).</td></tr>
+  <tr><td>*Url(...)</td><td>Construisent des URLs avec <code>?token=</code> pour vidéos/CSV/archive (§11.2).</td></tr>
+</table>

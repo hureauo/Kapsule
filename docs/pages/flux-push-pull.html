@@ -1,0 +1,136 @@
+<div class="page-kicker">7 — Transversal</div>
+<h1>Flux complet : pull &amp; push</h1>
+
+<p>
+  Cette page relie tout le code de synchronisation vu séparément. Elle suit le cycle de vie complet
+  d'un événement, de sa préparation sur le Hub jusqu'à la mise à disposition des vidéos après
+  l'événement — en pointant à chaque étape le fichier qui l'implémente.
+</p>
+
+<h2>Vue d'ensemble du cycle de vie</h2>
+<p>Un événement traverse une suite de statuts. Qui déclenche quoi :</p>
+<table class="api-table">
+  <tr><th>Statut</th><th>Où</th><th>Déclenché par</th></tr>
+  <tr><td>draft</td><td>Hub</td><td>Création de l'événement (<a href="#/hub-routes-events">POST /events</a>).</td></tr>
+  <tr><td>ready</td><td>Hub</td><td>Le client marque l'événement prêt (transition manuelle draft↔ready).</td></tr>
+  <tr><td>loaded</td><td>Hub + Borne</td><td>La Borne a tiré le bundle (<a href="#/hub-routes-sync">GET /bundle</a> passe ready→loaded).</td></tr>
+  <tr><td>live</td><td>Borne → Hub</td><td>Premier invité (<a href="#/borne-routes-sessions">POST /sessions</a>), remonté par heartbeat.</td></tr>
+  <tr><td>closed</td><td>Borne → Hub</td><td>Clôture (<a href="#/borne-routes-events">PUT /close</a>), remonté par heartbeat.</td></tr>
+  <tr><td>pushed</td><td>Hub</td><td>Push finalisé (<a href="#/hub-routes-sync">POST /finalize</a>).</td></tr>
+  <tr><td>processed</td><td>Hub</td><td>Tous les jobs terminés (<a href="#/hub-worker">worker</a>).</td></tr>
+  <tr><td>purged</td><td>Hub et/ou Borne</td><td>Suppression RGPD.</td></tr>
+</table>
+
+<h2>Phase A — Préparation (sur le Hub)</h2>
+<ol>
+  <li>Le client crée un événement (<code>draft</code>), ajoute des questions, règle le consentement
+      (<a href="#/hub-routes-events">events</a> + <a href="#/hub-routes-questions">questions</a>).</li>
+  <li>Un admin enregistre une Borne (<a href="#/hub-routes-admin">POST /admin/boxes</a>) → jeton en
+      clair, à configurer dans <code>BOX_TOKEN</code> sur la Borne.</li>
+  <li>L'admin assigne la Borne à l'événement (<a href="#/hub-routes-events">PUT /assign</a>) et passe
+      l'événement <code>ready</code>.</li>
+</ol>
+
+<h2>Phase B — Pull (Borne ← Hub, avant l'événement)</h2>
+<p>La Borne, quand elle a du réseau, tire l'événement :</p>
+<ol>
+  <li>Le <a href="#/borne-sync-autopull">pull automatique</a> (toutes les 5 min) ou un
+      <a href="#/borne-routes-sync">pull manuel</a> appelle <code>pullAssigned</code>.</li>
+  <li><a href="#/borne-sync-pull">pull.js</a> demande la liste des événements assignés
+      (<a href="#/hub-routes-sync">GET /assigned</a>), puis pour chacun le bundle
+      (<a href="#/hub-routes-sync">GET /bundle</a>) — ce qui passe l'événement <code>ready→loaded</code>
+      côté Hub.</li>
+  <li>La Borne écrit les questions + réglages dans son <code>db.sqlite</code> local —
+      <strong>seulement si</strong> le statut local est encore <code>loaded</code> (invariant §11.10,
+      vérifié au moment d'appliquer).</li>
+</ol>
+<p>
+  À ce stade, la Borne a tout pour fonctionner <strong>hors-ligne</strong> : le réseau peut
+  disparaître, l'événement se déroulera quand même.
+</p>
+
+<h2>Phase C — L'événement (Borne, hors-ligne)</h2>
+<ol>
+  <li>L'opérateur active l'événement (<a href="#/borne-routes-events">PUT /activate</a>) — il devient
+      l'unique événement actif servi au kiosque.</li>
+  <li>Premier invité : <a href="#/borne-routes-sessions">POST /sessions</a> (consentement strict)
+      fait passer l'événement <code>loaded→live</code>.</li>
+  <li>Les invités enregistrent (<a href="#/web-mediarecorder">capture</a>) et uploadent
+      (<a href="#/web-client-borne">XHR avec progression</a> → <a href="#/borne-routes-videos">POST /videos</a>,
+      transaction de remplacement §11.9).</li>
+  <li>Fin : l'opérateur clôture (<a href="#/borne-routes-events">PUT /close</a>) → <code>live→closed</code>.</li>
+  <li>Pendant tout ce temps, si la Borne capte par intermittence, les <a href="#/borne-sync-autopull">heartbeats</a>
+      remontent les statuts <code>live</code>/<code>closed</code> au Hub (best-effort).</li>
+</ol>
+
+<h2>Phase D — Push (Borne → Hub, après l'événement)</h2>
+<p>
+  Quand la Borne retrouve le réseau, l'opérateur lance le push
+  (<a href="#/borne-routes-sync">POST /sync/push/:eventId</a>, exige <code>closed</code>).
+  <a href="#/borne-sync-push">push.js</a> exécute la séquence ; côté Hub,
+  <a href="#/hub-routes-sync">sync.js</a> reçoit :
+</p>
+<ol>
+  <li><strong>Checkpoint WAL + checksums</strong> (§11.8) : la Borne replie le WAL et calcule le
+      SHA-256 de chaque vidéo + du db.sqlite.</li>
+  <li><strong>Manifest</strong> : la Borne annonce ses fichiers (<a href="#/hub-routes-sync">POST /manifest</a>) ;
+      le Hub répond la liste <code>missing</code> (ce qu'il n'a pas encore reçu).</li>
+  <li><strong>Upload des vidéos manquantes</strong> (<a href="#/hub-routes-sync">PUT /files/:videoId</a>) :
+      le Hub recalcule le checksum à la réception, 422 si corruption (la Borne réessaie avec backoff).</li>
+  <li><strong>Upload du db.sqlite</strong> (<a href="#/hub-routes-sync">PUT /db</a>) : remplacement
+      atomique côté Hub, après fermeture du handle et nettoyage WAL/SHM (§11.11).</li>
+  <li><strong>Finalize</strong> (<a href="#/hub-routes-sync">POST /finalize</a>) : le Hub
+      <em>revérifie</em> que tout est présent (§11.12), passe <code>closed→pushed</code>, et enfile
+      les jobs de traitement.</li>
+</ol>
+
+<div class="callout tip">
+  <div class="callout-title">💡 La reprise sur erreur, étape par étape</div>
+  <p>
+    Supposons que le réseau coupe pendant l'upload de la 3ᵉ vidéo sur 10. Au relancement du push :
+  </p>
+  <ul>
+    <li>Étape 1-2 rejouées : le manifest est renvoyé.</li>
+    <li>Le Hub, qui a gardé les 2 premières vidéos (avec bon checksum), répond
+        <code>missing</code> = les 8 restantes.</li>
+    <li>La Borne <strong>n'ré-uploade que ces 8</strong> — les 2 déjà transférées sont sautées.</li>
+    <li>Finalize revérifie l'intégralité avant de basculer en <code>pushed</code>.</li>
+  </ul>
+  <p>
+    C'est la combinaison de l'invariant §11.12 (le Hub recalcule <code>missing</code>, ne fait pas
+    confiance au <code>push_state</code> local) et du backoff §11.7. Le push est donc
+    <strong>idempotent et reprenable</strong> — essentiel sur le Wi-Fi d'une salle d'événement.
+  </p>
+</div>
+
+<h2>Phase E — Traitement (Hub, worker)</h2>
+<ol>
+  <li>Le <a href="#/hub-worker">worker</a> dépile les jobs : <code>probe</code> (durée/dimensions),
+      <code>thumbnail</code> (miniature), <code>archive</code> (ZIP).</li>
+  <li>Quand tous les jobs d'un événement sont <code>done</code>, il passe <code>pushed→processed</code>.</li>
+  <li>Le client consulte/télécharge ses vidéos via la <a href="#/hub-routes-gallery">galerie</a>
+      (lecture Range, CSV, ZIP).</li>
+</ol>
+
+<h2>Phase F — Purge (RGPD)</h2>
+<ul>
+  <li><strong>Côté Borne</strong> : après push, l'opérateur purge les fichiers locaux
+      (<a href="#/borne-routes-sync">POST /sync/purge</a>, exige <code>pushed</code>) pour libérer le
+      disque.</li>
+  <li><strong>Côté Hub</strong> : le client supprime définitivement l'événement
+      (<a href="#/hub-routes-events">DELETE /events/:id</a>, confirmation par nom) → <code>rm -rf</code>
+      du dossier, statut <code>purged</code>.</li>
+  <li>Dans les deux cas : <code>closeEventDb</code> avant la suppression (§11.11), et le registry ne
+      garde aucune donnée invité (§11.13).</li>
+</ul>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Le fil rouge : la base d'événement voyage telle quelle</div>
+  <p>
+    Le point qui fait tenir tout l'édifice : le <code>db.sqlite</code> a le <strong>même schéma</strong>
+    sur la Borne et le Hub (<a href="#/core-eventdbschema">core/eventDbSchema.js</a>). Le push ne fait
+    pas un « export/import » de données — il <strong>transfère le fichier de base lui-même</strong>.
+    C'est pourquoi le checkpoint WAL (§11.8) est si important : il faut que le fichier soit complet et
+    autonome avant le voyage. Une fois reçu, le Hub ouvre ce fichier comme s'il l'avait créé.
+  </p>
+</div>

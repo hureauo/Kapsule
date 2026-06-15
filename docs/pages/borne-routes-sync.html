@@ -1,0 +1,120 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/routes/sync.js</h1>
+
+<p>
+  Les routes admin qui pilotent la synchronisation depuis la Borne : consulter l'état, déclencher un
+  pull manuel, lancer un push, purger un événement poussé. Ce sont des <strong>déclencheurs</strong>
+  — la logique réelle vit dans <span class="path">sync/</span>
+  (<a href="#/borne-sync-pull">pull.js</a>, <a href="#/borne-sync-push">push.js</a>). La notion clé
+  ici : lancer une <strong>tâche de fond</strong> sans bloquer la réponse HTTP.
+</p>
+
+<h2>Lancer un push en tâche de fond</h2>
+<pre><code class="js">router.post('/sync/push/:eventId', auth, (req, res, next) =&gt; {
+  const { eventId } = req.params;
+  const db = getRegistry();
+  const event = db.prepare('SELECT * FROM local_events WHERE id = ?').get(eventId);
+
+  if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+  if (event.status !== 'closed') return res.status(409).json({ error: 'Clôturez l\'événement avant le push' });
+
+  const state = getPushState();
+  if (state.running) return res.status(409).json({ error: 'Un push est déjà en cours' });
+
+  // Lancement en tâche de fond — la progression se lit via GET /sync/status
+  pushEvent(eventId, dataDir).catch(() =&gt; {});
+
+  res.json({ ok: true });
+});</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Tâche de fond : appeler une async <em>sans</em> <code>await</code></span>
+  </div>
+  <p>
+    <code>pushEvent(...)</code> est une fonction <code>async</code> longue (transfert de plusieurs
+    vidéos). On l'appelle <strong>sans <code>await</code></strong> : le handler n'attend pas la fin
+    du push, il répond <code>{ ok: true }</code> immédiatement. Le push continue « en arrière-plan »
+    (la Promise vit sa vie). Le client suit l'avancement via <code>GET /sync/status</code>.
+  </p>
+  <p>
+    Le <code>.catch(() =&gt; {})</code> est <strong>obligatoire</strong> : une Promise non-attendue
+    qui rejette sans <code>.catch</code> provoque un « unhandled rejection » (warning, voire crash
+    selon la config Node). Ici, comme on ne fait pas <code>await</code>, on doit attacher un
+    <code>.catch</code> pour absorber une éventuelle erreur — l'erreur réelle est de toute façon
+    stockée dans l'état de push (<code>_state.lastError</code>) et lisible via <code>/sync/status</code>.
+  </p>
+  <table class="compare">
+    <tr><th>Forme</th><th>Effet</th></tr>
+    <tr><td class="lang"><code>await f()</code></td><td>attend la fin, propage l'erreur</td></tr>
+    <tr><td class="lang"><code>f().catch(()=>{})</code></td><td>lance en fond, n'attend pas, absorbe l'erreur</td></tr>
+  </table>
+  <div class="js-deep">
+    <p>
+      C'est le pattern « fire and forget » : adapté quand l'opération est longue et que le client
+      n'a pas besoin d'attendre sa complétion pour continuer (il <em>pollera</em> l'état). Le risque
+      à connaître : si le processus s'arrête, la tâche de fond meurt avec lui. Pour le push, ce
+      n'est pas grave — il est <a href="#/borne-sync-push">reprenable</a> via le manifest, donc un
+      push interrompu se relance proprement. Pour une opération non reprenable, ce pattern serait
+      dangereux.
+    </p>
+  </div>
+</div>
+
+<h2>Les gardes avant push</h2>
+<p>Trois conditions avant de lancer :</p>
+<ul>
+  <li>L'événement existe (<code>404</code> sinon).</li>
+  <li>Il est <code>closed</code> (<code>409</code> sinon) — on ne pousse qu'un événement clôturé.</li>
+  <li>Aucun push déjà en cours (<code>getPushState().running</code> → <code>409</code> sinon) — un
+      seul push à la fois, l'état partagé sert de verrou. Voir
+      <a href="#/borne-sync-push">push.js</a>.</li>
+</ul>
+
+<h2>La purge locale (§11.11)</h2>
+<pre><code class="js">router.post('/sync/purge/:eventId', auth, (req, res, next) =&gt; {
+  // … vérifie status === 'pushed' et confirm === event.name …
+
+  closeEventDb();                               // §11.11 : fermer le handle AVANT rm -rf
+
+  const eventDir = join(dataDir, 'events', eventId);
+  if (existsSync(eventDir)) rmSync(eventDir, { recursive: true, force: true });
+
+  db.prepare('DELETE FROM push_state WHERE event_id = ?').run(eventId);
+  db.prepare('UPDATE local_events SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(eventId);
+  updateEventStatus(eventId, 'purged');
+  res.json({ ok: true });
+});</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Purge : seulement après push, avec confirmation, et <code>closeEventDb</code> d'abord</div>
+  <p>
+    La purge locale supprime les fichiers de la Borne pour libérer de l'espace, <strong>une fois
+    que les données sont en sécurité sur le Hub</strong>. D'où l'exigence <code>status ===
+    'pushed'</code> : on ne purge pas un événement non sauvegardé. Comme côté Hub, on exige la
+    confirmation par le nom exact, et on appelle <a href="#/borne-eventdb">closeEventDb()</a>
+    <strong>avant</strong> le <code>rmSync</code> (§11.11) — l'événement purgé peut encore être
+    l'actif, donc son handle est peut-être ouvert. On nettoie aussi <code>push_state</code> et on
+    désactive l'événement (il ne doit plus être servi au kiosque).
+  </p>
+</div>
+
+<h2>Pull manuel</h2>
+<pre><code class="js">router.post('/sync/pull', auth, (req, res) =&gt; {
+  pullAssigned(dataDir).catch(() =&gt; {});   // best-effort, sans attendre
+  res.json({ ok: true });
+});</code></pre>
+<p>
+  Même pattern « fire and forget » : on déclenche un pull immédiat (en plus du
+  <a href="#/borne-sync-autopull">pull automatique périodique</a>) sans attendre son résultat. Utile
+  pour forcer une synchro quand l'opérateur vient de préparer l'événement côté Hub.
+</p>
+
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Rôle</th></tr>
+  <tr><td>GET /sync/status</td><td>État : en ligne ?, URL Hub, dernier pull, progression du push.</td></tr>
+  <tr><td>POST /sync/pull</td><td>Déclenche un pull immédiat (tâche de fond).</td></tr>
+  <tr><td>POST /sync/push/:eventId</td><td>Lance le push (tâche de fond, gardes closed + pas déjà en cours).</td></tr>
+  <tr><td>POST /sync/purge/:eventId</td><td>Supprime les fichiers locaux après push (§11.11 + confirmation).</td></tr>
+</table>

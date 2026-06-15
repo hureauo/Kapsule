@@ -1,0 +1,207 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/index.js — montage Express</h1>
+
+<p>
+  Le chef d'orchestre du serveur : il crée l'application Express, branche tous les routeurs dans
+  le bon ordre, installe le gestionnaire d'erreurs, et (si lancé directement) démarre l'écoute.
+  C'est la page de référence pour <strong>Express</strong>, la <strong>chaîne de middleware</strong>,
+  et le cycle <strong>req/res/next</strong>.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Express — le framework HTTP</span>
+  </div>
+  <p>
+    <strong>Express</strong> est le framework web minimaliste de Node : il fait correspondre des
+    routes (méthode + chemin) à des fonctions de traitement, via une chaîne de
+    <em>middlewares</em>. C'est l'équivalent de Flask (Python), Gin (Go) ou Ktor (Kotlin), en plus
+    dépouillé : Express ne fournit presque rien par défaut (pas d'ORM, pas de validation) — tout
+    est middleware.
+  </p>
+  <p>L'objet central est créé par <code>express()</code> :</p>
+  <pre><code class="js">const app = express();
+app.use(express.json());            // middleware global
+app.use('/api/auth', monRouteur);   // routeur monté sous un préfixe
+app.get('/api/health', handler);    // route directe
+app.listen(3001);                   // démarre l'écoute</code></pre>
+
+  <table class="compare">
+    <tr><th>Concept</th><th>Flask</th><th>Express</th></tr>
+    <tr><td class="lang">App</td><td><code>app = Flask(__name__)</code></td><td><code>const app = express()</code></td></tr>
+    <tr><td class="lang">Route</td><td><code>@app.get("/x")</code></td><td><code>app.get("/x", handler)</code></td></tr>
+    <tr><td class="lang">Blueprint</td><td><code>Blueprint(...)</code></td><td><code>express.Router()</code></td></tr>
+    <tr><td class="lang">Middleware</td><td><code>@app.before_request</code></td><td><code>app.use(fn)</code></td></tr>
+  </table>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">La chaîne de middleware : req, res, next</span>
+  </div>
+  <p>
+    Un <strong>middleware</strong> est une fonction <code>(req, res, next)</code>. À chaque
+    requête, Express les exécute <strong>dans l'ordre où ils ont été déclarés</strong>, en
+    passant les mêmes objets <code>req</code> (requête) et <code>res</code> (réponse) de l'un à
+    l'autre. Chaque middleware a trois choix :
+  </p>
+  <ul>
+    <li>répondre lui-même (<code>res.json(...)</code>, <code>res.status(...).end()</code>) → la
+        chaîne s'arrête ;</li>
+    <li>appeler <code>next()</code> → passe au middleware suivant ;</li>
+    <li>appeler <code>next(err)</code> → saute directement au gestionnaire d'erreurs.</li>
+  </ul>
+  <p>Ce que contiennent ces objets :</p>
+  <ul>
+    <li><code>req</code> : <code>req.params</code> (paramètres d'URL <code>:id</code>),
+        <code>req.query</code> (<code>?token=…</code>), <code>req.body</code> (corps JSON parsé),
+        <code>req.headers</code>, et tout ce que les middlewares précédents y ont ajouté
+        (<code>req.user</code>, <code>req.event</code>, <code>req.box</code>…).</li>
+    <li><code>res</code> : pour construire la réponse — <code>res.status(n)</code>,
+        <code>res.json(obj)</code>, <code>res.setHeader(...)</code>, <code>res.send(...)</code>.</li>
+    <li><code>next</code> : la fonction qui passe la main.</li>
+  </ul>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Analogie middleware</th></tr>
+    <tr><td class="lang">Python/Flask</td><td>décorateurs <code>before_request</code> + <code>g</code> pour passer des données</td></tr>
+    <tr><td class="lang">Go</td><td><code>func(next http.Handler) http.Handler</code> (handler wrapping)</td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      « Attacher des données à <code>req</code> » (comme <code>req.user = …</code> dans
+      <a href="#/hub-middleware-auth">requireUser</a>) est <strong>le</strong> mécanisme de
+      communication entre middlewares d'une même requête. Comme tous reçoivent la même référence
+      d'objet <code>req</code>, une propriété ajoutée par l'un est visible par les suivants. C'est
+      l'équivalent de l'objet <code>g</code> de Flask ou du <code>context.Context</code> de Go,
+      mais sans cérémonie : on assigne simplement une propriété.
+    </p>
+  </div>
+</div>
+
+<h2>Le corps de <code>createApp</code></h2>
+<pre><code class="js">export function createApp(dataDir, opts = {}) {
+  openRegistry(dataDir);
+  const app = express();
+  app.use(express.json());                          // 1. parse le JSON entrant
+
+  app.use('/api/auth', makeAuthRouter());           // 2. routeurs, DANS L'ORDRE
+  app.use('/api/events', makeEventsRouter(dataDir));
+  app.use('/api/events/:eventId/questions', makeQuestionsRouter(dataDir));
+  app.use('/api/admin', makeAdminRouter(dataDir));
+  app.use('/api/sync', makeSyncRouter(dataDir, opts.sync));
+  app.use('/api/events/:eventId', makeGalleryRouter(dataDir));   // 3. APRÈS questions !
+
+  app.get('/api/health', async (req, res, next) => { /* … */ });
+
+  app.use((err, req, res, next) => { /* gestionnaire d'erreurs */ });   // 4. EN DERNIER
+  return app;
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ L'ordre de montage des routeurs compte</div>
+  <p>
+    Express teste les routes <strong>dans l'ordre de déclaration</strong> et s'arrête à la
+    première qui correspond. Conséquences visibles ici :
+  </p>
+  <ul>
+    <li>
+      <code>/api/events/:eventId/questions</code> est monté <strong>avant</strong>
+      <code>/api/events/:eventId</code> (la galerie). Si la galerie était déclarée avant, elle
+      pourrait intercepter des chemins destinés aux questions. On va du plus spécifique au plus
+      général.
+    </li>
+    <li>
+      Le <strong>gestionnaire d'erreurs</strong> est tout en bas : Express ne l'utilise que pour
+      les <code>next(err)</code>, et il doit être enregistré après toutes les routes pour les
+      couvrir toutes.
+    </li>
+  </ul>
+  <p>
+    Ce principe se décline en interne dans chaque routeur avec l'invariant <strong>§11.1</strong> :
+    les routes à segment fixe (<code>/export/csv</code>, <code>/reorder/batch</code>) doivent être
+    déclarées <strong>avant</strong> les routes paramétrées <code>/:id</code>, sinon Express prend
+    <code>"export"</code> ou <code>"reorder"</code> pour un <code>:id</code>. Voir
+    <a href="#/hub-routes-gallery">gallery.js</a> et <a href="#/hub-routes-questions">questions.js</a>.
+  </p>
+</div>
+
+<h2>Routeurs imbriqués et <code>:eventId</code> partagé</h2>
+<p>
+  <code>app.use('/api/events/:eventId/questions', makeQuestionsRouter(...))</code> monte un routeur
+  <em>sous</em> un chemin qui contient déjà un paramètre <code>:eventId</code>. Pour que le routeur
+  enfant voie ce paramètre, il doit être créé avec <code>Router({ mergeParams: true })</code> —
+  détaillé dans <a href="#/hub-routes-questions">questions.js</a>. C'est ainsi qu'on factorise
+  « toutes les routes questions d'un événement » sans répéter <code>:eventId</code> partout.
+</p>
+
+<h2>Le gestionnaire d'erreurs : 4 arguments</h2>
+<pre><code class="js">app.use((err, req, res, next) => {
+  // Erreurs multer (fichier trop gros) → statut explicite plutôt que 500
+  if (err.name === 'MulterError') {
+    const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    return res.status(status).json({ error: `Upload refusé : ${err.message}` });
+  }
+  const status = err.status ?? err.statusCode ?? 500;
+  if (status &gt;= 500) {
+    console.error(`[hub] ${req.method} ${req.path} →`, err);   // on logge le détail serveur
+    return res.status(status).json({ error: 'Erreur interne du serveur' });  // message opaque
+  }
+  res.status(status).json({ error: err.message ?? 'Erreur interne' });
+});</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le gestionnaire d'erreurs Express se reconnaît à ses 4 paramètres</span>
+  </div>
+  <p>
+    Express distingue un <strong>gestionnaire d'erreurs</strong> d'un middleware normal par
+    le <strong>nombre de paramètres</strong> : une fonction <code>(err, req, res, next)</code> à
+    <strong>quatre</strong> arguments est traitée comme handler d'erreur. Express ne l'appelle que
+    lorsqu'un middleware a fait <code>next(err)</code> (ou levé dans un handler synchrone).
+  </p>
+  <p>
+    C'est pourquoi tous les handlers async du projet sont écrits <code>try { … } catch (err) {
+    next(err); }</code> : une exception attrapée est <em>réinjectée</em> dans la chaîne via
+    <code>next(err)</code>, qui la route jusqu'ici. C'est le point de collecte unique des erreurs.
+  </p>
+  <div class="js-deep">
+    <p>
+      Pourquoi ce <code>try/catch + next(err)</code> est nécessaire : Express (version utilisée
+      ici) <strong>n'attrape pas</strong> automatiquement les rejets de Promise dans un handler
+      <code>async</code>. Si un <code>await</code> lève et qu'on ne l'attrape pas, l'erreur devient
+      un « unhandled rejection » et la requête reste pendante (le client attend indéfiniment).
+      D'où la discipline systématique du projet. On garde aussi <code>// eslint-disable-next-line
+      no-unused-vars</code> au-dessus du handler : le paramètre <code>next</code> est inutilisé
+      mais <strong>doit</strong> figurer pour qu'Express compte 4 arguments.
+    </p>
+  </div>
+</div>
+
+<div class="callout tip">
+  <div class="callout-title">💡 Sécurité : message opaque pour les 5xx (§S5.3)</div>
+  <p>
+    Quand le statut est ≥ 500, on <strong>logge</strong> le détail côté serveur
+    (<code>console.error</code>) mais on renvoie au client un message générique « Erreur interne du
+    serveur ». Cela évite de divulguer des détails d'implémentation (chemins, requêtes SQL, stack)
+    à un attaquant. Les erreurs &lt; 500 (4xx, fautes du client) gardent leur message, qui est
+    utile et non sensible. Même logique côté <a href="#/borne-index">Borne</a>.
+  </p>
+</div>
+
+<h2>Le démarrage (rappel)</h2>
+<pre><code class="js">if (process.argv[1] === new URL(import.meta.url).pathname) {
+  mkdirSync(config.dataDir, { recursive: true });
+  const app = createApp(config.dataDir);
+  app.listen(config.port, () => console.log(`hub-server démarré sur le port ${config.port}`));
+}</code></pre>
+<a class="see-also" href="#/arch-demarrage">→ notion JS : le main module guard (process.argv / import.meta.url) — vue dans Flux de démarrage</a>
+
+<table class="api-table">
+  <tr><th>Export</th><th>Détail</th></tr>
+  <tr><td>createApp(dataDir, opts)</td><td>Construit et retourne l'app Express (sans l'écouter). <code>opts.sync</code> permet d'injecter des dépendances de synchro dans les tests.</td></tr>
+</table>

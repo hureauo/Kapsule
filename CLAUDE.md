@@ -26,8 +26,9 @@ Les commandes ci-dessous sont à lancer via `docker compose run` ou des scripts 
 ## Outils agents (`.claude/`)
 
 - **`/suivant [tâche]`** — implémente la prochaine case non cochée de ROADMAP.md (ou celle indiquée) : relit la spec, code, teste, coche, committe.
-- **`/verif-spec`** — lance l'agent `kapsule-reviewer` sur le diff courant. **À faire avant chaque commit de sous-lot.**
+- **`/verif-spec`** — enchaîne `kapsule-reviewer` puis `kapsule-doc-sync` sur le diff courant. **À faire avant chaque commit de sous-lot.**
 - **Agent `kapsule-reviewer`** — reviewer strict en lecture seule : vérifie le diff contre les règles de CLAUDE.md et les invariants de PROJET.md §11, rend un rapport (VERDICT + findings, ne modifie rien). Invocable directement via le tool Agent, ou via `/verif-spec`.
+- **Agent `kapsule-doc-sync`** — synchronise le site de doc `docs/` avec le diff (une fois les findings ❌ corrigés) : met à jour les pages concernées, ajoute une page + son entrée `pages.js` si un nouveau fichier source apparaît. Écrit uniquement sous `docs/`, jamais le code ni l'état git. Lancé en 2ᵉ étape de `/verif-spec`.
 
 ## Règles de travail
 

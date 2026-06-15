@@ -1,0 +1,128 @@
+<div class="page-kicker">7 — Transversal</div>
+<h1>Invariants critiques (§11)</h1>
+
+<p>
+  Les 18 « pièges d'implémentation » de <span class="path">PROJET.md §11</span>, avec pour chacun :
+  ce qu'il impose, le code qui l'applique, et ce qui casserait si on l'ignorait. Ce sont les règles
+  à ne <strong>jamais</strong> casser en modifiant le code — la plupart préviennent des bugs
+  silencieux ou des pertes de données.
+</p>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Comment utiliser cette page</div>
+  <p>
+    Avant de modifier une route, un accès base ou un transfert de fichier, vérifie que ton
+    changement ne viole aucun de ces invariants. Plusieurs sont contre-intuitifs (ils existent
+    <em>parce que</em> le comportement naïf est faux). Les cases à cocher sont une checklist de
+    relecture — leur état n'est pas sauvegardé, c'est un aide-mémoire visuel.
+  </p>
+</div>
+
+<h2>Routage &amp; HTTP</h2>
+
+<label class="inv"><input type="checkbox"> <strong>§11.1 — <code>export/csv</code> avant <code>/:id</code></strong></label>
+<p>Express matche dans l'ordre ; <code>/:id</code> capturerait <code>"export"</code>. Casse :
+l'export CSV renverrait « ressource export introuvable ». Code :
+<a href="#/hub-routes-gallery">gallery.js</a>, <a href="#/borne-routes-videos">videos.js</a>,
+<a href="#/hub-routes-questions">questions.js</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.2 — auth accepte <code>?token=</code></strong></label>
+<p>Les <code>&lt;video src&gt;</code>, téléchargements et CSV ne peuvent pas envoyer d'en-tête
+<code>Authorization</code>. Casse : la lecture vidéo et les téléchargements échoueraient en 401.
+Code : <a href="#/hub-middleware-auth">hub auth</a>, <a href="#/borne-middleware-auth">borne auth</a>,
+côté front <a href="#/web-client-hub">les *Url()</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.3 — Range requests sur <code>/file</code></strong></label>
+<p>Le 206 + <code>Content-Range</code> rend le scrubbing possible. Casse : impossible de se
+positionner dans une vidéo (re-téléchargement depuis 0). Code :
+<a href="#/hub-routes-gallery">streamFile (gallery)</a>, <a href="#/borne-routes-videos">streamFile (videos)</a>.</p>
+
+<h2>Safari / iOS</h2>
+
+<label class="inv"><input type="checkbox"> <strong>§11.4 — fileFilter tolérant</strong></label>
+<p>Safari envoie parfois un MIME générique (<code>application/octet-stream</code>) pour une vidéo.
+Casse : les uploads iPad seraient rejetés. Code :
+<a href="#/borne-routes-videos">videos.js fileFilter</a> (MIME générique + extension vidéo).</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.5 — <code>playsInline</code> sur tous les <code>&lt;video&gt;</code></strong></label>
+<p>Sans, iOS force le plein écran. Casse : l'aperçu caméra et la relecture sortiraient du kiosque.
+Code : <a href="#/web-mediarecorder">attachPreview</a> (et tous les <code>&lt;video&gt;</code> du front).</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.18 — XHR pour la progression d'upload</strong></label>
+<p><code>fetch</code> n'expose pas la progression d'envoi. Casse : pas de barre de progression
+(mauvaise UX sur Wi-Fi lent). Code : <a href="#/web-client-borne">uploadVideo (XHR)</a>.</p>
+
+<h2>Données &amp; base</h2>
+
+<label class="inv"><input type="checkbox"> <strong>§11.6 — <code>question_text</code> dénormalisé</strong></label>
+<p>Le libellé est copié dans <code>videos</code> ; supprimer une question n'orpheline pas les
+enregistrements (FK <code>ON DELETE SET NULL</code>). Casse : on perdrait le texte de la question
+d'une vidéo. Code : <a href="#/core-eventdbschema">eventDbSchema</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.8 — <code>wal_checkpoint(TRUNCATE)</code> avant checksum/transfert</strong></label>
+<p>En WAL, les dernières écritures vivent dans le <span class="path">-wal</span>. Casse : on
+transférerait un <code>db.sqlite</code> incomplet → données manquantes côté Hub. Code :
+<a href="#/borne-sync-push">push.js (checkpointAndHash)</a>, nettoyage WAL/SHM à la réception
+<a href="#/hub-routes-sync">sync.js</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.9 — remplacement vidéo : DELETE+INSERT en transaction, unlink après commit</strong></label>
+<p>Casse : crash entre DELETE et INSERT → session sans vidéo ; unlink avant rollback → fichier perdu
+alors que la base pointe dessus. Code : <a href="#/borne-routes-videos">videos.js (transaction)</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.11 — fermer le handle SQLite avant <code>rm -rf</code> ou écrasement</strong></label>
+<p>Écrire/supprimer un fichier de base ouvert = corruption. Casse : base corrompue après purge ou
+push. Code : <a href="#/hub-eventstore">closeEventDb (Hub)</a>, <a href="#/borne-eventdb">closeEventDb (Borne)</a>,
+appelé dans <a href="#/hub-routes-events">events DELETE</a>, <a href="#/hub-routes-sync">sync PUT /db</a>,
+<a href="#/borne-routes-sync">borne purge</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.13 — RGPD : aucune donnée invité dans <code>registry.sqlite</code></strong></label>
+<p>Tout (prénom, vidéo, session) vit dans <span class="path">events/&lt;id&gt;/</span>. Casse : la
+purge (<code>rm -rf</code> du dossier) laisserait des données personnelles → violation RGPD. Code :
+schémas <a href="#/hub-registry">hub registry</a> &amp; <a href="#/borne-registry">borne registry</a>.</p>
+
+<h2>Synchronisation</h2>
+
+<label class="inv"><input type="checkbox"> <strong>§11.7 — upload avec retry + backoff exponentiel</strong></label>
+<p>Formule <code>min(2000·2^(n-1), 30000)</code>, 5 essais. Casse : un micro-coupure Wi-Fi ferait
+échouer tout le push. Code : <a href="#/borne-sync-hubclient">hubClient</a>,
+<a href="#/borne-sync-push">push (uploadFileWithRetry)</a>, <a href="#/web-client-borne">XHR front</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.10 — pull n'écrit que si statut local <code>loaded</code> (vérifié à l'application)</strong></label>
+<p>L'état peut changer pendant l'aller-retour réseau. Casse : écraser les questions d'un événement
+passé <code>live</code> (invités en cours). Code : <a href="#/borne-sync-pull">pull.js (étape 2)</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.12 — push repris via le manifest, <code>missing</code> recalculé côté Hub</strong></label>
+<p>Ne jamais faire confiance au <code>push_state</code> local seul. Casse : un événement marqué
+« poussé » alors que des vidéos manquent côté Hub. Code :
+<a href="#/hub-routes-sync">sync (manifest + finalize)</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.13b — token de borne en hash, 401 visible</strong></label>
+<p>Le jeton n'est stocké qu'en hash ; un 401 du Hub (token révoqué) doit être affiché clairement.
+Casse : push qui échoue sans explication. Code : <a href="#/hub-middleware-box">boxAuth</a>,
+<a href="#/borne-sync-push">push (lastError sur 401)</a>.</p>
+
+<h2>Matériel &amp; déploiement (vérification humaine)</h2>
+
+<label class="inv"><input type="checkbox"> <strong>§11.14 — <code>DATA_DIR</code> sur SSD USB, pas la carte SD</strong> <span class="status-badge status-human">vérif. humaine</span></label>
+<p>La carte SD s'use et corrompt → perte de souvenirs irremplaçables. Hors du code (déploiement
+Raspberry).</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.15 — tester sur iPad Safari réel</strong> <span class="status-badge status-human">vérif. humaine</span></label>
+<p>Caméra, HTTPS auto-signé à approuver, Range, retry : pas vérifiables sur Chrome desktop. Voir les
+cases 🧑 de <span class="path">ROADMAP.md</span>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.16 — module RTC DS3231 (pas d'horloge sur le Raspberry)</strong> <span class="status-badge status-human">vérif. humaine</span></label>
+<p>Sans Internet, l'heure dérive — or <code>consent_at</code> est la preuve légale RGPD. Le
+<a href="#/borne-routes-events">preflight</a> vérifie l'écart d'horloge (<code>clock_ok</code>), mais
+le matériel RTC est requis.</p>
+
+<h2>Performance</h2>
+
+<label class="inv"><input type="checkbox"> <strong>§11.17 — ZIP d'archive sans compression (mode store)</strong></label>
+<p>La vidéo est déjà compressée ; recompresser brûle du CPU pour 0 % de gain. Casse : worker lent,
+VPS saturé. Code : <a href="#/hub-worker-ffmpeg">archive.js (store: true)</a>.</p>
+
+<style>
+  label.inv { display:block; margin:18px 0 2px; cursor:pointer; }
+  label.inv input { margin-right:8px; transform: translateY(1px); }
+</style>

@@ -1,0 +1,61 @@
+<div class="page-kicker">Documentation du code</div>
+<h1>Kapsule — lire le code en profondeur</h1>
+
+<p>
+  Cette documentation s'adresse à un développeur qui veut <strong>comprendre et modifier
+  le code</strong> de Kapsule. Ce n'est pas un guide d'utilisation : chaque page parle
+  d'implémentation — fonctions, structures de données, décisions d'architecture, et le
+  <em>pourquoi</em> derrière chaque pattern.
+</p>
+
+<div class="callout tip">
+  <div class="callout-title">📘 Cours JavaScript intégré</div>
+  <p>
+    Le code de Kapsule est en JavaScript / Node.js. Si tu viens de Python, Go ou Kotlin,
+    les notions JS inconnues sont expliquées <strong>à leur première apparition dans le code</strong>,
+    dans des encadrés jaunes comme celui-ci, repérés par le badge <span class="js-badge">JS</span>.
+    Pas de chapitre théorique séparé : tu apprends la notion sur le vrai code qui l'utilise.
+  </p>
+</div>
+
+<h2>Qu'est-ce que Kapsule ?</h2>
+<p>
+  Une borne vidéo pour événements (mariages, soirées…). Deux moitiés :
+</p>
+<ul>
+  <li>
+    <strong>La Borne</strong> — un Raspberry Pi posé sur place, avec un iPad en mode kiosque.
+    Les invités enregistrent une vidéo en réponse à des questions. <strong>100 % hors-ligne</strong> :
+    tout est stocké localement, rien ne dépend d'Internet pendant l'événement.
+  </li>
+  <li>
+    <strong>Le Hub</strong> — un serveur (VPS) où le client (l'organisateur) prépare son
+    événement à l'avance, puis récupère les vidéos après. La Borne se synchronise avec le
+    Hub quand elle a du réseau (avant / après l'événement).
+  </li>
+</ul>
+
+<p>
+  Les deux sont des serveurs <strong>Node.js + Express</strong> avec des bases
+  <strong>SQLite</strong>, et des interfaces web <strong>React</strong> (servies en statique).
+  Le tout dans un <strong>monorepo</strong> géré par les <em>workspaces</em> NPM.
+</p>
+
+<h2>Par où commencer ?</h2>
+<ol>
+  <li>Lis <a href="#/comment-lire">Comment lire cette doc</a> — conventions, code couleur.</li>
+  <li>Si les mots « monorepo », « NPM », « module » sont flous :
+      <a href="#/arch-monorepo">Architecture → Monorepo & NPM workspaces</a>.</li>
+  <li>Pour une vue d'ensemble du fonctionnement :
+      <a href="#/flux-push-pull">Flux complet : pull & push</a>.</li>
+  <li>Puis descends dans le code section par section (Hub, Borne, Front).</li>
+</ol>
+
+<div class="callout info">
+  <div class="callout-title">ℹ La source de vérité reste le code</div>
+  <p>
+    Cette doc décrit le code tel qu'il était au moment de sa rédaction. Si un détail diffère,
+    le code et <span class="path">PROJET.md</span> (la spécification) font foi. Les numéros de
+    section comme « §11.9 » renvoient à <span class="path">PROJET.md</span>.
+  </p>
+</div>

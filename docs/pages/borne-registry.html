@@ -1,0 +1,128 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/registry.js — état local</h1>
+
+<p>
+  Le registre local de la Borne, volontairement minimal : deux tables seulement
+  (<code>local_events</code> et <code>push_state</code>). Même pattern singleton que le Hub
+  (<a href="#/hub-registry">registry.js</a>), mais avec une particularité intéressante : une
+  <strong>migration douce</strong> du schéma.
+</p>
+
+<h2>Le schéma : deux tables, zéro donnée invité</h2>
+<pre><code class="js">db.exec(`
+  CREATE TABLE IF NOT EXISTS local_events (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    origin     TEXT NOT NULL CHECK(origin IN ('hub','local')),
+    status     TEXT NOT NULL DEFAULT 'loaded'
+               CHECK(status IN ('loaded','live','closed','pushed','purged')),
+    active     INTEGER NOT NULL DEFAULT 0,
+    pulled_at  DATETIME, pushed_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS push_state (
+    event_id    TEXT NOT NULL,
+    video_id    TEXT NOT NULL,
+    checksum    TEXT NOT NULL,
+    uploaded_at DATETIME,
+    PRIMARY KEY (event_id, video_id)
+  );
+`);</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant RGPD §11.13 : toujours respecté ici</div>
+  <p>
+    <code>local_events</code> ne contient que des métadonnées (id, nom de l'événement, statut) ;
+    <code>push_state</code> ne contient que des id et checksums. <strong>Aucun prénom, aucune
+    vidéo, aucune session</strong> — tout ça vit dans <span class="path">events/&lt;id&gt;/db.sqlite</span>.
+    La purge d'un événement reste un <code>rm -rf</code> du dossier. Voir
+    <a href="#/arch-deux-apps">Deux apps, deux bases</a>.
+  </p>
+</div>
+
+<p>Quelques colonnes notables :</p>
+<ul>
+  <li><code>origin CHECK(origin IN ('hub','local'))</code> : un événement vient soit du Hub (pullé),
+      soit a été créé localement sur la borne autonome.</li>
+  <li><code>active</code> : un booléen (0/1) marquant <strong>l'unique</strong> événement actif —
+      celui que le kiosque sert aux invités. Un seul à la fois (voir <code>setActiveEvent</code>).</li>
+  <li>Les statuts de la Borne (<code>loaded → live → closed → pushed → purged</code>) sont un
+      sous-ensemble de ceux du Hub : la Borne ne connaît pas <code>draft</code>/<code>ready</code>
+      (préparation côté Hub) ni <code>processed</code> (traitement côté Hub).</li>
+</ul>
+
+<h2>La migration douce</h2>
+<pre><code class="js">// Migration douce : ajoute pulled_at/pushed_at si absents (base créée avant phase 3.4)
+const cols = db.pragma('table_info(local_events)').map(c =&gt; c.name);
+if (!cols.includes('pulled_at')) db.exec('ALTER TABLE local_events ADD COLUMN pulled_at DATETIME');
+if (!cols.includes('pushed_at')) db.exec('ALTER TABLE local_events ADD COLUMN pushed_at DATETIME');</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Migration de schéma avec <code>PRAGMA table_info</code></span>
+  </div>
+  <p>
+    <code>CREATE TABLE IF NOT EXISTS</code> ne modifie pas une table <em>existante</em> : si la
+    table a été créée par une version antérieure du code (sans les colonnes <code>pulled_at</code>/
+    <code>pushed_at</code>), elle reste telle quelle. Pour ajouter ces colonnes sur une base
+    déjà en service, on fait une <strong>migration</strong> manuelle :
+  </p>
+  <ol>
+    <li><code>db.pragma('table_info(local_events)')</code> renvoie la liste des colonnes actuelles
+        (un tableau d'objets avec <code>.name</code>).</li>
+    <li><code>.map(c =&gt; c.name)</code> en extrait les noms.</li>
+    <li>Si une colonne attendue manque, on l'ajoute avec <code>ALTER TABLE … ADD COLUMN</code>.</li>
+  </ol>
+  <p>
+    C'est une migration <em>idempotente</em> et <em>défensive</em> : on vérifie avant d'ajouter,
+    donc relancer le code ne casse rien. C'est une mini-version de ce que feraient des outils comme
+    Alembic (Python) ou les migrations Go — mais fait à la main, adapté à un projet où le schéma
+    évolue peu.
+  </p>
+  <div class="js-deep">
+    <p>
+      Pourquoi pas un vrai système de migrations versionnées ? Parce que SQLite + projet de cette
+      taille = la simplicité prime. La limite de cette approche : elle ne gère que l'<em>ajout</em>
+      de colonnes (SQLite ne sait pas facilement supprimer/renommer une colonne sans recréer la
+      table). Pour une refonte de schéma plus profonde, il faudrait une stratégie « créer nouvelle
+      table → copier → remplacer ». Mais pour ajouter des colonnes nullable, ce pattern est parfait
+      et lisible.
+    </p>
+  </div>
+</div>
+
+<h2>Helpers métier : la notion d'événement « actif »</h2>
+<pre><code class="js">export function getActiveEvent() {
+  return getRegistry().prepare('SELECT * FROM local_events WHERE active = 1 LIMIT 1').get() ?? null;
+}
+
+export function setActiveEvent(id) {
+  const db = getRegistry();
+  db.transaction(() =&gt; {
+    db.prepare('UPDATE local_events SET active = 0, updated_at = CURRENT_TIMESTAMP').run();           // désactive tout
+    db.prepare('UPDATE local_events SET active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);  // active celui-ci
+  })();
+}</code></pre>
+<p>
+  <code>setActiveEvent</code> illustre une <strong>transaction</strong> qui maintient un invariant
+  métier : « au plus un événement actif ». On désactive <em>tous</em> les événements puis on active
+  le ciblé, le tout atomiquement — impossible de se retrouver avec deux actifs ou zéro pendant une
+  fraction de seconde. <code>getActiveEvent</code> renvoie l'actif ou <code>null</code> (le
+  <code>?? null</code> convertit le <code>undefined</code> de <code>.get()</code> en
+  <code>null</code> explicite).
+</p>
+
+<a class="see-also" href="#/core-eventdbschema">→ notion : transactions better-sqlite3 (vue dans core/eventDbSchema)</a>
+
+<table class="api-table">
+  <tr><th>Fonction</th><th>Rôle</th></tr>
+  <tr><td>openRegistry / getRegistry / closeRegistry</td><td>Cycle de vie du singleton (idem Hub).</td></tr>
+  <tr><td>getActiveEvent()</td><td>L'événement actif (servi au kiosque), ou <code>null</code>.</td></tr>
+  <tr><td>listEvents()</td><td>Tous les événements locaux.</td></tr>
+  <tr><td>insertEvent({id, name, origin, status})</td><td>Ajoute un événement local.</td></tr>
+  <tr><td>setActiveEvent(id)</td><td>Rend un événement actif (désactive les autres, transaction).</td></tr>
+  <tr><td>updateEventStatus(id, status)</td><td>Change le statut d'un événement.</td></tr>
+</table>

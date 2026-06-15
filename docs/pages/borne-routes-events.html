@@ -1,0 +1,147 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/routes/events.js</h1>
+
+<p>
+  La gestion des événements côté Borne : création locale, activation, clôture, et deux routes
+  particulières — <code>preflight</code> (vérifications avant ouverture du kiosque) et
+  <code>/event</code> (l'événement actif servi au kiosque public). Le routeur mélange routes admin
+  (protégées) et publiques.
+</p>
+
+<h2>Le pattern d'authentification injectée</h2>
+<pre><code class="js">export function makeEventsRouter(dataDir, cfg) {
+  const router = Router();
+  const auth = cfg.requireAdmin;            // middleware injecté (voir borne/index.js)
+
+  router.get('/events', auth, (req, res) =&gt; { res.json(listEvents()); });   // admin
+  router.get('/event', (req, res, next) =&gt; { /* … */ });                    // PUBLIC (pas de auth)
+  // …</code></pre>
+<p>
+  <code>cfg.requireAdmin</code> est le middleware d'auth « armé » passé par
+  <a href="#/borne-index">index.js</a>. Les routes admin le placent en 2ᵉ argument
+  (<code>router.get('/events', auth, handler)</code>) ; les routes publiques (kiosque) ne l'ont
+  pas. C'est la distinction admin/public, lisible route par route.
+</p>
+
+<h2>Création d'un événement local</h2>
+<pre><code class="js">router.post('/events', auth, (req, res, next) =&gt; {
+  try {
+    const { name, event_date } = req.body;
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({ error: 'Le nom de l\'événement est requis' });
+    }
+    const id = uuidv4();
+    const eventDir = join(dataDir, 'events', id);
+    mkdirSync(join(eventDir, 'videos'), { recursive: true });
+
+    const db = createEventDb(join(eventDir, 'db.sqlite'));
+    db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('event_id', id);
+    db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('name', name.trim());
+    db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('origin', 'local');
+    if (event_date) db.prepare(`INSERT OR IGNORE INTO event_meta ...`).run('event_date', event_date);
+    db.close();
+
+    insertEvent({ id, name: name.trim(), origin: 'local' });
+    const event = listEvents().find(e =&gt; e.id === id);
+    res.status(201).json(event);
+  } catch (err) { next(err); }
+});</code></pre>
+<p>
+  Un événement créé sur la Borne a l'origine <code>'local'</code> (vs <code>'hub'</code> pour un
+  pullé). On crée le dossier + le <code>db.sqlite</code> (via <a href="#/core-eventdbschema">createEventDb</a>,
+  qui seede les questions par défaut), on remplit <code>event_meta</code>, puis on l'enregistre dans
+  le registre local. <code>INSERT OR IGNORE</code> évite une erreur si la clé existe déjà
+  (idempotence). Noter le <code>db.close()</code> <strong>explicite</strong> : ici on ouvre une base
+  hors du cache <a href="#/borne-eventdb">eventDb</a> (juste pour l'initialiser), donc on la ferme
+  manuellement.
+</p>
+
+<h2>Le preflight : tout vérifier avant d'ouvrir le kiosque</h2>
+<pre><code class="js">router.get('/preflight', auth, async (req, res, next) =&gt; {
+  try {
+    const activeEvent = getActiveEvent();
+    const stats = await statfs(dataDir);
+    const free_bytes = stats.bfree * stats.bsize;
+    const disk_ok = free_bytes &gt; LIMITS.DISK_ALERT_BYTES;     // assez d'espace ?
+
+    let event_info = { loaded: false, pulled_at: null };
+    let questions_count = 0;
+    if (activeEvent) {
+      event_info = { loaded: true, pulled_at: activeEvent.pulled_at ?? null };
+      const db = getActiveEventDb(dataDir, activeEvent);
+      questions_count = db.prepare('SELECT COUNT(*) as n FROM questions WHERE enabled=1').get().n;
+    }
+
+    let clock_ok = null;                                       // dérive d'horloge ?
+    const client_time = req.query.client_time;
+    if (client_time) {
+      const clientMs = new Date(client_time).getTime();
+      if (!isNaN(clientMs)) clock_ok = Math.abs(Date.now() - clientMs) &lt; 2 * 60 * 1000;
+    }
+    res.json({ event: event_info, questions_count, disk_ok, clock_ok });
+  } catch (err) { next(err); }
+});</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>statfs</code> — l'espace disque, et la comparaison d'horloge</span>
+  </div>
+  <p>
+    <code>statfs(dataDir)</code> (de <code>node:fs/promises</code>, donc <code>await</code>) renvoie
+    des stats du système de fichiers : <code>bfree</code> (blocs libres) × <code>bsize</code>
+    (taille d'un bloc) = octets libres. On compare au seuil
+    <a href="#/core-constants">LIMITS.DISK_ALERT_BYTES</a> (10 Go) : si la borne n'a pas assez
+    d'espace pour enregistrer des vidéos, <code>disk_ok</code> est faux et le kiosque peut alerter
+    avant l'événement.
+  </p>
+  <p>
+    Le <code>clock_ok</code> compare l'heure du client (l'iPad) à celle du serveur : si l'écart
+    dépasse 2 minutes, l'horloge de l'un des deux dérive (problème pour les horodatages, surtout sur
+    une borne hors-ligne sans NTP). <code>Math.abs(Date.now() - clientMs) &lt; 2*60*1000</code> :
+    <code>Date.now()</code> est l'heure serveur en millisecondes ; <code>isNaN</code> garde contre
+    une date client invalide.
+  </p>
+</div>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Pourquoi un preflight ?</div>
+  <p>
+    Une borne en événement est souvent <strong>hors-ligne et sans surveillance</strong>. Le
+    preflight permet à l'opérateur de vérifier <em>avant</em> l'arrivée des invités que tout est
+    prêt : un événement est chargé, il a des questions actives, le disque a de la place, l'horloge
+    est juste. Mieux vaut détecter un problème à l'installation qu'en plein événement.
+  </p>
+</div>
+
+<h2>La route publique <code>/event</code> (kiosque)</h2>
+<pre><code class="js">router.get('/event', (req, res, next) =&gt; {            // PAS de auth — accès kiosque
+  const activeEvent = getActiveEvent();
+  if (!activeEvent) return res.status(404).json({ error: 'Aucun événement actif' });
+
+  const db = getActiveEventDb(dataDir, activeEvent);
+  const getMeta = (key) =&gt; db.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value ?? null;
+
+  res.json({
+    id: activeEvent.id, name: activeEvent.name, status: activeEvent.status,
+    consent_text: getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT,
+    idle_timeout: parseInt(getMeta('idle_timeout') ?? String(DEFAULTS.IDLE_TIMEOUT_S), 10),
+  });
+});</code></pre>
+<p>
+  C'est ce que le kiosque (l'iPad) interroge pour savoir quel événement afficher : nom, texte de
+  consentement, délai d'inactivité. Les valeurs viennent de <code>event_meta</code>, avec un repli
+  sur les <a href="#/core-constants">DEFAULTS</a> si non définies. <code>getMeta</code> est un petit
+  helper local (closure sur <code>db</code>) qui lit une clé meta, avec optional chaining + nullish
+  pour gérer l'absence.
+</p>
+
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Auth</th><th>Rôle</th></tr>
+  <tr><td>GET /events</td><td>admin</td><td>Liste les événements locaux.</td></tr>
+  <tr><td>POST /events</td><td>admin</td><td>Crée un événement local (origine 'local').</td></tr>
+  <tr><td>PUT /events/:id/activate</td><td>admin</td><td>Rend un événement actif (refusé si push en cours).</td></tr>
+  <tr><td>PUT /events/:id/close</td><td>admin</td><td>Clôture un événement live.</td></tr>
+  <tr><td>GET /preflight</td><td>admin</td><td>Vérifs : événement chargé, questions, disque, horloge.</td></tr>
+  <tr><td>GET /event</td><td><strong>public</strong></td><td>L'événement actif pour le kiosque.</td></tr>
+</table>

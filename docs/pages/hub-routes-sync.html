@@ -1,0 +1,186 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/routes/sync.js — réception du push</h1>
+
+<p>
+  Le côté Hub de la synchronisation : c'est ici que la Borne <strong>pousse</strong> ses données
+  après un événement. Toutes les routes sont protégées par <a href="#/hub-middleware-box">requireBox</a>.
+  C'est la page de référence pour <strong>multer</strong> (réception de fichiers uploadés) et pour
+  le remplacement atomique d'un fichier. Le flux complet côté Borne est dans
+  <a href="#/borne-sync-push">sync/push.js</a> ; ici on voit ce que le Hub reçoit à chaque étape.
+</p>
+
+<h2>Les étapes du push, vues du Hub</h2>
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Rôle</th></tr>
+  <tr><td>GET /assigned</td><td>La Borne demande quels événements lui sont assignés (statut ready/loaded).</td></tr>
+  <tr><td>GET /events/:id/bundle</td><td>Pull : renvoie l'événement + questions + meta. Passe <code>ready→loaded</code>.</td></tr>
+  <tr><td>POST /events/:id/status</td><td>Heartbeat : la Borne signale <code>live</code>/<code>closed</code>.</td></tr>
+  <tr><td>POST /events/:id/manifest</td><td>Push étape 1 : la Borne annonce ses fichiers ; le Hub répond la liste des <code>missing</code>.</td></tr>
+  <tr><td>PUT /events/:id/files/:videoId</td><td>Push étape 2 : upload d'une vidéo, vérif checksum.</td></tr>
+  <tr><td>PUT /events/:id/db</td><td>Push étape 3 : upload du db.sqlite, remplacement atomique.</td></tr>
+  <tr><td>POST /events/:id/finalize</td><td>Push étape 4 : vérifie la complétude, passe <code>pushed</code>, enfile les jobs.</td></tr>
+</table>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">multer — recevoir des fichiers uploadés (multipart)</span>
+  </div>
+  <p>
+    Quand un client envoie un fichier via un formulaire HTTP, le corps est encodé en
+    <code>multipart/form-data</code> — un format que <code>express.json()</code> ne sait pas lire.
+    <strong>multer</strong> est le middleware qui parse ce format, écrit le fichier reçu (ici sur
+    disque) et expose ses métadonnées dans <code>req.file</code>.
+  </p>
+  <pre><code class="js">const uploadVideo = multer({
+  storage: multer.diskStorage({
+    destination(req, file, cb) {                       // OÙ écrire
+      const dir = join(evDir(dataDir, req.params.id), 'videos');
+      mkdirSync(dir, { recursive: true });
+      cb(null, dir);                                   // cb(erreur, valeur)
+    },
+    filename(req, file, cb) {                          // SOUS QUEL NOM
+      const ext = extname(file.originalname).toLowerCase() || '.mp4';
+      cb(null, `${req.params.videoId}${ext}`);
+    },
+  }),
+  limits: { fileSize: maxUploadBytes, files: 1 },      // plafond + un seul fichier
+});</code></pre>
+  <p>
+    On le branche sur une route avec <code>uploadVideo.single('file')</code> : « attends-toi à un
+    fichier dans le champ <code>file</code> ». Après ce middleware, <code>req.file</code> contient
+    <code>{ path, size, originalname, mimetype, … }</code>.
+  </p>
+  <p>
+    Le pattern <code>cb(null, valeur)</code> est le <strong>style callback Node historique</strong> :
+    le premier argument est l'erreur (<code>null</code> si tout va bien), le second la valeur. C'est
+    la convention « error-first callback » qu'on retrouve dans beaucoup d'API Node anciennes.
+  </p>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Analogie</th></tr>
+    <tr><td class="lang">Python/Flask</td><td><code>request.files['file']</code> (Werkzeug parse le multipart)</td></tr>
+    <tr><td class="lang">Go</td><td><code>r.FormFile("file")</code> + <code>multipart.Reader</code></td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      Le <code>limits: { fileSize, files: 1 }</code> est une protection essentielle (§S3/M2) :
+      sans plafond, une Borne malveillante (ou un bug) pourrait saturer le disque du VPS, qui est
+      <em>mutualisé</em> entre tous les clients. Si le fichier dépasse <code>fileSize</code>,
+      multer interrompt et lève une <code>MulterError</code> avec <code>code:
+      'LIMIT_FILE_SIZE'</code> — interceptée par le <a href="#/hub-index">gestionnaire d'erreurs</a>
+      qui renvoie 413. Le plafond par défaut est <code>LIMITS.VIDEO_MAX_BYTES</code>
+      (<a href="#/core-constants">500 Mo</a>), surchargeable dans les tests via
+      <code>opts.maxUploadBytes</code> pour tester le rejet sans envoyer 500 Mo.
+    </p>
+  </div>
+</div>
+
+<h2>L'idempotence du manifest</h2>
+<pre><code class="js">// POST /events/:id/manifest — body: { files: [{video_id, checksum, …}], db: {…} }
+const videosDir = join(evDir(dataDir, event.id), 'videos');
+const missing = [];
+for (const f of files) {
+  const ok = await videoAlreadyReceived(videosDir, f.video_id, f.checksum);
+  if (!ok) missing.push(f.video_id);
+}
+writeFileSync(manifestPath(dataDir, event.id), JSON.stringify({ files, db: dbMeta }));
+res.json({ missing });</code></pre>
+<p>
+  Le Hub compare ce que la Borne annonce à ce qu'il a <strong>déjà reçu</strong> (un fichier
+  présent <em>avec le bon checksum</em> n'est pas « manquant »). Il renvoie la liste
+  <code>missing</code> — la Borne n'enverra que ceux-là. C'est ce qui rend un push
+  <strong>reprenable</strong> : si la connexion coupe au milieu, on relance, le manifest recense
+  ce qui reste, on n'ré-envoie pas les vidéos déjà transférées. Le manifest est aussi persisté en
+  JSON pour que <code>finalize</code> puisse vérifier la complétude plus tard.
+</p>
+<a class="see-also" href="#/core-checksum">→ notion : sha256File (vérification d'intégrité) — vue dans core/checksum.js</a>
+
+<h2>Vérification de checksum à la réception</h2>
+<pre><code class="js">const actual = await sha256File(req.file.path);
+if (expectedChecksum &amp;&amp; actual !== expectedChecksum) {
+  try { unlinkSync(req.file.path); } catch {}          // supprime le fichier corrompu
+  return res.status(422).json({ error: 'Checksum mismatch — fichier corrompu, réessayez' });
+}</code></pre>
+<p>
+  Le Hub recalcule le SHA-256 du fichier reçu et le compare à celui annoncé dans le manifest. S'ils
+  diffèrent → corruption en transit → on supprime le fichier et on renvoie 422 (la Borne réessaiera).
+  Le <code>try { unlinkSync(...) } catch {}</code> est un <strong>nettoyage best-effort</strong> :
+  on tente de supprimer, mais si ça échoue (fichier déjà parti), on ignore — d'où le
+  <code>catch {}</code> vide. Ce motif revient à chaque garde de cette route (événement
+  introuvable, mauvaise borne, mauvais statut → on supprime le fichier que multer a déjà écrit).
+</p>
+
+<h2>Le remplacement atomique du db.sqlite</h2>
+<pre><code class="js">// PUT /events/:id/db
+closeEventDb(event.id);                                // §11.11 : fermer AVANT d'écraser
+
+const dest = join(evDir(dataDir, event.id), 'db.sqlite');
+try { unlinkSync(dest + '-wal'); } catch {}             // nettoie les fichiers WAL/SHM résiduels
+try { unlinkSync(dest + '-shm'); } catch {}
+
+renameSync(req.file.path, dest);                        // remplace atomiquement</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Trois précautions sur le remplacement de la base</div>
+  <ol>
+    <li>
+      <strong>§11.11 — <code>closeEventDb</code> d'abord</strong> : le handle SQLite pointant sur
+      l'ancien <code>db.sqlite</code> doit être fermé avant qu'on écrase le fichier (voir
+      <a href="#/hub-eventstore">eventStore</a>).
+    </li>
+    <li>
+      <strong>Nettoyage WAL/SHM</strong> : on supprime les <span class="path">-wal</span> et
+      <span class="path">-shm</span> de l'<em>ancienne</em> base. Sinon le nouveau
+      <code>db.sqlite</code> serait associé à un WAL résiduel incohérent → corruption. C'est le
+      pendant réception de l'invariant <a href="#/core-eventdbschema">§11.8 (checkpoint WAL)</a>
+      côté Borne.
+    </li>
+    <li>
+      <strong><code>renameSync</code> est atomique</strong> : sur un même système de fichiers,
+      renommer remplace le fichier de destination d'un seul coup. À aucun instant le
+      <code>db.sqlite</code> n'existe « à moitié écrit ». C'est pourquoi multer a écrit le fichier
+      reçu sous un nom temporaire (<code>db.sqlite.incoming</code>) qu'on renomme ensuite — plutôt
+      que d'écrire directement sur <code>db.sqlite</code>.
+    </li>
+  </ol>
+</div>
+
+<h2>finalize : recalcul des <code>missing</code> (ne jamais faire confiance au local)</h2>
+<pre><code class="js">// POST /events/:id/finalize
+const stillMissing = [];
+for (const f of manifest.files) {
+  const ok = await videoAlreadyReceived(videosDir, f.video_id, f.checksum);
+  if (!ok) stillMissing.push(f.video_id);
+}
+if (stillMissing.length &gt; 0) return res.status(409).json({ error: 'Fichiers manquants', missing: stillMissing });
+// … vérifie db.sqlite présent, idempotence si déjà pushed …
+// puis enfile les jobs (probe + thumbnail par vidéo, + archive) et passe en 'pushed'</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ §11.12 : le Hub revérifie tout, il ne croit pas la Borne sur parole</div>
+  <p>
+    À la finalisation, le Hub <strong>recalcule</strong> lui-même quels fichiers sont présents et
+    corrects, en relisant le disque et en recomparant les checksums — il ne se fie pas à un « tout
+    est bon » envoyé par la Borne. Si quoi que ce soit manque, il refuse (409) et la Borne reprendra.
+    C'est la garantie qu'un événement passé <code>pushed</code> a réellement toutes ses données sur
+    le Hub. Ensuite seulement il enfile les jobs de traitement (voir <a href="#/hub-worker">worker</a>)
+    et bascule le statut. L'opération est <strong>idempotente</strong> : si l'événement est déjà
+    <code>pushed</code>, on ne ré-enfile pas les jobs (évite les doublons).
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>for…of</code> + <code>await</code> = traitement séquentiel</span>
+  </div>
+  <p>
+    Les boucles <code>for (const f of files) { … await … }</code> traitent les fichiers
+    <strong>un par un</strong> : chaque <code>await</code> est attendu avant l'itération suivante.
+    C'est voulu ici (vérifier les checksums sans saturer le disque). Si on voulait du parallélisme,
+    on utiliserait <code>await Promise.all(files.map(async f =&gt; …))</code> — mais la version
+    séquentielle est plus prudente pour des I/O disque intensives.
+  </p>
+</div>

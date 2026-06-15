@@ -1,0 +1,129 @@
+<div class="page-kicker">5 — Le code front (web)</div>
+<h1>borne/web client.js — XHR</h1>
+
+<p>
+  Le client API du front Borne. Sa partie <code>apiFetch</code> et l'objet <code>api</code> sont
+  jumeaux de ceux du <a href="#/web-client-hub">Hub</a>. La nouveauté — et la raison d'être de cette
+  page — est l'<strong>upload vidéo via <code>XMLHttpRequest</code></strong>, qui permet de suivre la
+  progression (ce que <code>fetch</code> ne sait pas faire).
+</p>
+
+<h2>Pourquoi XHR et pas fetch pour l'upload ?</h2>
+<pre><code class="js">// Upload vidéo invité via XHR (seul XHR expose upload.onprogress — fetch ne le fait pas)
+export function uploadVideo({ sessionId, questionId, questionText, blob, mimeType, onProgress }) {
+  return new Promise((resolve, reject) =&gt; {
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const file = new File([blob], `recording.${ext}`, { type: mimeType });
+    const form = new FormData();
+    form.append('video', file);
+    form.append('session_id', sessionId);
+    if (questionId != null) form.append('question_id', String(questionId));
+    form.append('question_text', questionText);
+    form.append('recorded_at', new Date().toISOString());
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/videos');
+    xhr.setRequestHeader('Accept', 'application/json');
+    // Pas de token sur l'upload invité (route publique)
+
+    if (onProgress) {
+      xhr.upload.onprogress = (e) =&gt; {
+        if (e.lengthComputable) onProgress(e.loaded / e.total);    // 0 → 1
+      };
+    }
+    xhr.onload = () =&gt; {
+      if (xhr.status &gt;= 200 &amp;&amp; xhr.status &lt; 300) resolve(JSON.parse(xhr.responseText));
+      else {
+        const body = JSON.parse(xhr.responseText || '{}');
+        reject(Object.assign(new Error(body.error ?? `HTTP ${xhr.status}`), { status: xhr.status }));
+      }
+    };
+    xhr.onerror = () =&gt; reject(new Error('Erreur réseau'));
+    xhr.send(form);
+  });
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>XMLHttpRequest</code> et <code>upload.onprogress</code></span>
+  </div>
+  <p>
+    <code>XMLHttpRequest</code> (XHR) est l'ancienne API de requêtes du navigateur, antérieure à
+    <code>fetch</code>. On l'utilise <strong>spécifiquement</strong> ici pour une raison :
+    <code>xhr.upload.onprogress</code> émet des événements pendant l'<em>envoi</em> du corps, avec
+    <code>e.loaded</code> / <code>e.total</code> (octets envoyés / total). C'est ce qui permet
+    d'afficher une barre de progression d'upload. <code>fetch</code>, lui, <strong>n'expose pas la
+    progression d'upload</strong> — c'est sa limitation majeure et la seule raison de garder XHR.
+  </p>
+  <p>
+    XHR fonctionne par <strong>événements</strong> (<code>onload</code>, <code>onerror</code>,
+    <code>upload.onprogress</code>), pas par Promise. On l'<strong>enveloppe donc dans une
+    Promise</strong> manuelle (même technique que <a href="#/core-checksum">checksum.js</a>) :
+    <code>resolve</code> sur <code>onload</code> succès, <code>reject</code> sur erreur. Résultat :
+    l'appelant peut <code>await uploadVideo({...})</code> tout en passant un callback
+    <code>onProgress</code> pour la barre.
+  </p>
+  <table class="compare">
+    <tr><th></th><th>fetch</th><th>XMLHttpRequest</th></tr>
+    <tr><td class="lang">Style</td><td>Promise</td><td>événements (à promisifier)</td></tr>
+    <tr><td class="lang">Progress upload</td><td>❌ non</td><td>✅ <code>upload.onprogress</code></td></tr>
+    <tr><td class="lang">Verbosité</td><td>concis</td><td>verbeux</td></tr>
+  </table>
+  <div class="js-deep">
+    <p>
+      C'est l'invariant qui explique ce choix dans <span class="path">PROJET.md</span> : l'upload
+      kiosque <strong>doit</strong> montrer une progression (une vidéo de plusieurs dizaines de Mo
+      sur le Wi-Fi d'une salle peut prendre du temps — l'invité a besoin d'un retour visuel). Donc
+      XHR ici, <code>fetch</code> partout ailleurs. Le code combine aussi cet upload avec une
+      politique de <strong>retry/backoff</strong> (5 essais, <code>min(2000·2^(n-1), 30000)</code>)
+      au niveau de la couche qui l'appelle — la même formule que
+      <a href="#/borne-sync-hubclient">hubClient</a>, pour un comportement cohérent sur réseau
+      instable.
+    </p>
+  </div>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>File</code> et <code>Blob</code> côté navigateur</span>
+  </div>
+  <p>
+    La vidéo enregistrée est un <code>Blob</code> (données binaires, produit par
+    <a href="#/web-mediarecorder">MediaRecorder</a>). <code>new File([blob], 'recording.mp4', {
+    type: mimeType })</code> l'emballe en <code>File</code> (un Blob avec un nom et un type) —
+    nécessaire pour que <code>FormData</code> l'envoie comme un fichier nommé. <code>FormData</code>
+    construit le corps multipart, exactement comme côté <a href="#/borne-sync-push">Node</a> mais
+    avec les objets natifs du navigateur. Le champ s'appelle <code>video</code> — c'est ce que
+    <a href="#/borne-routes-videos">multer côté serveur</a> attend (<code>upload.single('video')</code>).
+  </p>
+</div>
+
+<h2>Le reste : jumeau du Hub</h2>
+<p>
+  <code>apiFetch</code>, l'objet <code>api</code>, et les fonctions d'URL avec <code>?token=</code>
+  fonctionnent comme côté Hub (avec la clé <code>admin_token</code> dans <code>localStorage</code>).
+  Une particularité : certaines routes invité (créer une session, uploader) sont
+  <strong>publiques</strong> — pas de jeton. Le client distingue les appels admin (avec jeton) des
+  appels kiosque (sans).
+</p>
+<a class="see-also" href="#/web-client-hub">→ détail : apiFetch, localStorage, ?token= (vu dans hub/web client.js)</a>
+
+<h2>L'URL vidéo invité (capability)</h2>
+<pre><code class="js">export function guestVideoUrl(sessionId, questionId) {
+  return `/api/sessions/${sessionId}/videos/${questionId}/file`;   // pas de token : capability
+}</code></pre>
+<p>
+  Pour que l'invité revoie sa vidéo, l'URL ne porte <strong>pas</strong> de jeton : l'accès est
+  protégé par l'UUID de session lui-même (le <a href="#/borne-routes-sessions">capability token</a>).
+  Connaître l'URL = avoir le droit. Cohérent avec la route publique correspondante côté serveur.
+</p>
+
+<table class="api-table">
+  <tr><th>Élément</th><th>Détail</th></tr>
+  <tr><td>uploadVideo({...})</td><td>Upload XHR avec <code>onProgress</code>. Retourne une Promise. Champ <code>video</code> + métadonnées de session.</td></tr>
+  <tr><td>apiFetch / api.*</td><td>Comme le Hub (clé <code>admin_token</code>). Routes admin + publiques.</td></tr>
+  <tr><td>videoStreamUrl / csvExportUrl / …</td><td>URLs avec <code>?token=</code> pour l'admin (§11.2).</td></tr>
+  <tr><td>guestVideoUrl(sid, qid)</td><td>URL vidéo invité sans jeton (capability via UUID session).</td></tr>
+</table>

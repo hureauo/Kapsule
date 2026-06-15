@@ -1,0 +1,451 @@
+/* ============================================================================
+   Kapsule docs — thème sombre sobre, sans dépendance externe.
+   Palette inspirée des éditeurs de code (fond ardoise, accents froids).
+   ============================================================================ */
+
+:root {
+  --bg:        #0d1117;   /* fond principal */
+  --bg-panel:  #161b22;   /* sidebar, encadrés */
+  --bg-code:   #1c2128;   /* blocs de code */
+  --border:    #30363d;
+  --text:      #c9d1d9;   /* texte principal */
+  --text-dim:  #8b949e;   /* texte secondaire */
+  --text-bright:#f0f6fc;
+  --accent:    #58a6ff;   /* liens, titres de section */
+  --accent-2:  #79c0ff;
+  --js:        #f0db4f;   /* jaune JavaScript pour les encadrés cours */
+  --js-bg:     #1f1d10;
+  --green:     #7ee787;
+  --orange:    #ffa657;
+  --red:       #ff7b72;
+  --purple:    #d2a8ff;
+  --sidebar-w: 300px;
+  --content-max: 920px;
+  --mono: "SF Mono", "JetBrains Mono", "Fira Code", Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+}
+
+/* ── Sidebar ───────────────────────────────────────────────────────────── */
+
+#sidebar {
+  position: fixed;
+  top: 0; left: 0; bottom: 0;
+  width: var(--sidebar-w);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 20px 18px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+.brand-logo {
+  font-size: 28px;
+  color: var(--accent);
+  line-height: 1;
+}
+.brand-name { font-weight: 700; font-size: 18px; color: var(--text-bright); }
+.brand-sub  { font-size: 12px; color: var(--text-dim); }
+
+/* bascule globale Synthétique / Approfondi pour les encadrés JS */
+.mode-switch {
+  padding: 0 16px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mode-label { font-size: 12px; color: var(--text-dim); }
+.mode-toggle {
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex: 1;
+}
+.mode-toggle button {
+  flex: 1;
+  padding: 5px 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-family: var(--sans);
+  cursor: pointer;
+}
+.mode-toggle button.active {
+  background: var(--js);
+  color: #1a1a1a;
+  font-weight: 700;
+}
+
+.search-box { padding: 0 16px 14px; position: relative; }
+#search {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-family: var(--sans);
+}
+#search:focus { outline: none; border-color: var(--accent); }
+
+#search-results {
+  position: absolute;
+  left: 16px; right: 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 20;
+  display: none;
+}
+#search-results.active { display: block; }
+#search-results a {
+  display: block;
+  padding: 8px 12px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+#search-results a:last-child { border-bottom: none; }
+#search-results a:hover, #search-results a.sel { background: var(--bg-panel); color: var(--accent); }
+#search-results .sr-cat { color: var(--text-dim); font-size: 11px; }
+
+/* arbre de navigation */
+#nav-tree { flex: 1; padding: 0 8px; }
+.nav-group { margin-bottom: 6px; }
+.nav-group-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  border-radius: 6px;
+}
+.nav-group-title:hover { color: var(--text); }
+.nav-group-title .chevron { transition: transform 0.15s; font-size: 10px; }
+.nav-group.collapsed .chevron { transform: rotate(-90deg); }
+.nav-group.collapsed .nav-items { display: none; }
+
+.nav-items a {
+  display: block;
+  padding: 6px 12px 6px 26px;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 13.5px;
+  border-radius: 6px;
+  border-left: 2px solid transparent;
+}
+.nav-items a:hover { color: var(--text); background: var(--bg); }
+.nav-items a.active {
+  color: var(--accent);
+  background: var(--bg);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+
+.sidebar-footer {
+  padding: 14px 20px 0;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ── Contenu principal ─────────────────────────────────────────────────── */
+
+#content {
+  margin-left: var(--sidebar-w);
+  padding: 48px 56px 120px;
+  max-width: calc(var(--sidebar-w) + var(--content-max));
+}
+
+.loader { color: var(--text-dim); font-style: italic; }
+
+.page h1 {
+  font-size: 30px;
+  color: var(--text-bright);
+  margin: 0 0 6px;
+  font-weight: 700;
+}
+.page .page-kicker {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 18px;
+}
+.page h2 {
+  font-size: 22px;
+  color: var(--text-bright);
+  margin: 38px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.page h3 {
+  font-size: 17px;
+  color: var(--accent-2);
+  margin: 26px 0 10px;
+}
+.page p { margin: 12px 0; }
+.page ul, .page ol { margin: 12px 0; padding-left: 26px; }
+.page li { margin: 6px 0; }
+.page a { color: var(--accent); text-decoration: none; }
+.page a:hover { text-decoration: underline; }
+.page strong { color: var(--text-bright); }
+
+/* chemins de fichiers inline */
+.path {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--bg-code);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--orange);
+}
+
+/* code inline */
+.page code:not(pre code) {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--bg-code);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent-2);
+}
+
+/* blocs de code */
+pre {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  margin: 16px 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+pre code { font-family: var(--mono); color: var(--text); }
+pre.with-caption { margin-bottom: 4px; }
+.code-caption {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: -10px 0 18px;
+  font-family: var(--mono);
+}
+
+/* annotations dans le code (commentaires explicatifs) */
+.anno {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* coloration syntaxique (appliquée par highlight.js) */
+.tok-kw   { color: var(--red); }       /* mots-clés : const, function, return… */
+.tok-str  { color: var(--green); }     /* chaînes */
+.tok-num  { color: var(--accent-2); }  /* nombres */
+.tok-com  { color: var(--text-dim); font-style: italic; } /* commentaires */
+.tok-fn   { color: var(--purple); }    /* noms de fonction */
+.tok-builtin { color: var(--orange); } /* require, console, etc. */
+
+/* ── Encadré "Notion JS" ───────────────────────────────────────────────── */
+
+.js-note {
+  background: var(--js-bg);
+  border: 1px solid #3a3413;
+  border-left: 4px solid var(--js);
+  border-radius: 8px;
+  padding: 18px 20px;
+  margin: 24px 0;
+}
+.js-note-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.js-badge {
+  background: var(--js);
+  color: #1a1a1a;
+  font-weight: 800;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+.js-note-title { font-weight: 700; color: var(--text-bright); font-size: 16px; }
+.js-note h4 { margin: 14px 0 6px; color: var(--js); font-size: 14px; }
+.js-note p:first-of-type { margin-top: 4px; }
+
+/* partie "Approfondir" d'un encadré JS : visible seulement en mode deep.
+   Le body porte la classe .mode-deep ou .mode-synth (posée par app.js). */
+.js-deep {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed #3a3413;
+}
+.js-deep::before {
+  content: "▼ Approfondir";
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--js);
+  margin-bottom: 8px;
+  letter-spacing: 0.03em;
+}
+body.mode-synth .js-deep { display: none; }
+
+/* tableau comparatif (Python/Go vs JS) */
+.compare {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 14px;
+}
+.compare th, .compare td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.compare th { background: var(--bg-code); color: var(--text-bright); font-weight: 600; }
+.compare td { font-family: var(--mono); font-size: 13px; }
+.compare td.lang { font-family: var(--sans); color: var(--text-dim); width: 90px; }
+
+/* ── Callouts (note / attention / piège) ───────────────────────────────── */
+
+.callout {
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin: 18px 0;
+  border-left: 4px solid;
+}
+.callout-title { font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+.callout.info     { background: #0d2436; border-color: var(--accent); }
+.callout.warn     { background: #2d2410; border-color: var(--orange); }
+.callout.danger   { background: #2d1416; border-color: var(--red); }
+.callout.tip      { background: #0f2818; border-color: var(--green); }
+.callout p:last-child { margin-bottom: 0; }
+
+/* lien "voir notion ailleurs" */
+.see-also {
+  display: inline-block;
+  font-size: 13px;
+  color: var(--js);
+  background: var(--js-bg);
+  border: 1px dashed #3a3413;
+  border-radius: 5px;
+  padding: 2px 9px;
+  margin: 6px 0;
+  text-decoration: none;
+}
+.see-also:hover { background: #2a2510; text-decoration: none; }
+
+/* navigation bas de page */
+.page-nav {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 56px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  gap: 16px;
+}
+.page-nav a {
+  flex: 1;
+  padding: 14px 18px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-decoration: none;
+  color: var(--text);
+}
+.page-nav a:hover { border-color: var(--accent); }
+.page-nav a.next { text-align: right; }
+.page-nav .pn-label { font-size: 12px; color: var(--text-dim); }
+.page-nav .pn-title { color: var(--accent); font-weight: 600; }
+
+/* table des matières internes (signature / exports) */
+.api-table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+.api-table th, .api-table td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; vertical-align: top; }
+.api-table th { background: var(--bg-code); color: var(--text-bright); }
+.api-table td:first-child { font-family: var(--mono); font-size: 13px; color: var(--accent-2); white-space: nowrap; }
+
+/* badge de statut ROADMAP */
+.status-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  vertical-align: middle;
+}
+.status-done    { background: #14301c; color: var(--green); }
+.status-todo    { background: #2d2410; color: var(--orange); }
+.status-human   { background: #1a2940; color: var(--accent); }
+
+/* ── Bouton menu mobile ────────────────────────────────────────────────── */
+
+#menu-toggle {
+  display: none;
+  position: fixed;
+  top: 14px; right: 14px;
+  z-index: 50;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 20px;
+  width: 42px; height: 42px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  #sidebar {
+    transform: translateX(-100%);
+    transition: transform 0.2s;
+    z-index: 40;
+    width: 280px;
+  }
+  #sidebar.open { transform: translateX(0); }
+  #content { margin-left: 0; padding: 70px 22px 80px; }
+  #menu-toggle { display: block; }
+}
+
+/* scrollbar discrète */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #444c56; }

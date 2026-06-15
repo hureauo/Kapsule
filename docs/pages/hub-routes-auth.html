@@ -1,0 +1,172 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/routes/auth.js</h1>
+
+<p>
+  Les deux endpoints d'authentification du Hub : <code>POST /api/auth/login</code> et
+  <code>POST /api/auth/register</code>. C'est la page de référence pour <strong>async/await</strong>,
+  le pattern <strong>Router</strong>, le hachage de mot de passe avec <strong>argon2</strong>, et
+  la limitation de débit avec <strong>express-rate-limit</strong>.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>express.Router()</code> — regrouper des routes</span>
+  </div>
+  <p>
+    Un <code>Router</code> est un mini-app Express : un groupe de routes qu'on monte ensuite sous
+    un préfixe (<code>app.use('/api/auth', makeAuthRouter())</code>). C'est l'équivalent d'un
+    Blueprint Flask. Le projet enveloppe chaque routeur dans une <strong>factory</strong>
+    <code>makeXxxRouter(...)</code> pour pouvoir lui injecter <code>dataDir</code> ou de la config.
+  </p>
+  <pre><code class="js">export function makeAuthRouter() {
+  const router = Router();
+  router.post('/login', loginLimiter, async (req, res, next) => { /* … */ });
+  router.post('/register', async (req, res, next) => { /* … */ });
+  return router;
+}</code></pre>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">async / await et le modèle de concurrence de JS</span>
+  </div>
+  <p>
+    JavaScript est <strong>mono-thread</strong> avec une <strong>boucle d'événements</strong> : un
+    seul fil exécute le code, et les opérations longues (I/O réseau, fichiers, crypto) sont
+    déléguées en arrière-plan. Une fonction <code>async</code> peut <code>await</code> une
+    <strong>Promise</strong> : elle « met en pause » à ce point et rend la main à la boucle, qui
+    traite d'autres requêtes ; quand la Promise se résout, l'exécution reprend après le
+    <code>await</code>.
+  </p>
+
+  <table class="compare">
+    <tr><th>Modèle</th><th>Mécanisme</th></tr>
+    <tr><td class="lang">JS</td><td>1 thread + event loop, <code>await</code> sur Promise</td></tr>
+    <tr><td class="lang">Python</td><td><code>asyncio</code> : <code>async def</code> / <code>await</code> (très proche)</td></tr>
+    <tr><td class="lang">Go</td><td>goroutines + channels (plusieurs threads, modèle différent)</td></tr>
+  </table>
+
+  <p>Exemple dans le login :</p>
+  <pre><code class="js">const valid = await argon2.verify(user.password_hash, password);
+//            ↑ pendant que argon2 calcule (coûteux), la boucle traite d'autres requêtes</code></pre>
+
+  <div class="js-deep">
+    <p>
+      <strong>Différence clé avec Go :</strong> en JS il n'y a pas de parallélisme par défaut — un
+      seul cœur exécute ton code. <code>await</code> ne crée pas de thread ; il <em>libère</em> le
+      thread unique pendant l'attente. C'est de la <em>concurrence</em> (entrelacement), pas du
+      <em>parallélisme</em> (simultanéité). Pour un serveur I/O-bound (ce qu'est un serveur web),
+      c'est suffisant et efficace : pendant qu'une requête attend argon2 ou le disque, les autres
+      avancent. Pour du CPU-bound lourd (transcodage vidéo), on sort du processus principal — c'est
+      pourquoi le <a href="#/hub-worker">worker</a> est séparé et appelle ffmpeg en sous-processus.
+    </p>
+    <p>
+      Le modèle est quasi identique à l'<code>asyncio</code> de Python : si tu as déjà écrit
+      <code>async def</code> / <code>await</code> en Python, tu sais déjà lire le code async de
+      Kapsule. La Promise JS ≈ le coroutine/Future Python.
+    </p>
+  </div>
+</div>
+
+<h2>Le handler de login</h2>
+<pre><code class="js">router.post('/login', loginLimiter, async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'email et password requis' });
+
+    const db = getDb();
+    const user = getUserByEmail(db, email);
+    if (!user) return res.status(401).json({ error: 'Identifiants invalides' });
+
+    const valid = await argon2.verify(user.password_hash, password);
+    if (!valid) return res.status(401).json({ error: 'Identifiants invalides' });
+
+    const token = jwt.sign({ sub: user.id, role: user.role }, config.jwtSecret, { expiresIn: '24h' });
+    res.json({ token });
+  } catch (err) {
+    next(err);
+  }
+});</code></pre>
+
+<p>
+  Le squelette <code>try { … } catch (err) { next(err); }</code> est le pattern obligatoire des
+  handlers async (voir <a href="#/hub-index">index.js</a>) : toute exception est routée vers le
+  gestionnaire d'erreurs.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">argon2 — hacher les mots de passe</span>
+  </div>
+  <p>
+    On ne stocke jamais un mot de passe en clair. <code>argon2</code> est une fonction de hachage
+    <em>lente et salée</em>, conçue pour résister au brute-force (lauréate de la Password Hashing
+    Competition). Deux opérations :
+  </p>
+  <ul>
+    <li><code>await argon2.hash(password, { type: argon2.argon2id })</code> → produit un hash à
+        stocker (le sel est inclus dans la chaîne de sortie).</li>
+    <li><code>await argon2.verify(hash, password)</code> → compare un mot de passe au hash stocké,
+        renvoie un booléen.</li>
+  </ul>
+  <p>
+    Les deux sont <code>async</code> car le calcul est volontairement coûteux (~100 ms) — d'où le
+    <code>await</code>. C'est l'équivalent de <code>bcrypt</code>/<code>argon2-cffi</code> en
+    Python. Noter qu'on renvoie le <strong>même</strong> message « Identifiants invalides » que
+    l'email soit inconnu ou le mot de passe faux : on ne révèle pas quel champ est en cause.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">express-rate-limit — limiter les tentatives</span>
+  </div>
+  <p>
+    <code>loginLimiter</code> est un middleware de limitation de débit, placé <em>avant</em> le
+    handler de login :
+  </p>
+  <pre><code class="js">const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,   // fenêtre de 15 min
+  max: 10,                     // 10 tentatives max par IP sur la fenêtre
+  message: { error: 'Trop de tentatives, réessayez dans 15 minutes.' },
+});
+router.post('/login', loginLimiter, async (req, res, next) => { … });</code></pre>
+  <p>
+    Au-delà de 10 tentatives en 15 minutes depuis une même IP, le middleware répond
+    <code>429 Too Many Requests</code> sans même atteindre le handler. C'est une défense contre le
+    brute-force des mots de passe. Comme c'est un middleware, il s'insère naturellement dans la
+    chaîne — l'ordre (limiter d'abord, handler ensuite) est ce qui le rend efficace.
+  </p>
+</div>
+
+<h2>Le handler de register</h2>
+<p>Même structure, avec deux gardes supplémentaires :</p>
+<pre><code class="js">if (!config.allowRegister) {
+  return res.status(403).json({ error: 'Inscription désactivée. Utilisez npm run create-admin.' });
+}
+// … validations …
+const password_hash = await argon2.hash(password, { type: argon2.argon2id });
+const result = insertUser(db, { email, password_hash, name: name ?? null, role: 'client' });
+const token = jwt.sign({ sub: result.lastInsertRowid, role: 'client' }, config.jwtSecret, { expiresIn: '24h' });
+res.status(201).json({ token });</code></pre>
+<ul>
+  <li>
+    L'inscription publique n'est ouverte que si <code>config.allowRegister</code> est vrai (sinon
+    403). Par défaut elle est <strong>fermée</strong> : on crée le premier admin via le script
+    <a href="#/hub-create-admin">create-admin</a>, pas via l'API.
+  </li>
+  <li>
+    Un nouvel inscrit a toujours le rôle <code>'client'</code> (jamais admin). On récupère son id
+    via <code>result.lastInsertRowid</code> pour le mettre dans le jeton.
+  </li>
+</ul>
+
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Codes</th><th>Notes</th></tr>
+  <tr><td>POST /login</td><td>200 / 400 / 401 / 429</td><td>Renvoie <code>{ token }</code>. Limité à 10/15 min.</td></tr>
+  <tr><td>POST /register</td><td>201 / 400 / 403 / 409</td><td>403 si <code>ALLOW_REGISTER≠true</code> ; 409 si email déjà pris.</td></tr>
+</table>

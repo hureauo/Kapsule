@@ -1,0 +1,86 @@
+<div class="page-kicker">Démarrer</div>
+<h1>Comment lire cette doc</h1>
+
+<h2>Le code couleur</h2>
+<p>Les blocs de code sont colorés ainsi :</p>
+<pre><code class="js">// ceci est un commentaire (gris italique)
+const port = 3001;                  // const/let = mot-clé (rouge), 3001 = nombre (bleu)
+const message = "bonjour";          // chaîne (vert)
+function maFonction(x) {            // nom de fonction (violet)
+  console.log(x);                   // builtin connu (orange)
+  return x * 2;
+}</code></pre>
+
+<p>
+  Souvent j'ajoute des <span class="anno">annotations en gris</span> directement dans les
+  exemples pour pointer la ligne qui compte. Le code reproduit est <strong>extrait du vrai
+  code Kapsule</strong>, parfois raccourci (signalé par <code>// …</code>).
+</p>
+
+<h2>Les encadrés "Notion JS"</h2>
+<p>
+  Quand une notion JavaScript apparaît pour la première fois, un encadré jaune l'explique.
+  Exemple :
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Exemple d'encadré</span>
+  </div>
+  <p>La partie <strong>synthétique</strong> est toujours visible : définition, analogie, piège.</p>
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent</th></tr>
+    <tr><td class="lang">Python</td><td>une analogie Python ici</td></tr>
+    <tr><td class="lang">Go</td><td>une analogie Go ici</td></tr>
+  </table>
+  <div class="js-deep">
+    <p>
+      La partie <strong>Approfondir</strong> (ce paragraphe) n'apparaît qu'en mode
+      « Approfondi ». Elle détaille la mécanique sous le capot quand c'est utile.
+    </p>
+  </div>
+</div>
+
+<div class="callout tip">
+  <div class="callout-title">💡 Choisis ton niveau dans la barre de gauche</div>
+  <p>
+    Le sélecteur <strong>« Cours JS : Synthétique / Approfondi »</strong> en haut de la barre
+    latérale montre ou masque <em>toutes</em> les parties « Approfondir » d'un coup. En mode
+    Synthétique (par défaut), tu n'as que l'essentiel. Ton choix est mémorisé.
+  </p>
+</div>
+
+<p>
+  Quand une notion déjà expliquée réapparaît dans un autre fichier, tu verras un lien discret
+  vers sa première explication, comme ceci :
+</p>
+<a class="see-also" href="#/core-eventdbschema">→ notion JS : better-sqlite3 (vue dans core/eventDbSchema.js)</a>
+
+<h2>Les callouts</h2>
+<div class="callout info"><div class="callout-title">ℹ Info</div><p>Un complément utile mais non critique.</p></div>
+<div class="callout warn"><div class="callout-title">⚠ Attention</div><p>Un point qui mérite vigilance.</p></div>
+<div class="callout danger"><div class="callout-title">⛔ Piège / invariant</div><p>Quelque chose qui casse si on l'ignore — souvent un invariant de <span class="path">PROJET.md §11</span>.</p></div>
+
+<h2>Les badges de statut</h2>
+<p>
+  Certaines fonctionnalités ne sont pas encore implémentées (suivi dans
+  <span class="path">ROADMAP.md</span>). Je les signale :
+</p>
+<ul>
+  <li><span class="status-badge status-done">implémenté</span> présent et testé dans le code</li>
+  <li><span class="status-badge status-todo">à venir</span> prévu mais pas encore codé</li>
+  <li><span class="status-badge status-human">vérif. humaine</span> nécessite un vrai appareil (iPad/Raspberry) — non testable automatiquement</li>
+</ul>
+
+<h2>Organisation</h2>
+<p>La doc suit l'ordre de lecture naturel du code :</p>
+<ol>
+  <li><strong>Architecture</strong> — le squelette : monorepo, modules, Docker, démarrage.</li>
+  <li><strong>Package core</strong> — le code partagé entre Hub et Borne (à lire en premier, tout en dépend).</li>
+  <li><strong>Serveur Hub</strong> — le VPS : config, bases, middleware, routes, worker.</li>
+  <li><strong>Serveur Borne</strong> — le Raspberry : même structure, plus la synchronisation.</li>
+  <li><strong>Front web</strong> — le code navigateur (clients API, enregistrement vidéo).</li>
+  <li><strong>Tests</strong> — comment le projet se teste sans Docker.</li>
+  <li><strong>Transversal</strong> — flux complets, invariants, décisions, index des notions JS.</li>
+</ol>

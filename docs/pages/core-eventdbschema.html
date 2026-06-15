@@ -1,0 +1,281 @@
+<div class="page-kicker">2 — Le package partagé</div>
+<h1>core/eventDbSchema.js</h1>
+
+<p>
+  Ce fichier définit le <strong>schéma de la base d'un événement</strong> (le
+  <code>db.sqlite</code> qu'on trouve dans <span class="path">events/&lt;id&gt;/</span>) et
+  l'expose via une seule fonction : <code>createEventDb(filePath)</code>. Hub et Borne l'appellent
+  tous les deux — c'est ce qui garantit que les deux côtés produisent des bases
+  <strong>structurellement identiques</strong>, condition pour que le push transfère un fichier
+  directement réutilisable.
+</p>
+
+<p>
+  C'est aussi la page où l'on explique <strong>better-sqlite3</strong>, la bibliothèque d'accès à
+  SQLite utilisée dans <em>tout</em> le projet. Prends le temps sur cet encadré : il débloque la
+  lecture de quasiment tous les autres fichiers serveur.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">better-sqlite3 — SQLite synchrone</span>
+  </div>
+  <p>
+    <code>better-sqlite3</code> est un binding Node vers SQLite. Sa particularité :
+    <strong>son API est synchrone</strong>. <code>db.prepare('…').get()</code> renvoie la ligne
+    <em>immédiatement</em>, sans <code>await</code>, sans callback. C'est inhabituel en Node (où
+    presque tout est asynchrone) et c'est <em>voulu</em>.
+  </p>
+
+  <h4>L'API en 5 méthodes</h4>
+  <ul>
+    <li><code>new Database(path)</code> — ouvre (ou crée) le fichier <span class="path">.sqlite</span>.</li>
+    <li><code>db.pragma('…')</code> — exécute un PRAGMA SQLite (réglage de la base).</li>
+    <li><code>db.exec('…')</code> — exécute du SQL brut (plusieurs instructions, sans paramètres ni résultat). Idéal pour les <code>CREATE TABLE</code>.</li>
+    <li><code>db.prepare('… ?')</code> — <strong>prépare</strong> une requête paramétrée et renvoie un <em>statement</em> réutilisable. On l'exécute ensuite avec :
+      <ul>
+        <li><code>.run(args)</code> — pour INSERT/UPDATE/DELETE → renvoie <code>{ changes, lastInsertRowid }</code>.</li>
+        <li><code>.get(args)</code> — pour un SELECT d'<strong>une</strong> ligne → renvoie l'objet ligne (ou <code>undefined</code>).</li>
+        <li><code>.all(args)</code> — pour un SELECT de <strong>plusieurs</strong> lignes → renvoie un tableau d'objets.</li>
+      </ul>
+    </li>
+    <li><code>db.transaction(fn)</code> — emballe une fonction dans une transaction atomique (voir plus bas).</li>
+  </ul>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent mental</th></tr>
+    <tr><td class="lang">Python</td><td>le module <code>sqlite3</code> de la stdlib (synchrone aussi : <code>cur.execute(...).fetchone()</code>)</td></tr>
+    <tr><td class="lang">Go</td><td><code>database/sql</code> avec un driver SQLite, mais <em>sans</em> le <code>(rows, err)</code> partout</td></tr>
+  </table>
+
+  <h4>Le piège : les paramètres se passent avec <code>?</code></h4>
+  <p>
+    On n'interpole <strong>jamais</strong> une valeur dans la chaîne SQL (risque d'injection). On
+    met des <code>?</code> et on passe les valeurs à <code>.run()</code>/<code>.get()</code> :
+  </p>
+  <pre><code class="js">// BIEN — paramètre lié
+db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+// MAL  — injection SQL possible
+db.prepare(`SELECT * FROM users WHERE email = '${email}'`).get();</code></pre>
+
+  <div class="js-deep">
+    <p>
+      <strong>Pourquoi une API synchrone est-elle acceptable en Node ?</strong> Node est
+      mono-thread avec une boucle d'événements : tout appel <em>bloquant</em> gèle le serveur le
+      temps de l'opération. C'est pour ça que les I/O réseau/fichiers sont normalement async. Mais
+      SQLite via better-sqlite3 lit un fichier <strong>local</strong>, en mémoire ou sur disque
+      rapide : une requête typique prend quelques <em>microsecondes</em>. Le « blocage » est si
+      court qu'il est inférieur à l'overhead d'une bascule asynchrone. L'auteur de la lib a
+      mesuré que le synchrone est en pratique <em>plus rapide</em> que les wrappers async, tout en
+      simplifiant énormément le code (pas de <code>await</code> sur chaque requête, transactions
+      réellement atomiques). On revient sur ce choix dans <a href="#/decisions">Décisions</a>.
+    </p>
+    <p>
+      <strong>Statement préparé = compilé une fois.</strong> <code>db.prepare()</code> compile le
+      SQL en bytecode SQLite. Si tu exécutes la même requête en boucle, prépare-la une fois
+      <em>hors</em> de la boucle et réutilise le statement — c'est ce que fait le code partout
+      (ex. <code>upsertState</code> dans le <a href="#/borne-sync-push">push</a>). Réutiliser un
+      statement est l'optimisation SQLite la plus courante.
+    </p>
+  </div>
+</div>
+
+<h2>Lecture de <code>createEventDb</code></h2>
+
+<h3>Ouverture + PRAGMA</h3>
+<pre><code class="js">import Database from 'better-sqlite3';
+
+export function createEventDb(filePath) {
+  const db = new Database(filePath);
+
+  // journal_mode=WAL est persistant (stocké dans le fichier) ;
+  // foreign_keys est par-connexion → à re-poser à chaque new Database()
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  // …</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">WAL et foreign_keys — deux PRAGMA, deux portées</span>
+  </div>
+  <p>
+    <strong>WAL</strong> (<em>Write-Ahead Logging</em>) est un mode de journalisation SQLite. Au
+    lieu d'écrire directement dans le fichier principal et de journaliser l'ancien état, SQLite
+    écrit les modifications dans un fichier annexe <span class="path">db.sqlite-wal</span> puis les
+    « rejoue » dans le fichier principal lors d'un <em>checkpoint</em>. Avantage : un lecteur et un
+    écrivain peuvent travailler <strong>en même temps</strong> (le lecteur voit l'état d'avant,
+    l'écrivain ajoute au WAL). C'est précieux ici : le serveur HTTP lit/écrit pendant que le
+    worker ou le push lisent la même base.
+  </p>
+  <p>
+    Le commentaire du code pointe une asymétrie cruciale :
+  </p>
+  <ul>
+    <li><code>journal_mode = WAL</code> est <strong>persistant</strong> : une fois posé, il est
+        stocké dans le fichier. Toute connexion ultérieure hérite du mode.</li>
+    <li><code>foreign_keys = ON</code> est <strong>par connexion</strong> : SQLite désactive les
+        clés étrangères par défaut, et ce réglage doit être <strong>reposé à chaque</strong>
+        <code>new Database()</code>. C'est pourquoi <em>tous</em> les fichiers qui ouvrent une base
+        (registry du Hub, de la Borne…) répètent ces deux lignes.</li>
+  </ul>
+
+  <div class="js-deep">
+    <p>
+      Le WAL crée deux fichiers compagnons : <span class="path">-wal</span> (le journal) et
+      <span class="path">-shm</span> (mémoire partagée d'index). Ils doivent voyager <em>avec</em>
+      le <code>.sqlite</code> ou être « checkpointés » avant transfert. C'est exactement l'objet de
+      l'invariant <strong>§11.8</strong> : avant de calculer le checksum d'une base ou de
+      l'envoyer, on force <code>wal_checkpoint(TRUNCATE)</code> pour replier tout le WAL dans le
+      fichier principal et vider le journal. Sinon le Hub recevrait un <code>.sqlite</code>
+      incomplet (les dernières écritures restées dans le <span class="path">-wal</span>). Voir
+      <a href="#/borne-sync-push">sync/push.js</a> et la suppression défensive des
+      <span class="path">-wal</span>/<span class="path">-shm</span> dans
+      <a href="#/hub-routes-sync">hub/routes/sync.js</a>.
+    </p>
+  </div>
+</div>
+
+<h3>Création des tables</h3>
+<p>
+  Le schéma est créé en une seule chaîne SQL passée à <code>db.exec()</code>. On y trouve les cinq
+  tables d'un événement :
+</p>
+<pre><code class="js">  db.exec(`
+    CREATE TABLE IF NOT EXISTS event_meta ( key TEXT PRIMARY KEY, value TEXT );
+
+    CREATE TABLE IF NOT EXISTS questions (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      text         TEXT    NOT NULL,
+      max_duration INTEGER NOT NULL DEFAULT ${DEFAULTS.MAX_DURATION_S},
+      countdown    INTEGER NOT NULL DEFAULT ${DEFAULTS.COUNTDOWN_S},
+      order_index  INTEGER NOT NULL DEFAULT 0,
+      enabled      INTEGER NOT NULL DEFAULT 1,
+      created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id           TEXT PRIMARY KEY,
+      guest_name   TEXT,
+      consent_at   DATETIME NOT NULL,
+      started_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME
+    );
+
+    CREATE TABLE IF NOT EXISTS videos (
+      id            TEXT PRIMARY KEY,
+      session_id    TEXT    NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      question_id   INTEGER REFERENCES questions(id) ON DELETE SET NULL,
+      question_text TEXT    NOT NULL,
+      filename      TEXT    NOT NULL UNIQUE,
+      mime_type     TEXT    NOT NULL DEFAULT 'video/mp4',
+      size          INTEGER, checksum TEXT,
+      recorded_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      uploaded_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(session_id, question_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS derived (
+      video_id   TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+      thumbnail  TEXT, duration_s REAL, width INTEGER, height INTEGER, probed_at DATETIME
+    );
+  `);</code></pre>
+
+<p>Quelques décisions de schéma à comprendre :</p>
+<ul>
+  <li>
+    <strong><code>${DEFAULTS.MAX_DURATION_S}</code> dans le SQL</strong> : le schéma interpole une
+    constante JS (<a href="#/core-constants">constants.js</a>) dans la chaîne SQL. Ici c'est sûr
+    car ce sont nos propres constantes numériques, pas une saisie externe.
+  </li>
+  <li>
+    <strong><code>ON DELETE CASCADE</code></strong> (videos → sessions, derived → videos) :
+    supprimer une session supprime ses vidéos, supprimer une vidéo supprime ses données dérivées.
+    Nécessite <code>foreign_keys = ON</code> — d'où l'importance du PRAGMA.
+  </li>
+  <li>
+    <strong><code>ON DELETE SET NULL</code></strong> (videos → questions) : supprimer une question
+    ne supprime pas les vidéos déjà enregistrées pour elle ; leur <code>question_id</code> passe à
+    <code>NULL</code> (mais <code>question_text</code> garde une copie du libellé — d'où sa
+    présence redondante).
+  </li>
+  <li>
+    <strong><code>UNIQUE(session_id, question_id)</code></strong> : un invité ne peut avoir qu'une
+    vidéo par question. Ré-enregistrer remplace — c'est la base de la « transaction de
+    remplacement » de <a href="#/borne-routes-videos">videos.js</a> (§11.9).
+  </li>
+</ul>
+
+<h3>Le seed des questions par défaut</h3>
+<pre><code class="js">  const count = db.prepare('SELECT COUNT(*) as n FROM questions').get().n;
+  if (count === 0) {
+    const insert = db.prepare(
+      'INSERT INTO questions (text, max_duration, countdown, order_index) VALUES (?, ?, ?, ?)'
+    );
+    const seedAll = db.transaction(() => {
+      DEFAULT_QUESTIONS.forEach((q, i) => insert.run(q.text, q.max_duration, q.countdown, i));
+    });
+    seedAll();
+  }
+  return db;
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Les transactions better-sqlite3</span>
+  </div>
+  <p>
+    <code>db.transaction(fn)</code> ne lance pas la transaction : il <strong>retourne une nouvelle
+    fonction</strong> qui, quand on l'appelle, exécute <code>fn</code> entre un
+    <code>BEGIN</code> et un <code>COMMIT</code> (et fait <code>ROLLBACK</code> si <code>fn</code>
+    lève). D'où le motif en deux temps : <code>const seedAll = db.transaction(() =&gt; {…})</code>
+    puis <code>seedAll()</code>.
+  </p>
+  <p>
+    Pourquoi une transaction pour le seed ? Pour l'<strong>atomicité</strong> et la
+    <strong>vitesse</strong> : insérer 4 lignes hors transaction = 4 écritures disque ; en
+    transaction = une seule. Et si une insertion échoue, aucune n'est conservée (pas de seed
+    partiel).
+  </p>
+  <p>
+    <code>.forEach((q, i) =&gt; …)</code> itère sur un tableau ; le second argument <code>i</code>
+    est l'index, réutilisé ici comme <code>order_index</code>. Équivalent de
+    <code>for i, q in enumerate(...)</code> en Python.
+  </p>
+
+  <div class="js-deep">
+    <p>
+      Le pattern « <code>transaction()</code> retourne une fonction » paraît étrange mais il est
+      puissant : la fonction transactionnelle est <strong>réutilisable</strong> et
+      <strong>composable</strong>. better-sqlite3 fournit même des variantes
+      (<code>.deferred</code>, <code>.immediate</code>, <code>.exclusive</code>) sur l'objet
+      retourné. Surtout, comme tout est synchrone, la transaction est <em>réellement</em> atomique
+      du point de vue du thread : aucune autre requête ne peut s'intercaler entre le BEGIN et le
+      COMMIT, contrairement à un environnement async où un <code>await</code> au milieu d'une
+      transaction peut laisser passer d'autres opérations. C'est un argument de plus pour le
+      SQLite synchrone.
+    </p>
+  </div>
+</div>
+
+<h2>Signature &amp; usage</h2>
+<table class="api-table">
+  <tr><th>Élément</th><th>Détail</th></tr>
+  <tr><td>createEventDb(filePath)</td><td>Ouvre/crée le <code>.sqlite</code> à <code>filePath</code>, pose WAL + FK, crée les tables si absentes, seede 4 questions si <code>questions</code> est vide. <strong>Retourne</strong> le handle <code>Database</code> (synchrone).</td></tr>
+  <tr><td>Idempotent</td><td><code>CREATE TABLE IF NOT EXISTS</code> + seed conditionnel → appeler la fonction sur une base existante ne casse rien.</td></tr>
+  <tr><td>Qui l'appelle</td><td><a href="#/hub-eventstore">hub/eventStore.js</a>, <a href="#/borne-eventdb">borne/eventDb.js</a>, et directement <a href="#/borne-routes-events">borne/routes/events.js</a> + <a href="#/borne-sync-pull">pull.js</a> à la création/réception d'un événement.</td></tr>
+</table>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Qui ferme le handle ?</div>
+  <p>
+    <code>createEventDb</code> <strong>ouvre</strong> mais ne ferme pas. La fermeture
+    (<code>db.close()</code>) est gérée par les caches (<a href="#/hub-eventstore">eventStore</a> /
+    <a href="#/borne-eventdb">eventDb</a>) ou explicitement avant un transfert/suppression de
+    fichier. Oublier de fermer avant un <code>rm -rf</code> ou un écrasement du fichier corrompt
+    la base (invariant §11.11). On y revient dans les pages des caches.
+  </p>
+</div>

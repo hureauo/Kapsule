@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kapsule — Documentation du code</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <!--
+    Coquille du site de documentation.
+    Le contenu réel vit dans pages/*.html, chargé à la demande par assets/app.js.
+    Aucun framework, aucun CDN : ouvrir ce fichier dans un navigateur suffit.
+
+    NOTE : à cause de la politique CORS des navigateurs, fetch() sur des fichiers
+    locaux (file://) est bloqué par Chrome/Firefox. Deux options pour lire la doc :
+      1. Servir le dossier : `cd docs && python3 -m http.server` puis ouvrir localhost:8000
+      2. Ouvrir avec Firefox qui est plus permissif (selon version)
+    Un message d'aide s'affiche automatiquement si le chargement échoue.
+  -->
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+
+  <nav id="sidebar">
+    <div class="brand">
+      <span class="brand-logo">▤</span>
+      <div>
+        <div class="brand-name">Kapsule</div>
+        <div class="brand-sub">Documentation du code</div>
+      </div>
+    </div>
+
+    <div class="search-box">
+      <input type="search" id="search" placeholder="Rechercher une page…" autocomplete="off">
+      <div id="search-results"></div>
+    </div>
+
+    <div class="mode-switch">
+      <span class="mode-label">Cours JS :</span>
+      <div class="mode-toggle" id="mode-toggle" role="tablist">
+        <button data-mode="synth" class="active" role="tab">Synthétique</button>
+        <button data-mode="deep" role="tab">Approfondi</button>
+      </div>
+    </div>
+
+    <div id="nav-tree"><!-- rempli par app.js depuis le manifeste de pages --></div>
+
+    <div class="sidebar-footer">
+      <span class="js-badge">JS</span> = encadré cours JavaScript
+    </div>
+  </nav>
+
+  <main id="content">
+    <div class="loader">Chargement…</div>
+  </main>
+
+  <script src="assets/highlight.js"></script>
+  <script src="assets/pages.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>

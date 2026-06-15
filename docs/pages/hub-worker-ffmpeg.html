@@ -1,0 +1,181 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/worker/ffmpeg.js &amp; les jobs</h1>
+
+<p>
+  Les trois handlers de jobs (<code>probe</code>, <code>thumbnail</code>, <code>archive</code>) et
+  le wrapper ffmpeg qu'ils partagent. C'est la page de référence pour lancer un
+  <strong>sous-processus</strong> (<code>child_process</code>) et manipuler des
+  <strong>Buffer</strong>, ainsi que pour la génération de ZIP avec <code>archiver</code>.
+</p>
+
+<h2>ffmpeg.js : exécuter une commande externe</h2>
+<pre><code class="js">import { spawn } from 'node:child_process';
+
+function run(cmd, args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(cmd, args);
+    const out = [];
+    const err = [];
+    proc.stdout.on('data', (d) =&gt; out.push(d));        // collecte stdout par morceaux
+    proc.stderr.on('data', (d) =&gt; err.push(d));
+    proc.on('close', (code) =&gt; {
+      if (code === 0) resolve(Buffer.concat(out).toString());
+      else reject(new Error(`${cmd} exit ${code}: ${Buffer.concat(err).toString().slice(0, 300)}`));
+    });
+    proc.on('error', reject);                          // ex. binaire introuvable
+  });
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>child_process.spawn</code> — lancer un programme externe</span>
+  </div>
+  <p>
+    <code>spawn(cmd, args)</code> lance un <strong>sous-processus</strong> (ici <code>ffprobe</code>
+    ou <code>ffmpeg</code>, installés dans l'image Docker). Il retourne un objet processus dont
+    <code>stdout</code>/<code>stderr</code> sont des <a href="#/core-checksum">streams</a> : on
+    s'abonne à leurs événements <code>'data'</code> pour collecter la sortie, et à
+    <code>'close'</code> pour récupérer le code de retour. Code 0 = succès.
+  </p>
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent</th></tr>
+    <tr><td class="lang">Python</td><td><code>subprocess.run([...], capture_output=True)</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>exec.Command(cmd, args...).Output()</code></td></tr>
+  </table>
+  <p>
+    On <strong>promisifie</strong> l'API événementielle (comme dans
+    <a href="#/core-checksum">checksum.js</a>) : la Promise résout avec la sortie sur
+    <code>'close'</code> code 0, et rejette sinon. Pourquoi <code>spawn</code> et pas
+    <code>exec</code> ? <code>spawn</code> streame la sortie (pas de limite de buffer) et ne passe
+    pas par un shell — donc pas de risque d'injection de commande via les arguments.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Les <code>Buffer</code> — données binaires brutes</span>
+  </div>
+  <p>
+    Un <code>Buffer</code> est la représentation Node des <strong>octets bruts</strong> (Node
+    n'utilise pas <code>bytes</code> comme Python). Les chunks émis par un stream sont des Buffers.
+    <code>Buffer.concat(out)</code> recolle tous les morceaux en un seul Buffer, et
+    <code>.toString()</code> le décode en texte (UTF-8 par défaut). On accumule dans un tableau
+    <code>out</code> puis on concatène à la fin, plutôt que de concaténer à chaque chunk (plus
+    efficace).
+  </p>
+</div>
+
+<h2>Les deux fonctions ffmpeg</h2>
+<pre><code class="js">export async function runFfprobe(filePath) {
+  const json = await run('ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_streams', filePath]);
+  const data = JSON.parse(json);
+  const video = (data.streams ?? []).find((s) =&gt; s.codec_type === 'video') ?? {};
+  const duration_s = parseFloat(video.duration ?? data.format?.duration ?? '0');
+  return { duration_s, width: video.coded_width ?? video.width ?? 0, height: video.coded_height ?? video.height ?? 0 };
+}
+
+export async function makeThumbnail(inputPath, outputPath) {
+  await run('ffmpeg', ['-y', '-ss', '1', '-i', inputPath, '-frames:v', '1', '-q:v', '2', outputPath]);
+}</code></pre>
+<p>
+  <code>runFfprobe</code> demande à ffprobe les métadonnées en JSON, puis extrait durée et
+  dimensions. Le <code>data.format?.duration</code> utilise l'<strong>optional chaining</strong>
+  <code>?.</code> : si <code>format</code> est absent, l'expression vaut <code>undefined</code> au
+  lieu de planter (≈ accès sécurisé). <code>makeThumbnail</code> extrait une image à
+  <code>t=1s</code> (<code>-ss 1</code>, <code>-frames:v 1</code>) en JPEG qualité 2.
+</p>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Ces fonctions nécessitent ffmpeg/ffprobe installés</div>
+  <p>
+    Le wrapper suppose que <code>ffmpeg</code> et <code>ffprobe</code> sont dans le <code>PATH</code>
+    — ils sont installés dans l'image Docker du Hub. C'est aussi pourquoi backend et worker
+    partagent la même image (voir <a href="#/arch-docker">Docker</a>). En test, les jobs sont
+    remplacés par des handlers factices via <code>_setHandlers</code> pour ne pas dépendre de
+    ffmpeg.
+  </p>
+</div>
+
+<h2>jobs/probe.js et jobs/thumbnail.js</h2>
+<pre><code class="js">export async function runProbe(job, dataDir) {
+  const { event_id, video_id } = job;
+  const edb = openEventDb(event_id, dataDir);
+  const video = edb.prepare('SELECT filename FROM videos WHERE id = ?').get(video_id);
+  if (!video) throw new Error(`Vidéo ${video_id} introuvable…`);
+
+  const filePath = join(dataDir, 'events', event_id, 'videos', video.filename);
+  const { duration_s, width, height } = await runFfprobe(filePath);
+
+  edb.prepare(`INSERT INTO derived (video_id, duration_s, width, height, probed_at)
+               VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+               ON CONFLICT(video_id) DO UPDATE SET
+                 duration_s = excluded.duration_s, width = excluded.width,
+                 height = excluded.height, probed_at = excluded.probed_at`).run(video_id, duration_s, width, height);
+}</code></pre>
+<p>
+  Pattern commun aux deux : ouvrir la base de l'événement (<a href="#/hub-eventstore">openEventDb</a>),
+  lire le nom de fichier de la vidéo, lancer ffmpeg, écrire le résultat dans <code>derived</code>.
+  Le <strong>UPSERT</strong> (<code>INSERT … ON CONFLICT(video_id) DO UPDATE SET … =
+  excluded.…</code>) gère le re-traitement : si une ligne <code>derived</code> existe déjà pour
+  cette vidéo, on la met à jour au lieu d'échouer. <code>excluded</code> est le mot-clé SQLite qui
+  désigne « la valeur qu'on tentait d'insérer ». <code>thumbnail.js</code> est identique mais écrit
+  le champ <code>thumbnail</code> et crée le dossier <span class="path">derived/</span> au passage.
+</p>
+
+<h2>jobs/archive.js : générer le ZIP en streaming</h2>
+<pre><code class="js">import archiver from 'archiver';
+
+export async function runArchive(job, dataDir) {
+  const { event_id } = job;
+  const edb = openEventDb(event_id, dataDir);
+  const videos = edb.prepare('SELECT id, filename FROM videos').all();
+  const zipPath = join(dataDir, 'events', event_id, 'derived', 'archive.zip');
+
+  await new Promise((resolve, reject) => {
+    const output = createWriteStream(zipPath);
+    const archive = archiver('zip', { store: true });    // store = pas de compression
+    output.on('close', resolve);
+    output.on('error', reject);
+    archive.on('error', reject);
+    archive.pipe(output);                                // archiver → fichier
+    for (const video of videos) {
+      const filePath = join(dataDir, 'events', event_id, 'videos', video.filename);
+      archive.append(createReadStream(filePath), { name: video.filename });   // ajoute chaque vidéo
+    }
+    archive.finalize();                                  // clôt l'archive
+  });
+  // … met à jour events.updated_at …
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>archiver</code> + pipeline de streams</span>
+  </div>
+  <p>
+    <code>archiver</code> (paquet npm) construit un ZIP <strong>en streaming</strong> : il ne charge
+    jamais toutes les vidéos en mémoire. On crée un flux d'écriture vers le fichier ZIP
+    (<code>createWriteStream</code>), on <code>pipe</code> l'archiver dedans, on
+    <code>append</code> chaque vidéo (elle-même lue en stream), puis <code>finalize()</code>. Le
+    tout est enveloppé dans une Promise qui résout sur l'événement <code>'close'</code> du fichier
+    de sortie (= ZIP entièrement écrit).
+  </p>
+  <div class="js-deep">
+    <p>
+      <strong>Pourquoi <code>{ store: true }</code> (§11.17) ?</strong> Le mode « store » désactive
+      la compression. Les vidéos (mp4/webm) sont <em>déjà</em> compressées : tenter de les
+      re-compresser dans le ZIP coûterait beaucoup de CPU pour un gain quasi nul (voire une taille
+      légèrement supérieure). Le ZIP ne sert ici qu'à <em>regrouper</em> les fichiers en un seul
+      téléchargement, pas à les réduire. C'est un réglage important pour les performances du worker.
+    </p>
+  </div>
+</div>
+
+<table class="api-table">
+  <tr><th>Job</th><th>Entrée</th><th>Effet</th></tr>
+  <tr><td>probe</td><td>une vidéo</td><td>Écrit durée/largeur/hauteur dans <code>derived</code>.</td></tr>
+  <tr><td>thumbnail</td><td>une vidéo</td><td>Génère <code>&lt;video_id&gt;.jpg</code> dans <span class="path">derived/</span>.</td></tr>
+  <tr><td>archive</td><td>l'événement</td><td>Crée <span class="path">derived/archive.zip</span> (toutes vidéos, sans compression).</td></tr>
+</table>

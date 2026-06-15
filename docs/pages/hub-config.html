@@ -1,0 +1,81 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/config.js</h1>
+
+<p>
+  Le plus petit fichier du serveur, mais le premier importé par presque tous les autres. Il lit
+  les variables d'environnement (injectées par Docker) et expose un objet <code>config</code>
+  unique, typé et avec des valeurs par défaut.
+</p>
+
+<p>Le fichier entier :</p>
+<pre><code class="js">const env = process.env;
+
+export const config = {
+  port: parseInt(env.PORT ?? '3001', 10),
+  jwtSecret: env.JWT_SECRET ?? 'change-me',
+  dataDir: env.DATA_DIR ?? '/app/data',
+  allowRegister: env.ALLOW_REGISTER === 'true',
+};</code></pre>
+
+<p>
+  <code>process.env</code> et l'opérateur <code>??</code> sont expliqués en détail dans la page
+  Docker — si ce n'est pas encore lu :
+</p>
+<a class="see-also" href="#/arch-docker">→ notion JS : process.env &amp; nullish coalescing (vue dans arch-docker)</a>
+
+<h2>Les quatre réglages</h2>
+<table class="api-table">
+  <tr><th>Champ</th><th>Variable d'env</th><th>Défaut</th><th>Rôle</th></tr>
+  <tr><td>port</td><td>PORT</td><td>3001</td><td>Port d'écoute du serveur HTTP.</td></tr>
+  <tr><td>jwtSecret</td><td>JWT_SECRET</td><td>'change-me'</td><td>Secret de signature des JWT. <strong>Doit être changé en prod.</strong></td></tr>
+  <tr><td>dataDir</td><td>DATA_DIR</td><td>'/app/data'</td><td>Racine de stockage (registry + events). Surchargé en test par un dossier temporaire.</td></tr>
+  <tr><td>allowRegister</td><td>ALLOW_REGISTER</td><td>false</td><td>Autorise (ou non) l'inscription publique via l'API. Voir <a href="#/hub-routes-auth">routes/auth</a>.</td></tr>
+</table>
+
+<h2>Deux conversions de type à noter</h2>
+<ul>
+  <li>
+    <strong><code>parseInt(env.PORT ?? '3001', 10)</code></strong> : <code>process.env</code> ne
+    contient que des chaînes. On convertit en entier (base 10). Si <code>PORT</code> est absent,
+    <code>??</code> fournit la chaîne <code>'3001'</code> qui est ensuite parsée.
+  </li>
+  <li>
+    <strong><code>env.ALLOW_REGISTER === 'true'</code></strong> : pour un booléen, on compare la
+    chaîne à <code>'true'</code>. Toute autre valeur (absente, <code>'false'</code>,
+    <code>'1'</code>…) donne <code>false</code>. Conversion booléenne explicite et stricte.
+  </li>
+</ul>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Le défaut <code>'change-me'</code> du secret JWT</div>
+  <p>
+    Si <code>JWT_SECRET</code> n'est pas défini, le secret vaut <code>'change-me'</code> — connu
+    de tous (c'est dans le code source public). En production, un attaquant pourrait alors forger
+    des jetons valides. Le compose passe <code>${JWT_SECRET:-change-me}</code> : il faut donc
+    définir un vrai secret côté hôte. Ce défaut n'existe que pour que le projet démarre sans
+    config en développement/test.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Un module exporte un singleton</span>
+  </div>
+  <p>
+    <code>export const config = {…}</code> est évalué <strong>une seule fois</strong>, au premier
+    <code>import</code> du module. Tous les fichiers qui font <code>import { config }</code>
+    partagent <strong>le même objet</strong> (les modules ES sont mis en cache par Node). Ce n'est
+    donc pas « relire l'environnement à chaque fois » : c'est un instantané pris au démarrage.
+  </p>
+  <div class="js-deep">
+    <p>
+      Conséquence exploitée par les tests : comme c'est un objet partagé et mutable, un test peut
+      faire <code>config.allowRegister = true</code> le temps d'une assertion, puis le remettre à
+      <code>false</code>. C'est un effet de bord global (à manier avec prudence) mais pratique pour
+      tester un comportement dépendant de la config sans relancer le serveur. Voir
+      <a href="#/tests-runner">Tests</a>. C'est aussi une illustration des « live bindings » ESM
+      évoqués dans <a href="#/arch-modules">ESM</a>.
+    </p>
+  </div>
+</div>

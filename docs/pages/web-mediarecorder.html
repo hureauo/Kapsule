@@ -1,0 +1,238 @@
+<div class="page-kicker">5 — Le code front (web)</div>
+<h1>borne/web useMediaRecorder</h1>
+
+<p>
+  Le hook React qui pilote l'enregistrement vidéo dans le kiosque : accès caméra, capture, chrono,
+  auto-stop, génération du blob à uploader. C'est la page la plus dense en notions React et la
+  meilleure pour comprendre les <strong>closures</strong> et la différence
+  <strong><code>useRef</code> vs <code>useState</code></strong> — un point qui piège tous ceux qui
+  arrivent à React.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">React et les « hooks » en deux minutes</span>
+  </div>
+  <p>
+    <strong>React</strong> construit l'interface à partir de <em>composants</em> : des fonctions qui
+    décrivent ce qu'il faut afficher. Quand une donnée change, React <strong>ré-exécute</strong> la
+    fonction du composant pour recalculer l'affichage (« re-render »). Les <strong>hooks</strong>
+    (fonctions <code>useXxx</code>) permettent à ces fonctions d'avoir de la mémoire et des effets :
+  </p>
+  <ul>
+    <li><code>useState(v)</code> → un état qui, quand on le change, <strong>déclenche un
+        re-render</strong>. Renvoie <code>[valeur, setValeur]</code>.</li>
+    <li><code>useRef(v)</code> → une « boîte » mutable qui <strong>persiste</strong> entre les
+        renders mais <strong>ne déclenche pas</strong> de re-render. On lit/écrit
+        <code>ref.current</code>.</li>
+    <li><code>useCallback(fn, deps)</code> → mémorise une fonction (stabilité de référence entre
+        renders).</li>
+    <li><code>useEffect(fn, deps)</code> → exécute un effet de bord après le render ; peut retourner
+        une fonction de nettoyage.</li>
+  </ul>
+  <p>
+    Un <strong>hook custom</strong> (comme <code>useMediaRecorder</code>) est juste une fonction qui
+    combine ces hooks de base pour offrir une fonctionnalité réutilisable. Il retourne ici un objet
+    <code>{ status, blob, startRecording, … }</code> que le composant utilise.
+  </p>
+</div>
+
+<h2>État affiché vs références internes</h2>
+<pre><code class="js">const [status, setStatus] = useState(REC_STATUS.IDLE);   // affiché → re-render à chaque changement
+const [duration, setDuration] = useState(0);             // affiché (le chrono à l'écran)
+const [blob, setBlob] = useState(null);
+
+const streamRef   = useRef(null);   // MediaStream (caméra) — pas affiché
+const recorderRef = useRef(null);   // MediaRecorder — pas affiché
+const chunksRef   = useRef([]);     // morceaux vidéo collectés — pas affiché
+const timerRef    = useRef(null);   // id du setInterval — pas affiché
+const durationRef = useRef(0);      // COPIE de duration pour le callback du timer (closure)</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>useRef</code> vs <code>useState</code> : le critère de choix</span>
+  </div>
+  <p>
+    La règle : <strong>est-ce que l'affichage dépend de cette valeur ?</strong>
+  </p>
+  <ul>
+    <li><strong>Oui</strong> → <code>useState</code> (changer la valeur doit redessiner l'UI). Ici :
+        <code>status</code> (afficher « enregistrement… »), <code>duration</code> (le chrono),
+        <code>blob</code> (afficher l'aperçu).</li>
+    <li><strong>Non</strong> (donnée technique interne) → <code>useRef</code>. Ici : le
+        <code>MediaStream</code>, le <code>MediaRecorder</code>, l'id du timer, les chunks. Les
+        mettre dans un state provoquerait des re-renders inutiles (voire des bugs).</li>
+  </ul>
+  <p>
+    Différence cruciale de comportement : une variable <code>useState</code> est <strong>figée à la
+    valeur du render courant</strong> (chaque render « voit » sa propre version). Une
+    <code>ref.current</code> est <strong>toujours la valeur la plus récente</strong>, partagée entre
+    tous les renders. Cette distinction est au cœur du piège ci-dessous.
+  </p>
+  <table class="compare">
+    <tr><th></th><th>useState</th><th>useRef</th></tr>
+    <tr><td class="lang">Changement</td><td>déclenche un re-render</td><td>silencieux</td></tr>
+    <tr><td class="lang">Valeur lue</td><td>celle du render courant (figée)</td><td>toujours la dernière</td></tr>
+    <tr><td class="lang">Usage</td><td>données affichées</td><td>données techniques / mutables</td></tr>
+  </table>
+</div>
+
+<h2>Le piège des closures : pourquoi <code>durationRef</code> existe</h2>
+<pre><code class="js">recorder.start(1000);                         // chunks de 1 s (robustesse si crash)
+timerRef.current = setInterval(() =&gt; {
+  durationRef.current += 1;                    // on incrémente la REF (toujours à jour)
+  setDuration(durationRef.current);            // on met aussi à jour le STATE (pour l'affichage)
+  if (durationRef.current &gt;= maxDuration) {     // auto-stop quand la durée max est atteinte
+    clearInterval(timerRef.current); timerRef.current = null;
+    if (recorderRef.current?.state !== 'inactive') recorderRef.current.stop();
+  }
+}, 1000);</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Le piège classique : une closure capture une valeur figée</div>
+  <p>
+    Le callback de <code>setInterval</code> est créé <strong>une fois</strong>, au lancement de
+    l'enregistrement. Par le mécanisme de <strong>closure</strong>, il capture les variables
+    visibles à ce moment-là. S'il lisait la variable d'état <code>duration</code>, il verrait
+    <strong>éternellement <code>0</code></strong> — la valeur du render où il a été créé — car
+    chaque re-render produit une <em>nouvelle</em> variable <code>duration</code> que l'ancien
+    callback ne voit pas. Le chrono ne s'arrêterait jamais (la condition
+    <code>duration &gt;= maxDuration</code> resterait fausse).
+  </p>
+  <p>
+    <strong>La solution : <code>durationRef</code>.</strong> Une ref n'est pas « recréée » à chaque
+    render ; <code>durationRef.current</code> est une boîte unique, toujours à jour. Le callback lit
+    <code>durationRef.current</code> et voit donc la <em>vraie</em> valeur courante. On met
+    <em>aussi</em> à jour le state <code>setDuration</code> en parallèle, uniquement pour
+    rafraîchir l'affichage. C'est le pattern « ref pour la logique, state pour l'affichage » —
+    indispensable dans tout callback à longue durée de vie (timer, abonnement) qui doit lire une
+    valeur évolutive.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Les closures, en général</span>
+  </div>
+  <p>
+    Une <strong>closure</strong> est une fonction qui « capture » les variables de son
+    environnement de définition et continue d'y accéder même après. C'est un mécanisme JS
+    fondamental (on l'a déjà croisé avec les factories à closure de config dans
+    <a href="#/borne-middleware-auth">borne/middleware/auth.js</a>, et
+    <a href="#/hub-middleware-validate">validateUuidParams</a>). En React, les closures sont
+    partout — chaque callback dans un composant capture les variables du render où il est créé. Bien
+    le comprendre évite la majorité des bugs « ma valeur ne se met pas à jour ».
+  </p>
+  <table class="compare">
+    <tr><th>Langage</th><th>Closure</th></tr>
+    <tr><td class="lang">Python</td><td>fonction imbriquée capturant une variable (avec le piège <code>late binding</code> des boucles, similaire)</td></tr>
+    <tr><td class="lang">Go</td><td>fonction littérale capturant une variable de boucle (même piège historique avant Go 1.22)</td></tr>
+    <tr><td class="lang">Kotlin</td><td>lambda capturant une variable du scope englobant</td></tr>
+  </table>
+</div>
+
+<h2>La détection du codec : Safari n'accepte que mp4</h2>
+<pre><code class="js">const MIME_CANDIDATES = [
+  'video/mp4;codecs=avc1,mp4a.40.2',  // Safari iOS — codec explicite
+  'video/mp4',                         // Safari fallback
+  'video/webm;codecs=vp9,opus',        // Chrome/Firefox préféré
+  // …
+];
+function detectMimeType() {
+  if (typeof MediaRecorder === 'undefined') return 'video/mp4';
+  for (const mime of MIME_CANDIDATES) {
+    if (MediaRecorder.isTypeSupported(mime)) return mime;   // premier supporté gagne
+  }
+  return 'video/mp4';
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant Safari : choisir un codec que MediaRecorder supporte</div>
+  <p>
+    <code>MediaRecorder</code> (l'API navigateur d'enregistrement) ne supporte pas les mêmes formats
+    partout : <strong>Safari/iOS n'enregistre qu'en mp4</strong> (codec AVC/AAC), pas en webm ;
+    Chrome/Firefox préfèrent webm. <code>MediaRecorder.isTypeSupported(mime)</code> teste à la volée
+    ce que le navigateur sait faire ; on prend le <strong>premier candidat supporté</strong>, en
+    mettant mp4 d'abord pour l'iPad (la cible). Choisir un format non supporté ferait échouer
+    l'enregistrement silencieusement. C'est pourquoi l'ordre de la liste compte.
+  </p>
+</div>
+
+<h2>Gestion mémoire : les object URLs</h2>
+<pre><code class="js">recorder.onstop = () =&gt; {
+  const recorded = new Blob(chunksRef.current, { type: mimeType });
+  const url = URL.createObjectURL(recorded);   // crée une URL blob:… pour l'aperçu &lt;video&gt;
+  setBlob(recorded);
+  setBlobUrl(url);
+  setStatus(REC_STATUS.STOPPED);               // STOPPED ici → garantit blob disponible
+};
+
+const revokeBlobUrl = useCallback(() =&gt; {
+  setBlobUrl((prev) =&gt; { if (prev) URL.revokeObjectURL(prev); return null; });  // libère la mémoire
+}, []);</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>URL.createObjectURL</code> / <code>revokeObjectURL</code></span>
+  </div>
+  <p>
+    Pour afficher la vidéo enregistrée dans un <code>&lt;video&gt;</code>, on a besoin d'une URL.
+    <code>URL.createObjectURL(blob)</code> crée une URL locale <code>blob:…</code> qui pointe vers le
+    blob en mémoire. <strong>Piège</strong> : ces URLs gardent le blob en mémoire tant qu'on ne les
+    <em>révoque</em> pas explicitement avec <code>URL.revokeObjectURL(url)</code>. Oublier de
+    révoquer = fuite mémoire (les vidéos s'accumulent en RAM). Le hook révoque systématiquement
+    l'ancienne URL avant d'en créer une nouvelle, et au nettoyage.
+  </p>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ <code>onstop</code> est asynchrone par rapport à <code>.stop()</code></div>
+  <p>
+    Subtilité : <code>recorder.stop()</code> ne produit pas le blob immédiatement — l'événement
+    <code>onstop</code> arrive un peu après, une fois les derniers chunks rassemblés. C'est pourquoi
+    le passage au statut <code>STOPPED</code> est fait <strong>dans</strong> <code>onstop</code>
+    (pas juste après <code>.stop()</code>) : on garantit ainsi que <code>blob</code> et
+    <code>blobUrl</code> sont disponibles au moment où le statut change, donc l'aperçu s'affiche
+    correctement. Le code neutralise aussi <code>onstop</code> avant un <code>.stop()</code> de
+    nettoyage, pour éviter qu'un handler tardif ne « ressuscite » un blob après le démontage (autre
+    source de fuite).
+  </p>
+</div>
+
+<h2>Nettoyage au démontage</h2>
+<pre><code class="js">// Démontage du composant parent → libère TOUJOURS la caméra
+useEffect(() =&gt; () =&gt; { cleanup(); }, [cleanup]);</code></pre>
+<p>
+  <code>useEffect</code> avec une fonction de retour : cette fonction est appelée quand le composant
+  est <strong>démonté</strong> (retiré de l'écran). Ici elle appelle <code>cleanup()</code> qui
+  arrête le <code>MediaRecorder</code>, coupe la caméra (<code>track.stop()</code>), efface le timer
+  et révoque l'URL. Sans ce nettoyage, la caméra resterait allumée (LED active) après avoir quitté
+  l'écran d'enregistrement — fuite de ressource visible et gênante. C'est le rôle « destructeur » de
+  <code>useEffect</code>.
+</p>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Le <code>attachPreview</code> et les invariants Safari</div>
+  <p>
+    <code>attachPreview(videoEl)</code> branche le flux caméra sur un <code>&lt;video&gt;</code> pour
+    l'aperçu en direct, en posant <code>muted</code>, <code>autoplay</code> et surtout
+    <code>playsInline</code> — <strong>indispensable sur iOS</strong>, sinon Safari force la vidéo en
+    plein écran. C'est un des invariants Safari de <span class="path">PROJET.md §11</span> : tous les
+    <code>&lt;video&gt;</code> doivent avoir <code>playsInline</code>. Safari peut aussi exiger un
+    <code>play()</code> explicite, d'où le <code>videoEl.play().catch(() =&gt; {})</code>.
+  </p>
+</div>
+
+<table class="api-table">
+  <tr><th>Retourné par le hook</th><th>Rôle</th></tr>
+  <tr><td>status, duration, blob, blobUrl, mimeType</td><td>État affichable (re-render).</td></tr>
+  <tr><td>requestPermission()</td><td>Demande l'accès caméra/micro (<code>getUserMedia</code>).</td></tr>
+  <tr><td>startRecording() / stopRecording()</td><td>Démarre / arrête l'enregistrement.</td></tr>
+  <tr><td>resetRecording()</td><td>Réinitialise pour re-enregistrer (garde la caméra).</td></tr>
+  <tr><td>cleanup()</td><td>Libère tout (caméra, timer, URL).</td></tr>
+  <tr><td>attachPreview(el)</td><td>Branche le flux live sur un <code>&lt;video&gt;</code> (playsInline §11).</td></tr>
+</table>

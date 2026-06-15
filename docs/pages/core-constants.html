@@ -1,0 +1,124 @@
+<div class="page-kicker">2 — Le package partagé</div>
+<h1>core/constants.js</h1>
+
+<p>
+  Ce fichier centralise toutes les valeurs « magiques » du projet : les statuts d'un événement,
+  les types de jobs, les limites (taille de vidéo, durée…), les valeurs par défaut. Le mettre
+  dans <code>core</code> garantit que Hub et Borne partagent <strong>exactement</strong> les mêmes
+  valeurs — impossible que la Borne plafonne une vidéo à 500 Mo et le Hub à 400.
+</p>
+
+<h2>Lecture du fichier</h2>
+
+<pre><code class="js">export const EVENT_STATUS = {
+  DRAFT: 'draft',
+  READY: 'ready',
+  LOADED: 'loaded',
+  LIVE: 'live',
+  CLOSED: 'closed',
+  PUSHED: 'pushed',
+  PROCESSED: 'processed',
+  PURGED: 'purged',
+};
+
+// Transitions légales (machine à états) — chaque statut avance vers le suivant
+export const STATUS_ORDER = [
+  'draft', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'purged',
+];</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Un objet comme « enum », et <code>const</code></span>
+  </div>
+  <p>
+    JavaScript n'a pas de type <code>enum</code> natif (contrairement à Go ou Kotlin). L'idiome
+    est un <strong>objet figé de constantes</strong> : <code>EVENT_STATUS.DRAFT</code> vaut la
+    chaîne <code>'draft'</code>. On y gagne des noms lisibles dans le code plutôt que des chaînes
+    nues éparpillées.
+  </p>
+  <p>
+    <code>const</code> empêche de <strong>réassigner</strong> la variable
+    (<code>EVENT_STATUS = …</code> échouerait), mais — piège classique — <strong>n'empêche pas de
+    muter l'objet</strong> : <code>EVENT_STATUS.DRAFT = 'x'</code> passerait. C'est l'équivalent
+    d'un pointeur constant vers une structure mutable.
+  </p>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent</th></tr>
+    <tr><td class="lang">Go</td><td><code>const ( Draft = "draft"; … )</code> ou un type dédié</td></tr>
+    <tr><td class="lang">Kotlin</td><td><code>enum class</code> ou <code>object</code> de <code>const val</code></td></tr>
+    <tr><td class="lang">Python</td><td><code>class EventStatus(str, Enum)</code></td></tr>
+    <tr><td class="lang">JS</td><td><code>const EVENT_STATUS = { DRAFT: 'draft' }</code></td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      Pour rendre l'objet réellement immuable, on utiliserait <code>Object.freeze({...})</code>.
+      Kapsule ne le fait pas — par convention (on ne mute pas les constantes) plutôt que par
+      garde-fou. Si tu veux durcir, <code>Object.freeze</code> est le bon outil ; en mode strict
+      (ce que ESM active automatiquement), une mutation d'objet gelé lève une
+      <code>TypeError</code> au lieu d'échouer silencieusement.
+    </p>
+    <p>
+      Noter la double représentation : <code>EVENT_STATUS</code> (objet, pour nommer un statut)
+      et <code>STATUS_ORDER</code> (tableau, pour <em>ordonner</em> les statuts). Le tableau est
+      ce qui permet de vérifier qu'une transition « avance » : on compare les
+      <code>indexOf</code>. C'est utilisé par <a href="#/core-validate">validate.js</a>
+      (<code>assertStatus</code>) et par les heartbeats du
+      <a href="#/hub-routes-sync">Hub</a>.
+    </p>
+  </div>
+</div>
+
+<h2>Le reste du fichier</h2>
+
+<pre><code class="js">export const JOB_TYPES = { PROBE: 'probe', THUMBNAIL: 'thumbnail', ARCHIVE: 'archive' };
+export const JOB_STATUS = { PENDING: 'pending', RUNNING: 'running', DONE: 'done', FAILED: 'failed' };
+
+export const LIMITS = {
+  VIDEO_MAX_BYTES: 500 * 1024 * 1024,    // 500 Mo — calcul lisible plutôt que 524288000
+  QUESTION_TEXT_MAX: 500,
+  GUEST_NAME_MAX: 100,
+  QUESTION_MAX_DURATION_S: 300,
+  QUESTION_MIN_DURATION_S: 10,
+  QUESTION_MAX_COUNTDOWN_S: 10,
+  DISK_ALERT_BYTES: 10 * 1024 * 1024 * 1024,  // 10 Go
+};
+
+export const DEFAULTS = {
+  MAX_DURATION_S: 60,
+  COUNTDOWN_S: 3,
+  IDLE_TIMEOUT_S: 120,
+  CONSENT_TEXT: "En participant, vous acceptez que vos vidéos…",
+};</code></pre>
+
+<p>
+  Détail d'écriture : <code>500 * 1024 * 1024</code> plutôt que <code>524288000</code>. JS évalue
+  la multiplication à la définition (une seule fois, au chargement du module) — on garde donc la
+  lisibilité sans coût. C'est une habitude qu'on retrouve partout dans le projet.
+</p>
+
+<h2>Où ces constantes sont utilisées</h2>
+
+<table class="api-table">
+  <tr><th>Constante</th><th>Utilisée dans</th></tr>
+  <tr><td>LIMITS.VIDEO_MAX_BYTES</td><td>Plafond multer côté <a href="#/borne-routes-videos">Borne</a> et <a href="#/hub-routes-sync">Hub</a> (anti-saturation disque).</td></tr>
+  <tr><td>LIMITS.QUESTION_*</td><td>Validation des questions dans <a href="#/core-validate">validate.js</a>.</td></tr>
+  <tr><td>LIMITS.DISK_ALERT_BYTES</td><td>Seuil d'alerte disque du <a href="#/borne-routes-events">preflight</a> Borne.</td></tr>
+  <tr><td>DEFAULTS.MAX_DURATION_S / COUNTDOWN_S</td><td>Valeurs par défaut du schéma SQL et des routes questions.</td></tr>
+  <tr><td>DEFAULTS.CONSENT_TEXT</td><td>Texte de consentement servi au kiosque si l'événement n'en définit pas.</td></tr>
+  <tr><td>STATUS_ORDER</td><td>Vérification des transitions de statut (machine à états).</td></tr>
+</table>
+
+<div class="callout tip">
+  <div class="callout-title">💡 Recette : ajouter une limite ou un statut</div>
+  <p>
+    Ajoute la valeur ici, dans <code>LIMITS</code>/<code>DEFAULTS</code>/<code>EVENT_STATUS</code>,
+    puis importe-la là où tu en as besoin. Pour un nouveau <strong>statut</strong>, pense à
+    l'ajouter aussi à <code>STATUS_ORDER</code> (sinon les vérifications de transition le
+    rejetteront) <em>et</em> aux contraintes <code>CHECK(...)</code> des schémas SQL dans
+    <a href="#/hub-registry">registry.js</a> / <a href="#/borne-registry">borne registry.js</a>,
+    qui dupliquent volontairement la liste pour que SQLite refuse une valeur illégale.
+  </p>
+</div>

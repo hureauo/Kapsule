@@ -1,0 +1,112 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/scripts/create-admin.js</h1>
+
+<p>
+  Un script en ligne de commande pour créer le <strong>premier compte admin</strong> du Hub.
+  Comme l'inscription publique est désactivée par défaut (<a href="#/hub-routes-auth">routes/auth</a>),
+  c'est le moyen de bootstrapper un admin. Il s'exécute en interactif dans le conteneur :
+</p>
+<pre><code>docker compose -f docker-compose.hub.yml run --rm backend npm run create-admin</code></pre>
+
+<p>Le fichier entier :</p>
+<pre><code class="js">#!/usr/bin/env node
+import readline from 'node:readline';
+import argon2 from 'argon2';
+import { config } from '../config.js';
+import { openRegistry, getUserByEmail, insertUser } from '../registry.js';
+
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const ask = (q) =&gt; new Promise((resolve) =&gt; rl.question(q, resolve));
+
+async function main() {
+  const db = openRegistry(config.dataDir);
+  console.log('=== Création du compte admin Kapsule Hub ===\n');
+
+  const email = (await ask('Email : ')).trim();
+  if (!email) { console.error('Email requis.'); process.exit(1); }
+
+  const existing = getUserByEmail(db, email);
+  if (existing) { console.error(`Un compte existe déjà pour ${email}.`); process.exit(1); }
+
+  const password = (await ask('Mot de passe : ')).trim();
+  if (password.length &lt; 8) { console.error('Le mot de passe doit faire au moins 8 caractères.'); process.exit(1); }
+
+  const name = (await ask('Nom (optionnel) : ')).trim() || null;
+  rl.close();
+
+  const password_hash = await argon2.hash(password, { type: argon2.argon2id });
+  insertUser(db, { email, password_hash, name, role: 'admin' });
+  console.log(`\nCompte admin créé pour ${email}.`);
+}
+
+main().catch((err) =&gt; { console.error(err.message); process.exit(1); });</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le shebang <code>#!/usr/bin/env node</code></span>
+  </div>
+  <p>
+    La première ligne <code>#!/usr/bin/env node</code> est un <strong>shebang</strong> : sous Unix,
+    elle indique quel interpréteur exécute le fichier s'il est lancé directement
+    (<code>./create-admin.js</code>). <code>/usr/bin/env node</code> trouve <code>node</code> dans
+    le PATH. Identique au <code>#!/usr/bin/env python3</code> que tu connais. Ici le script est de
+    toute façon lancé via <code>npm run create-admin</code>, donc le shebang est surtout une
+    convention.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>readline</code> — lire l'entrée clavier</span>
+  </div>
+  <p>
+    Le module <code>readline</code> lit les saisies au clavier (<code>process.stdin</code>). Son
+    API est à callback : <code>rl.question(prompt, callback)</code>. Le script la
+    <strong>promisifie</strong> pour pouvoir l'utiliser avec <code>await</code> :
+  </p>
+  <pre><code class="js">const ask = (q) =&gt; new Promise((resolve) =&gt; rl.question(q, resolve));
+// puis : const email = await ask('Email : ');</code></pre>
+  <p>
+    On retrouve le même motif que partout (envelopper un callback dans une Promise — voir
+    <a href="#/core-checksum">checksum.js</a>). Résultat : une fonction <code>main</code> async
+    lisible, où chaque <code>await ask(...)</code> attend la saisie de l'utilisateur.
+  </p>
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent</th></tr>
+    <tr><td class="lang">Python</td><td><code>input("Email : ")</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>bufio.NewReader(os.Stdin).ReadString('\n')</code></td></tr>
+  </table>
+</div>
+
+<h2>Le déroulé</h2>
+<ol>
+  <li>Ouvre le registry (crée la base si besoin).</li>
+  <li>Demande l'email ; refuse si vide ou déjà utilisé (<code>process.exit(1)</code> = sortie en erreur).</li>
+  <li>Demande le mot de passe ; refuse si &lt; 8 caractères.</li>
+  <li>Demande un nom optionnel (<code>… || null</code> : chaîne vide → <code>null</code>).</li>
+  <li>Hache le mot de passe avec <a href="#/hub-routes-auth">argon2</a> et insère l'utilisateur avec <code>role: 'admin'</code>.</li>
+</ol>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>main().catch(...)</code> — gérer l'échec d'une fonction async</span>
+  </div>
+  <p>
+    Une fonction <code>async</code> retourne une Promise. Pour attraper une erreur au niveau
+    racine (il n'y a pas de <code>await</code> englobant), on chaîne <code>.catch()</code> :
+    <code>main().catch((err) =&gt; { console.error(err.message); process.exit(1); })</code>. Si quoi
+    que ce soit lève dans <code>main</code>, on affiche le message et on sort avec un code d'erreur.
+    <code>process.exit(1)</code> termine le processus (≈ <code>sys.exit(1)</code> /
+    <code>os.Exit(1)</code>) ; <code>0</code> = succès, non-zéro = erreur.
+  </p>
+</div>
+
+<table class="api-table">
+  <tr><th>Élément</th><th>Détail</th></tr>
+  <tr><td>Usage</td><td><code>npm run create-admin</code> dans le conteneur backend.</td></tr>
+  <tr><td>Crée</td><td>Un utilisateur <code>role: 'admin'</code> dans <code>registry.users</code>.</td></tr>
+  <tr><td>Garde-fous</td><td>Email non vide et unique, mot de passe ≥ 8 caractères.</td></tr>
+</table>

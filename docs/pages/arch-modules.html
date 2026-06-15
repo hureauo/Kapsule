@@ -1,0 +1,131 @@
+<div class="page-kicker">1 — Architecture</div>
+<h1>ESM : import / export</h1>
+
+<p>
+  Kapsule utilise les <strong>modules ES</strong> (ESM) : la syntaxe <code>import</code> /
+  <code>export</code>. C'est le système de modules standard de JavaScript moderne. Tu connais
+  déjà l'idée (les <code>import</code> de Python, les packages de Go), mais JS a deux systèmes
+  de modules concurrents et il faut savoir lequel on utilise et pourquoi.
+</p>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">ESM vs CommonJS — les deux systèmes de modules de Node</span>
+  </div>
+  <p>
+    Historiquement, Node utilisait <strong>CommonJS</strong> (CJS) : on importe avec
+    <code>require()</code> et on exporte en assignant à <code>module.exports</code>. C'est encore
+    très répandu. Puis JavaScript a standardisé <strong>ESM</strong> :
+    <code>import</code> / <code>export</code>, qui est aussi ce qu'utilisent les navigateurs.
+  </p>
+
+  <table class="compare">
+    <tr><th></th><th>CommonJS (ancien)</th><th>ESM (Kapsule)</th></tr>
+    <tr><td class="lang">Importer</td><td><code>const x = require('m')</code></td><td><code>import x from 'm'</code></td></tr>
+    <tr><td class="lang">Importer nommé</td><td><code>const {a} = require('m')</code></td><td><code>import { a } from 'm'</code></td></tr>
+    <tr><td class="lang">Exporter</td><td><code>module.exports = x</code></td><td><code>export default x</code></td></tr>
+    <tr><td class="lang">Exporter nommé</td><td><code>exports.a = …</code></td><td><code>export const a = …</code></td></tr>
+  </table>
+
+  <p>
+    On active ESM avec <code>"type": "module"</code> dans le <span class="path">package.json</span>
+    (ce que fait Kapsule à la racine — voir <a href="#/arch-monorepo">Monorepo</a>). Sans ce
+    champ, Node interprète les <code>.js</code> comme du CommonJS.
+  </p>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Analogie</th></tr>
+    <tr><td class="lang">Python</td><td><code>from module import a</code> ≈ <code>import { a } from './module.js'</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>import "pkg"</code> puis <code>pkg.Func()</code> ≈ <code>import * as pkg</code></td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      <strong>Différences techniques qui comptent :</strong>
+    </p>
+    <ul>
+      <li>
+        ESM est <em>statique</em> : les <code>import</code> sont résolus avant l'exécution du
+        corps du fichier, et doivent être au niveau racine (pas dans un <code>if</code>). Pour un
+        import conditionnel, on utilise <code>import()</code> (dynamique, qui renvoie une Promise) —
+        Kapsule s'en sert dans le <a href="#/hub-worker">worker</a>.
+      </li>
+      <li>
+        En ESM, <code>require</code>, <code>module</code>, <code>__dirname</code>,
+        <code>__filename</code> <strong>n'existent pas</strong>. Pour retrouver le chemin du
+        fichier courant, on utilise <code>import.meta.url</code> (voir
+        <a href="#/arch-demarrage">Flux de démarrage</a>).
+      </li>
+      <li>
+        Les <code>export</code> ESM sont des <em>liaisons vivantes</em> (live bindings) : si un
+        module exporte <code>let x</code> et le modifie plus tard, les importateurs voient la
+        nouvelle valeur. CommonJS, lui, copie la valeur au moment du <code>require</code>. Ce
+        détail explique une astuce de test dans Kapsule (muter <code>config.allowRegister</code>
+        sur l'objet importé — voir <a href="#/tests-runner">Tests</a>).
+      </li>
+    </ul>
+  </div>
+</div>
+
+<h2>Les formes d'import/export utilisées dans Kapsule</h2>
+
+<h3>Export nommé (le plus courant)</h3>
+<p>Dans <span class="path">packages/core/src/constants.js</span> :</p>
+<pre><code class="js">export const EVENT_STATUS = {
+  DRAFT: 'draft',
+  READY: 'ready',
+  // …
+};
+export const LIMITS = { /* … */ };</code></pre>
+<p>Et on les importe en les nommant entre accolades :</p>
+<pre><code class="js">import { LIMITS, STATUS_ORDER } from './constants.js';</code></pre>
+
+<h3>Export par défaut</h3>
+<p>
+  Un module peut avoir <strong>un seul</strong> export « par défaut ». Kapsule l'utilise par
+  exemple pour le hook React et pour les paquets externes :
+</p>
+<pre><code class="js">// définition (apps/borne/web/src/hooks/useMediaRecorder.js)
+export default function useMediaRecorder({ maxDuration = 60 } = {}) { /* … */ }
+
+// import : pas d'accolades, on choisit le nom
+import useMediaRecorder from './hooks/useMediaRecorder.js';
+import Database from 'better-sqlite3';   // export par défaut du paquet</code></pre>
+
+<h3>Renommage à l'import</h3>
+<p>Avec <code>as</code>, fréquent pour <code>uuid</code> dans le projet :</p>
+<pre><code class="js">import { v4 as uuidv4 } from 'uuid';
+// on importe l'export nommé `v4`, qu'on appelle localement `uuidv4`</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Piège venant de Python/Go : l'extension <code>.js</code> est obligatoire</div>
+  <p>
+    En ESM côté Node, les imports de fichiers locaux <strong>doivent</strong> inclure l'extension :
+    <code>import './constants.js'</code>, pas <code>import './constants'</code>. Node ne « devine »
+    pas l'extension comme le font Python ou les bundlers. Tu verras donc des <code>.js</code>
+    partout dans les imports relatifs du projet. (Les paquets de <code>node_modules</code>, eux,
+    s'importent par leur nom sans extension : <code>import 'express'</code>.)
+  </p>
+</div>
+
+<h2>Pourquoi ESM (et pas CommonJS) dans ce projet ?</h2>
+<ul>
+  <li>
+    <strong>Cohérence front/back</strong> : les fronts React (<span class="path">apps/*/web</span>)
+    utilisent ESM nativement (c'est le standard navigateur). Utiliser ESM aussi côté serveur
+    évite de jongler entre deux syntaxes selon le fichier.
+  </li>
+  <li>
+    <strong>C'est la direction de l'écosystème</strong> : ESM est le format standardisé, CommonJS
+    est l'héritage. Un projet neuf qui vise Node 20+ n'a pas de raison de partir sur CJS.
+  </li>
+  <li>
+    <strong>Imports dynamiques propres</strong> : <code>import()</code> permet le chargement
+    paresseux (worker), avec une sémantique claire de Promise.
+  </li>
+</ul>
+<p>
+  On revient sur ce choix, et son revers (certaines libs natives s'intègrent plus facilement en
+  CJS), dans <a href="#/decisions">Décisions d'architecture</a>.
+</p>

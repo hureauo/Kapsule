@@ -1,0 +1,174 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/routes/events.js</h1>
+
+<p>
+  Le CRUD des événements côté Hub : créer, lister, lire, modifier, changer de statut, assigner une
+  borne, supprimer (purge RGPD). C'est le routeur le plus complet — il illustre <code>Set</code>,
+  <code>Map</code>, la gestion des transitions de statut, et un invariant de purge.
+</p>
+
+<h2>Statuts gelés : un <code>Set</code></h2>
+<pre><code class="js">const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
+function isFrozen(status) { return FROZEN_STATUSES.has(status); }</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le <code>Set</code> — un ensemble</span>
+  </div>
+  <p>
+    Un <code>Set</code> est une collection de valeurs <strong>uniques</strong>, optimisée pour le
+    test d'appartenance <code>.has(x)</code> en O(1). Ici il répond à « ce statut interdit-il
+    l'édition ? ». On pourrait utiliser un tableau + <code>.includes()</code>, mais le
+    <code>Set</code> exprime mieux l'intention (un ensemble, pas une liste ordonnée) et reste O(1)
+    quel que soit le nombre d'éléments.
+  </p>
+  <table class="compare">
+    <tr><th>Langage</th><th>Équivalent</th></tr>
+    <tr><td class="lang">Python</td><td><code>frozenset({...})</code> + <code>x in s</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>map[string]struct{}</code> (idiome set)</td></tr>
+    <tr><td class="lang">JS</td><td><code>new Set([...])</code> + <code>s.has(x)</code></td></tr>
+  </table>
+</div>
+
+<p>
+  La logique métier : une fois qu'un événement est <code>live</code> (ou au-delà), on ne peut plus
+  l'éditer depuis le Hub — il « appartient » à la Borne en cours d'utilisation. Les routes PUT
+  vérifient <code>isFrozen()</code> et répondent 409 si c'est le cas.
+</p>
+
+<h2>Transitions manuelles : une <code>Map</code></h2>
+<pre><code class="js">// Transitions manuelles autorisées : draft↔ready uniquement
+const MANUAL_TRANSITIONS = new Map([
+  ['draft', 'ready'],
+  ['ready', 'draft'],
+]);</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le <code>Map</code> comme table de correspondance</span>
+  </div>
+  <p>
+    On a déjà vu <code>Map</code> pour le cache LRU (<a href="#/hub-eventstore">eventStore</a>).
+    Ici il sert de simple table : « depuis tel statut, la seule transition manuelle permise mène à
+    tel autre ». <code>MANUAL_TRANSITIONS.get('draft')</code> renvoie <code>'ready'</code>. On
+    l'initialise depuis un tableau de paires <code>[clé, valeur]</code>.
+  </p>
+  <p>
+    Pourquoi une <code>Map</code> et pas un objet ? Ici un objet conviendrait. Le choix de
+    <code>Map</code> est cohérent avec le reste du fichier et exprime « correspondance dynamique »
+    plutôt que « structure fixe ». La logique : seules les transitions
+    <code>draft↔ready</code> sont déclenchées à la main par le client ; toutes les autres
+    (<code>loaded</code>, <code>live</code>, <code>pushed</code>…) sont posées automatiquement par
+    la Borne ou le worker.
+  </p>
+</div>
+
+<p>Vérification dans <code>PUT /:eventId/status</code> :</p>
+<pre><code class="js">const allowed = MANUAL_TRANSITIONS.get(event.status);
+if (allowed !== status) {
+  return res.status(400).json({
+    error: `Transition non autorisée : ${event.status} → ${status}. Seules draft↔ready sont manuelles.`,
+  });
+}</code></pre>
+
+<h2>Création d'un événement</h2>
+<pre><code class="js">router.post('/', requireUser, (req, res, next) => {
+  try {
+    const { name, event_date } = req.body;
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'name requis' });
+    }
+    const id = uuidv4();                              // identifiant unique
+    const eventDir = join(dataDir, 'events', id);
+    mkdirSync(eventDir, { recursive: true });          // crée le dossier de l'événement
+
+    const db = getDb();
+    insertEvent(db, { id, owner_id: req.user.sub, name: name.trim(), event_date: event_date ?? null });
+    openEventDb(id, dataDir);    // initialise db.sqlite + 4 questions par défaut
+
+    res.status(201).json(getEvent(db, id));
+  } catch (err) { next(err); }
+});</code></pre>
+<p>
+  Trois effets coordonnés : (1) une fiche dans <code>registry.events</code>, (2) un dossier
+  <span class="path">events/&lt;id&gt;/</span>, (3) un <code>db.sqlite</code> initialisé (via
+  <a href="#/hub-eventstore">openEventDb</a>, qui appelle <a href="#/core-eventdbschema">createEventDb</a>
+  et seede les questions). L'<code>uuidv4()</code> vient du paquet <code>uuid</code> (importé
+  <code>{ v4 as uuidv4 }</code>). <code>req.user.sub</code> est l'id du propriétaire, posé par
+  <a href="#/hub-middleware-auth">requireUser</a>.
+</p>
+
+<h2>La purge RGPD : <code>DELETE /:eventId</code></h2>
+<pre><code class="js">router.delete('/:eventId', requireUser, requireOwner, (req, res, next) => {
+  try {
+    const event = req.event;
+    const { confirm } = req.body;
+    if (!confirm || confirm.trim() !== event.name.trim()) {
+      return res.status(400).json({ error: 'Confirmation invalide : fournir { confirm: "<nom exact>" }' });
+    }
+
+    closeEventDb(event.id);                            // §11.11 : fermer AVANT rm -rf
+    const eventDir = join(dataDir, 'events', event.id);
+    rmSync(eventDir, { recursive: true, force: true }); // supprime tout le dossier
+
+    const db = getDb();
+    updateEvent(db, event.id, { status: 'purged', purged_at: new Date().toISOString() });
+    insertSyncLog(db, { event_id: event.id, action: 'purge', detail: { name: event.name } });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Deux protections imbriquées sur la purge</div>
+  <ol>
+    <li>
+      <strong>Confirmation par le nom</strong> : le client doit renvoyer le nom exact de
+      l'événement dans <code>confirm</code>. Empêche une suppression accidentelle (et une CSRF
+      aveugle). Le <code>.trim()</code> des deux côtés tolère les espaces.
+    </li>
+    <li>
+      <strong>§11.11 — <code>closeEventDb</code> avant <code>rmSync</code></strong> : on ferme le
+      handle SQLite <em>avant</em> de supprimer le dossier (voir
+      <a href="#/hub-eventstore">eventStore</a>). Supprimer un fichier de base encore ouvert
+      laisse SQLite dans un état incohérent.
+    </li>
+  </ol>
+  <p>
+    Après la suppression physique, l'événement reste dans <code>registry.events</code> mais passe
+    en statut <code>purged</code> avec <code>purged_at</code> — on garde la <em>trace</em> qu'il a
+    existé (audit, facturation), sans aucune donnée invité. C'est cohérent avec l'invariant RGPD
+    §11.13 : le registry ne contient toujours pas de donnée personnelle.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Petits idiomes : spread dans une réponse, <code>new Date().toISOString()</code></span>
+  </div>
+  <p>
+    <code>new Date().toISOString()</code> produit un horodatage UTC normalisé
+    (<code>"2026-06-15T10:30:00.000Z"</code>) — le format stocké partout dans les colonnes
+    <code>*_at</code> qu'on remplit côté code (les autres ont <code>DEFAULT CURRENT_TIMESTAMP</code>
+    côté SQLite).
+  </p>
+  <p>
+    Dans la route GET sync (non montrée ici), la réponse compose plusieurs sources avec le spread :
+    <code>{ ...freshEvent, meta }</code> copie tous les champs de <code>freshEvent</code> puis
+    ajoute <code>meta</code>. C'est l'équivalent de <code>{**dict, "meta": meta}</code> en Python.
+  </p>
+</div>
+
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Auth</th><th>Rôle</th></tr>
+  <tr><td>GET /</td><td>user</td><td>Liste les événements (filtrés par propriétaire sauf admin).</td></tr>
+  <tr><td>POST /</td><td>user</td><td>Crée un événement (fiche + dossier + db.sqlite).</td></tr>
+  <tr><td>GET /:eventId</td><td>user+owner</td><td>Détail (sert <code>req.event</code>).</td></tr>
+  <tr><td>PUT /:eventId</td><td>user+owner</td><td>Modifie nom/date + <code>consent_text</code>/<code>idle_timeout</code> (écrits dans event_meta). 409 si gelé.</td></tr>
+  <tr><td>PUT /:eventId/status</td><td>user+owner</td><td>Transition manuelle draft↔ready uniquement.</td></tr>
+  <tr><td>GET /:eventId/sync</td><td>user+owner</td><td>État de synchro (jobs, sync_log, borne).</td></tr>
+  <tr><td>PUT /:eventId/assign</td><td>user+owner</td><td>Assigne une borne (<code>box_id</code>).</td></tr>
+  <tr><td>DELETE /:eventId</td><td>user+owner</td><td>Purge RGPD (confirmation + §11.11).</td></tr>
+</table>

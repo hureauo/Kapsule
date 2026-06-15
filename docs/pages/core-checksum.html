@@ -1,0 +1,150 @@
+<div class="page-kicker">2 — Le package partagé</div>
+<h1>core/checksum.js</h1>
+
+<p>
+  Une seule fonction : <code>sha256File(filePath)</code>, qui calcule l'empreinte SHA-256 d'un
+  fichier. Elle sert à vérifier qu'une vidéo (ou un <code>db.sqlite</code>) n'a pas été corrompue
+  pendant le transfert Borne → Hub. C'est aussi la page idéale pour comprendre deux notions Node
+  fondamentales : les <strong>streams</strong> et la construction manuelle d'une
+  <strong>Promise</strong>.
+</p>
+
+<p>Le fichier entier :</p>
+<pre><code class="js">import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+
+export function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('data', chunk => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', reject);
+  });
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le préfixe <code>node:</code> des modules natifs</span>
+  </div>
+  <p>
+    <code>import { createHash } from 'node:crypto'</code> : le préfixe <code>node:</code> désigne
+    explicitement un module <strong>intégré à Node</strong> (la bibliothèque standard), par
+    opposition à un paquet de <span class="path">node_modules</span>. <code>crypto</code> (hash,
+    chiffrement), <code>fs</code> (fichiers), <code>path</code> (chemins), <code>os</code>… sont
+    tous des modules <code>node:</code>.
+  </p>
+  <p>
+    Le préfixe est optionnel historiquement (<code>'crypto'</code> marche aussi) mais recommandé :
+    il lève toute ambiguïté avec un éventuel paquet installé du même nom, et c'est la convention
+    du projet. C'est l'équivalent de la stdlib Python (<code>import hashlib</code>) ou des paquets
+    standard Go (<code>crypto/sha256</code>).
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Les streams Node (lecture par morceaux)</span>
+  </div>
+  <p>
+    <code>createReadStream(filePath)</code> ouvre le fichier en <strong>flux</strong> : au lieu de
+    charger tout le contenu en mémoire (<code>readFileSync</code>), il émet le fichier par
+    <em>morceaux</em> (chunks). Indispensable ici : une vidéo peut faire 500 Mo — la charger
+    entièrement saturerait la RAM.
+  </p>
+  <p>
+    Un stream est un <strong>émetteur d'événements</strong> : on s'abonne avec
+    <code>.on('événement', callback)</code>. Les trois événements utilisés :
+  </p>
+  <ul>
+    <li><code>'data'</code> — émis pour chaque chunk reçu ; on alimente le hash au fur et à mesure
+        avec <code>hash.update(chunk)</code>.</li>
+    <li><code>'end'</code> — émis quand tout le fichier est lu ; on finalise avec
+        <code>hash.digest('hex')</code> (l'empreinte en hexadécimal).</li>
+    <li><code>'error'</code> — émis en cas de problème (fichier introuvable, lecture échouée).</li>
+  </ul>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Analogie</th></tr>
+    <tr><td class="lang">Python</td><td>lire par blocs : <code>while chunk := f.read(8192): h.update(chunk)</code></td></tr>
+    <tr><td class="lang">Go</td><td><code>io.Copy(hasher, file)</code> — le hasher est un <code>io.Writer</code></td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      Le modèle « émetteur d'événements » (<code>EventEmitter</code>) est partout en Node : un
+      stream, un serveur HTTP, un processus enfant… exposent tous <code>.on(event, cb)</code>.
+      C'est le pendant « push » du modèle « pull » d'un itérateur. Node propose aussi une syntaxe
+      « pull » sur les streams via <code>for await (const chunk of stream)</code> — Kapsule
+      l'utilise dans le <a href="#/borne-sync-push">push</a> pour relire un fichier en mémoire
+      avant de l'envoyer. Les deux approches lisent le même stream, l'une par callbacks, l'autre
+      par boucle asynchrone.
+    </p>
+  </div>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Construire une Promise « à la main »</span>
+  </div>
+  <p>
+    Les streams parlent en <em>callbacks</em> (<code>.on(...)</code>), mais le reste du code veut
+    <code>await sha256File(path)</code>. On fait donc le pont : on enveloppe les callbacks dans une
+    <strong>Promise</strong> construite manuellement.
+  </p>
+  <p>
+    <code>new Promise((resolve, reject) =&gt; {…})</code> reçoit une fonction avec deux leviers :
+  </p>
+  <ul>
+    <li><code>resolve(valeur)</code> — termine la Promise avec succès (ce que <code>await</code>
+        renverra). Ici : <code>resolve(hash.digest('hex'))</code> sur <code>'end'</code>.</li>
+    <li><code>reject(erreur)</code> — termine en échec (ce que <code>await</code> lèvera). Ici :
+        on passe directement <code>reject</code> comme handler de <code>'error'</code>.</li>
+  </ul>
+  <p>
+    Une fois la Promise résolue/rejetée, l'appelant peut faire <code>await sha256File(p)</code> et
+    récupérer la chaîne hex, ou attraper l'erreur dans un <code>try/catch</code>.
+  </p>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Analogie</th></tr>
+    <tr><td class="lang">Python</td><td>un <code>Future</code> qu'on résout via <code>future.set_result()</code> / <code>set_exception()</code></td></tr>
+    <tr><td class="lang">Go</td><td>une goroutine qui envoie le résultat (ou l'erreur) dans un channel</td></tr>
+    <tr><td class="lang">Kotlin</td><td><code>suspendCoroutine { cont -&gt; cont.resume(...) }</code></td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      Ce motif — « <em>promisifier</em> » une API à callbacks — est si courant que Node fournit
+      <code>util.promisify</code> pour les callbacks au format standard
+      <code>(err, result) =&gt; …</code>. Mais ici l'API est <em>événementielle</em> (plusieurs
+      événements <code>data</code>, puis <code>end</code> ou <code>error</code>), pas un simple
+      callback final — donc on construit la Promise nous-mêmes. Règle pratique :
+      <code>resolve</code>/<code>reject</code> ne prennent effet qu'une fois ; les appels suivants
+      sont ignorés. C'est pourquoi on peut passer <code>reject</code> à <code>'error'</code> sans
+      craindre qu'un <code>'data'</code> tardif ne casse quoi que ce soit.
+    </p>
+  </div>
+</div>
+
+<h2>Signature &amp; usage</h2>
+<table class="api-table">
+  <tr><th>Élément</th><th>Détail</th></tr>
+  <tr><td>sha256File(filePath)</td><td><strong>Async</strong> (retourne une <code>Promise&lt;string&gt;</code>). Résout avec l'empreinte SHA-256 hexadécimale du fichier ; rejette si le fichier est illisible.</td></tr>
+  <tr><td>Mémoire</td><td>Constante quelle que soit la taille du fichier (lecture en streaming).</td></tr>
+  <tr><td>Qui l'appelle</td><td><a href="#/borne-routes-videos">borne/routes/videos.js</a> (au moment de l'upload), <a href="#/borne-sync-push">sync/push.js</a> (avant envoi), <a href="#/hub-routes-sync">hub/routes/sync.js</a> (à la réception, pour comparer).</td></tr>
+</table>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Le rôle du checksum dans le push</div>
+  <p>
+    La Borne calcule le SHA-256 de chaque vidéo avant l'envoi et l'inscrit dans le
+    <a href="#/glossaire">manifest</a>. À la réception, le Hub <strong>recalcule</strong> le
+    SHA-256 du fichier reçu et le compare à celui annoncé. S'ils diffèrent → fichier corrompu en
+    transit → le Hub répond <code>422</code> et la Borne réessaie. C'est la garantie d'intégrité
+    bout-en-bout du transfert vidéo. Détaillé dans <a href="#/flux-push-pull">Flux push/pull</a>.
+  </p>
+</div>

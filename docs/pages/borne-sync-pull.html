@@ -1,0 +1,125 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/sync/pull.js</h1>
+
+<p>
+  Le pull : tirer un événement préparé sur le Hub et l'installer localement (questions, réglages).
+  C'est ce qui se passe <em>avant</em> l'événement, quand la Borne a du réseau. Ce fichier porte un
+  invariant subtil mais important : la vérification du statut local <strong>au moment d'appliquer</strong>
+  la réponse (§11.10).
+</p>
+
+<h2><code>pullEvent</code> : tirer un événement précis</h2>
+<pre><code class="js">export async function pullEvent(hubEventId, dataDir) {
+  // 1. Requête Hub (peut échouer → lève)
+  const bundle = await hubFetchJson(`/api/sync/events/${hubEventId}/bundle`);
+
+  // 2. Vérifie le statut LOCAL au moment d'appliquer (invariant §11.10)
+  const db = getRegistry();
+  const existing = db.prepare('SELECT * FROM local_events WHERE id = ?').get(hubEventId);
+  if (existing &amp;&amp; existing.status !== 'loaded') {
+    // Événement passé live/closed entre la requête et la réponse — ne pas écraser
+    return { skipped: true, reason: `statut local ${existing.status} — pull ignoré` };
+  }
+
+  // 3. Crée/met à jour l'event local
+  const eventDir = join(dataDir, 'events', hubEventId);
+  mkdirSync(eventDir, { recursive: true });
+  mkdirSync(join(eventDir, 'videos'), { recursive: true });
+  if (!existing) {
+    insertEvent({ id: hubEventId, name: bundle.event.name, origin: 'hub', status: 'loaded' });
+  }
+  // 4. Met à jour pulled_at
+  db.prepare('UPDATE local_events SET pulled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(hubEventId);
+
+  // 5. Écrit questions + event_meta dans la BD événement (le Hub est source de vérité)
+  const edb = createEventDb(join(eventDir, 'db.sqlite'));
+  try {
+    edb.transaction(() =&gt; {
+      edb.prepare('DELETE FROM questions').run();                 // vide
+      const ins = edb.prepare('INSERT INTO questions (id, text, max_duration, countdown, order_index, enabled) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const q of bundle.questions) ins.run(q.id, q.text, q.max_duration, q.countdown, q.order_index, q.enabled ?? 1);
+    })();
+    // … upsert event_meta …
+  } finally {
+    edb.close();
+  }
+  return { ok: true, eventId: hubEventId, questions: bundle.questions.length };
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant §11.10 : vérifier le statut local À L'APPLICATION, pas au lancement</div>
+  <p>
+    Le piège : entre le moment où la Borne <em>demande</em> le bundle au Hub (étape 1) et le moment
+    où elle <em>reçoit</em> la réponse (étapes 2-5), du temps passe — potentiellement plusieurs
+    secondes sur un réseau lent. Pendant ce laps, un invité a pu commencer une session, faisant
+    passer l'événement local de <code>loaded</code> à <code>live</code>.
+  </p>
+  <p>
+    Si on appliquait le pull aveuglément, on <strong>écraserait les questions d'un événement en
+    cours</strong> (l'étape 5 fait <code>DELETE FROM questions</code> puis réinsère). D'où la
+    vérification à l'<strong>étape 2</strong>, faite <em>après</em> avoir reçu la réponse :
+    « l'événement local est-il <em>toujours</em> en <code>loaded</code> ? ». S'il est passé
+    <code>live</code>/<code>closed</code> entre-temps, on <strong>abandonne</strong> le pull
+    (<code>skipped: true</code>) sans rien écraser.
+  </p>
+  <p>
+    La règle générale : pour une opération « lire à distance puis appliquer localement », revérifie
+    l'état local <em>au moment d'appliquer</em>, pas au moment de lancer la requête. L'état a pu
+    changer pendant l'aller-retour réseau.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>try { … } finally { edb.close() }</code></span>
+  </div>
+  <p>
+    Le <code>finally</code> garantit que <code>edb.close()</code> est appelé <strong>quoi qu'il
+    arrive</strong> — même si l'insertion des questions lève une exception. Sans ça, une erreur en
+    plein milieu laisserait un handle SQLite ouvert (fuite). C'est le même rôle qu'un
+    <code>finally</code> Python ou un <code>defer</code> Go : du nettoyage garanti. Ici la base est
+    ouverte directement (hors cache <a href="#/borne-eventdb">eventDb</a>) car le pull manipule la
+    base d'un événement qui n'est pas forcément l'actif — donc on gère sa fermeture nous-mêmes.
+  </p>
+</div>
+
+<h2>Pourquoi <code>DELETE</code> puis réinsérer les questions ?</h2>
+<p>
+  Le Hub est la <strong>source de vérité</strong> pour les questions. Plutôt que de tenter une
+  synchro différentielle (compliquée : ajouts, suppressions, modifications), on remplace
+  intégralement : on vide les questions locales et on réinsère celles du bundle, le tout en
+  <a href="#/core-eventdbschema">transaction</a> (atomique). C'est simple et correct. Possible
+  uniquement parce que l'événement est en <code>loaded</code> (pas encore d'usage) — d'où le lien
+  avec l'invariant §11.10 ci-dessus.
+</p>
+
+<h2><code>pullAssigned</code> : tirer tous les événements assignés</h2>
+<pre><code class="js">export async function pullAssigned(dataDir) {
+  const assigned = await hubFetchJson('/api/sync/assigned');
+  let pulled = 0;
+  for (const ev of assigned) {
+    const db = getRegistry();
+    const existing = db.prepare('SELECT * FROM local_events WHERE id = ?').get(ev.id);
+    // Pull si : pas encore présent localement, ou encore en statut 'loaded' (re-pull autorisé)
+    if (!existing || existing.status === 'loaded') {
+      await pullEvent(ev.id, dataDir);
+      pulled++;
+    }
+  }
+  return pulled;
+}</code></pre>
+<p>
+  La Borne demande au Hub la liste des événements qui lui sont assignés
+  (<a href="#/hub-routes-sync">GET /assigned</a>), puis pulle chacun — <strong>mais seulement</strong>
+  s'il est absent localement ou encore en <code>loaded</code> (re-pull autorisé pour récupérer des
+  modifications de questions tant que l'événement n'a pas démarré). Un événement déjà
+  <code>live</code>/<code>closed</code> est ignoré ici aussi. C'est ce que le
+  <a href="#/borne-sync-autopull">pull automatique</a> appelle en boucle.
+</p>
+
+<table class="api-table">
+  <tr><th>Export</th><th>Détail</th></tr>
+  <tr><td>pullEvent(hubEventId, dataDir)</td><td>Tire un événement et l'applique (questions+meta). Abandonne si le statut local ≠ loaded (§11.10). Async.</td></tr>
+  <tr><td>pullAssigned(dataDir)</td><td>Tire tous les événements assignés absents ou en loaded. Retourne le nombre traité. Async.</td></tr>
+</table>

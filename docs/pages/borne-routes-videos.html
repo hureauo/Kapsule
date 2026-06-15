@@ -1,0 +1,197 @@
+<div class="page-kicker">4 — Le serveur Borne</div>
+<h1>borne/routes/videos.js — upload</h1>
+
+<p>
+  Le cœur de la Borne : recevoir les vidéos enregistrées par les invités, les servir, les
+  télécharger, les supprimer. Cette page concentre <strong>trois invariants critiques</strong> : le
+  <code>fileFilter</code> tolérant pour Safari (§11.4), la transaction de remplacement avec
+  <code>unlink</code> après commit (§11.9), et le streaming Range-aware (§11.3).
+</p>
+
+<h2>multer + le fileFilter Safari</h2>
+<pre><code class="js">const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.avi', '.mkv']);
+
+function makeMulter(dataDir) {
+  const storage = multer.diskStorage({
+    destination(req, file, cb) {
+      const active = getActiveEvent();
+      if (!active) return cb(new Error('Aucun événement actif'));
+      cb(null, join(dataDir, 'events', active.id, 'videos'));
+    },
+    filename(req, file, cb) {
+      const ext = extname(file.originalname).toLowerCase() || '.mp4';
+      cb(null, `${uuidv4()}${ext}`);                  // nom unique, on ne fait pas confiance au nom client
+    },
+  });
+
+  // fileFilter : tolère video/* ET les mimes génériques Safari avec extension vidéo (§11.4)
+  const fileFilter = (req, file, cb) =&gt; {
+    const mime = file.mimetype;
+    const ext = extname(file.originalname).toLowerCase();
+    const isVideoMime = mime.startsWith('video/');
+    const isGenericMime = mime === 'text/plain' || mime === 'application/octet-stream';
+    if (isVideoMime || (isGenericMime &amp;&amp; VIDEO_EXTENSIONS.has(ext))) cb(null, true);
+    else cb(Object.assign(new Error('Type de fichier non supporté'), { status: 400 }));
+  };
+
+  return multer({ storage, fileFilter, limits: { fileSize: LIMITS.VIDEO_MAX_BYTES } });
+}</code></pre>
+
+<a class="see-also" href="#/hub-routes-sync">→ notion JS : multer, diskStorage, cb(err, val) (vue dans hub/routes/sync.js)</a>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant §11.4 : le fileFilter doit tolérer les MIME génériques de Safari</div>
+  <p>
+    Quand l'iPad (Safari) uploade une vidéo enregistrée via <code>MediaRecorder</code>, il
+    <strong>n'envoie pas toujours un type MIME <code>video/*</code></strong> : selon les versions,
+    il met <code>application/octet-stream</code> ou même <code>text/plain</code>. Un filtre naïf qui
+    n'accepterait que <code>video/*</code> <strong>rejetterait les uploads iPad</strong> — or
+    l'iPad est la cible principale. La parade : accepter aussi les MIME génériques
+    <em>à condition</em> que l'extension du fichier soit une extension vidéo connue
+    (<code>VIDEO_EXTENSIONS</code>). On combine donc deux signaux faibles (MIME + extension) pour
+    une décision robuste. C'est un invariant Safari spécifique, facile à casser si on « durcit » le
+    filtre sans connaître ce contexte.
+  </p>
+</div>
+
+<p>
+  Le <code>filename</code> génère un <strong>nom unique</strong> (<code>uuidv4() + ext</code>) :
+  on ne réutilise jamais le nom du fichier client (collision, caractères dangereux). L'extension est
+  forcée en minuscules avec repli <code>.mp4</code>.
+</p>
+
+<h2>L'upload : ordre des gardes et nettoyage du fichier</h2>
+<pre><code class="js">router.post('/videos', upload.single('video'), async (req, res, next) =&gt; {
+  // multer a déjà stocké le fichier sur disque si on arrive ici
+  const ctx = requireActiveDb(res);
+  if (!ctx) {
+    if (req.file) unlink(req.file.path, () =&gt; {});   // nettoie le fichier orphelin
+    return;
+  }
+  const { active, db } = ctx;
+  const { session_id, question_id, question_text, recorded_at } = req.body;
+
+  // Vérifier req.file EN PREMIER — les guards suivants y accèdent via .path
+  if (!req.file) return res.status(400).json({ error: 'Fichier vidéo requis' });
+  if (!session_id)   { unlink(req.file.path, () =&gt; {}); return res.status(400).json({ error: 'session_id est requis' }); }
+  if (!question_text){ unlink(req.file.path, () =&gt; {}); return res.status(400).json({ error: 'question_text est requis' }); }
+
+  const session = db.prepare('SELECT id FROM sessions WHERE id=?').get(session_id);
+  if (!session) { unlink(req.file.path, () =&gt; {}); return res.status(400).json({ error: 'Session introuvable' }); }
+  // … suite : checksum + transaction (voir plus bas) …
+});</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">⚠ Pourquoi <code>unlink</code> à chaque garde ?</div>
+  <p>
+    multer écrit le fichier <strong>avant</strong> que le handler ne s'exécute (le middleware
+    <code>upload.single('video')</code> tourne en premier). Donc si une validation échoue ensuite
+    (pas de session_id, session inexistante…), le fichier est déjà sur le disque — il faut le
+    <strong>supprimer</strong> pour ne pas accumuler des orphelins. D'où l'<code>unlink</code>
+    répété. L'ordre des gardes compte : on teste <code>req.file</code> en premier car les suivantes
+    accèdent à <code>req.file.path</code>.
+  </p>
+</div>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>fs.unlink</code> en style callback</span>
+  </div>
+  <p>
+    <code>unlink(path, () =&gt; {})</code> supprime un fichier. Ici on utilise la version
+    <strong>callback</strong> de <code>fs</code> (pas <code>await</code>) avec un callback vide
+    <code>() =&gt; {}</code> : « supprime, et peu importe le résultat ». C'est un nettoyage
+    best-effort, fire-and-forget — on ne veut pas que l'échec d'un <code>unlink</code> (fichier déjà
+    parti) interrompe la réponse d'erreur en cours. À comparer avec <code>unlinkSync</code>
+    (synchrone) utilisé ailleurs quand on veut attendre.
+  </p>
+</div>
+
+<h2>La transaction de remplacement (§11.9)</h2>
+<pre><code class="js">const checksum = await sha256File(req.file.path);
+const id = uuidv4();
+const filename = req.file.filename;
+const mime_type = req.file.mimetype.startsWith('video/') ? req.file.mimetype : 'video/mp4';
+const size = req.file.size;
+
+// Remplacement transactionnel §5.2 + §11.9 : DELETE+INSERT en transaction,
+// unlink de l'ancien fichier APRÈS commit
+let oldFilename = null;
+db.transaction(() =&gt; {
+  if (question_id) {
+    const existing = db.prepare('SELECT filename FROM videos WHERE session_id=? AND question_id=?')
+      .get(session_id, question_id);
+    if (existing) {
+      oldFilename = existing.filename;
+      db.prepare('DELETE FROM videos WHERE session_id=? AND question_id=?').run(session_id, question_id);
+    }
+  }
+  db.prepare(`INSERT INTO videos (id, session_id, question_id, question_text, filename, mime_type, size, checksum, recorded_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    id, session_id, question_id ?? null, question_text, filename, mime_type, size, checksum,
+    recorded_at ?? new Date().toISOString());
+})();
+
+// unlink APRÈS commit (§11.9)
+if (oldFilename) {
+  unlink(join(dataDir, 'events', active.id, 'videos', oldFilename), () =&gt; {});
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant §11.9 : DELETE+INSERT en transaction, <code>unlink</code> APRÈS le commit</div>
+  <p>
+    Un invité peut <strong>ré-enregistrer</strong> sa réponse à une question (la contrainte
+    <code>UNIQUE(session_id, question_id)</code> du <a href="#/core-eventdbschema">schéma</a>
+    n'autorise qu'une vidéo par couple). Remplacer = supprimer l'ancienne ligne + insérer la
+    nouvelle. Deux règles vitales :
+  </p>
+  <ol>
+    <li>
+      <strong>DELETE et INSERT dans une seule transaction.</strong> Sinon, entre les deux, la
+      contrainte d'unicité pourrait être violée, ou un crash laisserait la session sans aucune
+      vidéo pour cette question. La transaction rend le remplacement atomique : soit l'ancienne est
+      remplacée par la nouvelle, soit rien ne change.
+    </li>
+    <li>
+      <strong><code>unlink</code> de l'ancien <em>fichier</em> APRÈS le commit.</strong> On mémorise
+      <code>oldFilename</code> <em>pendant</em> la transaction, mais on ne supprime le fichier
+      physique qu'<em>après</em> que la transaction a réussi. Pourquoi ? Si on supprimait le fichier
+      <em>avant</em> ou <em>pendant</em>, et que la transaction échouait (rollback), on aurait
+      perdu le fichier alors que la base pointe encore dessus → vidéo fantôme, données invité
+      perdues. En supprimant après commit, le fichier n'est effacé que si la base a réellement
+      basculé sur la nouvelle vidéo.
+    </li>
+  </ol>
+  <p>
+    C'est l'ordre « base d'abord (atomique), fichier ensuite » — un invariant qu'on retrouve dans
+    toute manipulation conjointe base+fichier du projet. Le casser introduit des incohérences
+    base/disque très difficiles à diagnostiquer.
+  </p>
+</div>
+
+<h2>Le streaming Range-aware (§11.3)</h2>
+<p>
+  La fonction <code>streamFile</code> de ce fichier implémente le même support Range que le Hub
+  (206 + <code>Content-Range</code>, lecture par tranche, <code>.pipe()</code>) — indispensable au
+  scrubbing vidéo dans le kiosque et l'admin.
+</p>
+<a class="see-also" href="#/hub-routes-gallery">→ notion JS : requêtes Range, 206, .pipe() (vue dans hub/routes/gallery.js)</a>
+<p>
+  Détail propre à la Borne : la route publique <code>GET /sessions/:sessionId/videos/:questionId/file</code>
+  permet à l'invité de <strong>revoir sa propre vidéo</strong> (via le capability token de session),
+  tandis que les routes <code>/videos/:id/file</code> et <code>/download</code> sont réservées à
+  l'admin (avec <code>auth</code>). Le <code>download</code> ajoute
+  <code>Content-Disposition: attachment</code> pour forcer le téléchargement.
+</p>
+
+<table class="api-table">
+  <tr><th>Endpoint</th><th>Auth</th><th>Rôle</th></tr>
+  <tr><td>POST /videos</td><td>public</td><td>Upload d'une vidéo invité (multer + checksum + transaction §11.9).</td></tr>
+  <tr><td>GET /sessions/:sid/videos/:qid/file</td><td>public (capability)</td><td>L'invité revoit sa vidéo (Range).</td></tr>
+  <tr><td>GET /videos</td><td>admin</td><td>Liste des vidéos (filtre optionnel par session).</td></tr>
+  <tr><td>GET /videos/export/csv</td><td>admin</td><td>Export CSV (anti-injection). <strong>Avant /:id</strong> (§11.1).</td></tr>
+  <tr><td>GET /videos/:id/file</td><td>admin</td><td>Stream Range-aware.</td></tr>
+  <tr><td>GET /videos/:id/download</td><td>admin</td><td>Idem + attachment.</td></tr>
+  <tr><td>DELETE /videos/:id</td><td>admin</td><td>Supprime ligne + fichier.</td></tr>
+</table>

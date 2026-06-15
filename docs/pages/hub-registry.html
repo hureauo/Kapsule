@@ -1,0 +1,186 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/registry.js — la base centrale</h1>
+
+<p>
+  Ce fichier gère <span class="path">registry.sqlite</span>, l'annuaire global du Hub. Il fait
+  deux choses : (1) ouvrir/initialiser la base (schéma des tables <code>users</code>,
+  <code>boxes</code>, <code>events</code>, <code>jobs</code>, <code>sync_log</code>), et (2)
+  fournir un jeu de fonctions d'accès (insert/get/update/delete) que les routes appellent. Rappel :
+  <strong>aucune donnée invité ici</strong> (invariant RGPD §11.13).
+</p>
+
+<h2>Le pattern singleton</h2>
+
+<pre><code class="js">import Database from 'better-sqlite3';
+import { join } from 'node:path';
+import { mkdirSync } from 'node:fs';
+
+let _db = null;                          // l'unique connexion, en variable de module
+
+export function openRegistry(dataDir) {
+  if (_db) return _db;                   // déjà ouverte → on la réutilise
+  mkdirSync(dataDir, { recursive: true });
+  const db = new Database(join(dataDir, 'registry.sqlite'));
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.exec(`CREATE TABLE IF NOT EXISTS users (…); …`);   // schéma (voir plus bas)
+  _db = db;
+  return db;
+}
+
+export function getDb() {
+  if (!_db) throw new Error('Registry not initialized — call openRegistry() first');
+  return _db;
+}
+
+export function closeRegistry() {
+  if (_db) { _db.close(); _db = null; }
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Le singleton « par module »</span>
+  </div>
+  <p>
+    Une variable déclarée au niveau d'un module (ici <code>let _db = null</code>) est
+    <strong>privée au fichier</strong> et <strong>partagée</strong> par tout le code qui l'importe
+    — parce qu'un module ES n'est évalué qu'une fois et mis en cache. C'est l'idiome JS du
+    singleton : pas besoin de classe ni de variable globale.
+  </p>
+  <p>
+    Le préfixe <code>_</code> de <code>_db</code> est une <strong>convention</strong> (« privé,
+    ne pas toucher de l'extérieur ») — JS n'a pas de vrai <code>private</code> au niveau module,
+    mais comme la variable n'est pas exportée, elle est de fait inaccessible ailleurs. On expose
+    seulement des fonctions : <code>openRegistry</code>, <code>getDb</code>,
+    <code>closeRegistry</code>.
+  </p>
+
+  <table class="compare">
+    <tr><th>Langage</th><th>Analogie</th></tr>
+    <tr><td class="lang">Python</td><td>une variable de niveau module (<code>_db = None</code>) dans un module importé une fois</td></tr>
+    <tr><td class="lang">Go</td><td>une variable de package non exportée + <code>sync.Once</code> pour l'init</td></tr>
+  </table>
+
+  <div class="js-deep">
+    <p>
+      Le trio <code>open / get / close</code> est un cycle de vie classique :
+      <code>openRegistry</code> est appelé une fois au démarrage (dans
+      <a href="#/hub-index">createApp</a>), <code>getDb</code> est utilisé partout ailleurs (et
+      <strong>lève</strong> si on a oublié d'ouvrir — fail-fast utile), et
+      <code>closeRegistry</code> existe surtout pour les <a href="#/tests-runner">tests</a> : entre
+      deux suites, on ferme et on rouvre sur un nouveau dossier temporaire pour repartir d'une base
+      vierge. En production, la connexion vit aussi longtemps que le processus.
+    </p>
+  </div>
+</div>
+
+<h2>Le schéma : contraintes SQL comme garde-fou</h2>
+<p>Extrait du schéma (table <code>events</code>) :</p>
+<pre><code class="js">CREATE TABLE IF NOT EXISTS events (
+  id           TEXT PRIMARY KEY,
+  owner_id     INTEGER NOT NULL REFERENCES users(id),
+  box_id       INTEGER REFERENCES boxes(id),
+  name         TEXT NOT NULL,
+  event_date   DATE,
+  status       TEXT NOT NULL DEFAULT 'draft'
+               CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
+  pulled_at    DATETIME, pushed_at DATETIME, processed_at DATETIME, purged_at DATETIME,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);</code></pre>
+<p>
+  Le <code>CHECK(status IN (…))</code> reproduit la liste de <code>STATUS_ORDER</code>
+  (<a href="#/core-constants">constants.js</a>) au niveau base : SQLite <strong>refuse</strong>
+  physiquement une valeur de statut hors liste. C'est une duplication assumée (la liste existe en
+  JS et en SQL) qui ajoute une dernière ligne de défense — même un bug applicatif ne peut pas
+  écrire un statut invalide. Idem pour <code>role CHECK(role IN ('admin','client'))</code> dans
+  <code>users</code>.
+</p>
+
+<h2>Les fonctions d'accès : <code>db</code> passé en argument</h2>
+
+<p>Toutes les fonctions reçoivent <code>db</code> en premier paramètre :</p>
+<pre><code class="js">export function getUserByEmail(db, email) {
+  return db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+}
+export function insertEvent(db, { id, owner_id, name, event_date = null }) {
+  return db.prepare('INSERT INTO events (id, owner_id, name, event_date) VALUES (?, ?, ?, ?)')
+    .run(id, owner_id, name, event_date);
+}</code></pre>
+<p>
+  Pourquoi passer <code>db</code> alors que <code>getDb()</code> existe ? Pour la
+  <strong>testabilité</strong> et la clarté : ces fonctions deviennent pures vis-à-vis de la base
+  (on peut leur passer n'importe quelle connexion, y compris une base de test), et l'appelant
+  contrôle explicitement quelle connexion il utilise. La méthode <code>.run()</code> renvoie
+  <code>{ changes, lastInsertRowid }</code> — on récupère souvent <code>lastInsertRowid</code> pour
+  connaître l'id auto-incrémenté qu'on vient de créer.
+</p>
+<a class="see-also" href="#/core-eventdbschema">→ notion JS : better-sqlite3 prepare/run/get/all (vue dans core/eventDbSchema)</a>
+
+<h2>L'UPDATE dynamique</h2>
+<p>
+  <code>updateEvent</code> mérite une lecture attentive — c'est un mini-générateur de SQL :
+</p>
+<pre><code class="js">export function updateEvent(db, id, fields) {
+  const allowed = ['name', 'event_date', 'box_id', 'status',
+    'pulled_at', 'pushed_at', 'processed_at', 'purged_at'];
+  const updates = Object.keys(fields)
+    .filter((k) => allowed.includes(k))      // ne garde que les colonnes autorisées
+    .map((k) => `${k} = ?`);                 // ['name = ?', 'status = ?', …]
+  if (updates.length === 0) return;
+  updates.push('updated_at = CURRENT_TIMESTAMP');
+  const values = Object.keys(fields).filter((k) => allowed.includes(k)).map((k) => fields[k]);
+  db.prepare(`UPDATE events SET ${updates.join(', ')} WHERE id = ?`).run(...values, id);
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>Object.keys</code>, <code>filter</code>/<code>map</code>, et le spread <code>...</code></span>
+  </div>
+  <ul>
+    <li><code>Object.keys(fields)</code> → tableau des noms de propriétés de l'objet (≈
+        <code>dict.keys()</code> Python).</li>
+    <li><code>.filter(predicat)</code> → garde les éléments qui passent le test. Ici : seulement
+        les colonnes de la liste blanche <code>allowed</code>.</li>
+    <li><code>.map(transform)</code> → transforme chaque élément. Ici : <code>'name'</code> →
+        <code>'name = ?'</code>.</li>
+    <li><code>.join(', ')</code> → recolle le tableau en une chaîne séparée par des virgules.</li>
+    <li><code>.run(...values, id)</code> → le <strong>spread</strong> <code>...values</code>
+        « étale » le tableau en arguments individuels, suivis de <code>id</code>.</li>
+  </ul>
+  <p>
+    La <strong>liste blanche</strong> <code>allowed</code> est une protection : seules ces
+    colonnes peuvent être modifiées, même si <code>fields</code> contient d'autres clés (envoyées
+    par un client malveillant). On ne construit jamais un nom de colonne à partir d'entrée brute
+    sans filtrer.
+  </p>
+
+  <div class="js-deep">
+    <p>
+      Subtilité de sécurité : les <em>valeurs</em> sont paramétrées (<code>?</code> + spread),
+      donc pas d'injection sur les valeurs. Mais les <em>noms de colonnes</em>, eux, sont
+      interpolés directement dans la chaîne (<code>${k} = ?</code>) — c'est inévitable, SQLite ne
+      permet pas de paramétrer un nom de colonne. D'où l'importance vitale de la liste blanche
+      <code>allowed</code> : sans elle, un attaquant pourrait injecter du SQL via une clé d'objet.
+      C'est le seul endroit où l'on interpole une partie de requête, et c'est verrouillé par la
+      whitelist.
+    </p>
+  </div>
+</div>
+
+<h2>Inventaire des fonctions exportées</h2>
+<table class="api-table">
+  <tr><th>Catégorie</th><th>Fonctions</th></tr>
+  <tr><td>Cycle de vie</td><td><code>openRegistry</code>, <code>getDb</code>, <code>closeRegistry</code></td></tr>
+  <tr><td>users</td><td><code>insertUser</code>, <code>getUserByEmail</code>, <code>getUserById</code></td></tr>
+  <tr><td>events</td><td><code>listEvents</code>, <code>getEvent</code>, <code>insertEvent</code>, <code>updateEvent</code>, <code>deleteEvent</code></td></tr>
+  <tr><td>boxes</td><td><code>listBoxes</code>, <code>insertBox</code>, <code>getBoxByTokenHash</code>, <code>updateBoxSeen</code>, <code>deleteBox</code></td></tr>
+  <tr><td>sync_log</td><td><code>insertSyncLog</code></td></tr>
+</table>
+<p>
+  À noter : <code>listEvents</code> filtre selon le rôle — un admin voit tous les événements, un
+  client seulement les siens (<code>WHERE owner_id = ?</code>). C'est le socle du cloisonnement,
+  renforcé par le middleware <a href="#/hub-middleware-auth">requireOwner</a>.
+</p>

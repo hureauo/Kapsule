@@ -1,0 +1,170 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/worker/index.js — file de jobs</h1>
+
+<p>
+  Après qu'un événement est poussé, il faut traiter les vidéos : les sonder (durée, dimensions),
+  générer des miniatures, créer l'archive ZIP. Ces tâches sont lourdes (ffmpeg) et asynchrones —
+  on ne les fait pas dans le handler HTTP. Le <strong>worker</strong> est un processus séparé qui
+  dépile en boucle les jobs de la table <code>jobs</code>. C'est la page de référence pour la
+  boucle de traitement, l'import dynamique, et le « claim » atomique.
+</p>
+
+<h2>La boucle principale</h2>
+<pre><code class="js">const POLL_IDLE_MS = 5000;   // attente si aucun job
+const POLL_BUSY_MS = 500;    // pause entre deux jobs (laisse respirer la DB)
+
+export async function loop(dataDir) {
+  const db = getDb();
+  recoverOrphans(db);                          // au démarrage : récupère les jobs crashés
+  console.log('[worker] démarré, en attente de jobs…');
+
+  while (true) {                               // boucle infinie
+    const job = claimNextJob(db);              // prend un job (atomique)
+    if (job) {
+      await processJob(db, job, dataDir);
+      await sleep(POLL_BUSY_MS);
+    } else {
+      await sleep(POLL_IDLE_MS);               // rien à faire → on attend plus longtemps
+    }
+  }
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>while (true)</code> + <code>await sleep()</code> = polling</span>
+  </div>
+  <p>
+    C'est un <em>worker par scrutation</em> (polling) : il interroge la base en boucle. La boucle
+    est <code>async</code> et chaque tour fait <code>await sleep(ms)</code> — où <code>sleep</code>
+    est une mini-Promise sur <code>setTimeout</code> :
+  </p>
+  <pre><code class="js">function sleep(ms) { return new Promise((r) =&gt; setTimeout(r, ms)); }</code></pre>
+  <p>
+    Pourquoi ça ne « bloque » pas le processus ? Parce que <code>await sleep()</code> rend la main
+    à la boucle d'événements pendant l'attente (voir <a href="#/hub-routes-auth">async/await</a>).
+    Le <code>setTimeout(r, ms)</code> programme la résolution de la Promise après <code>ms</code>,
+    sans occuper le CPU. Les deux délais (5 s à vide, 0,5 s entre jobs) évitent de marteler la
+    base SQLite quand il n'y a rien à faire.
+  </p>
+  <div class="js-deep">
+    <p>
+      Pourquoi du polling plutôt qu'une vraie file (BullMQ, Redis, RabbitMQ) ? Parce que c'est
+      <strong>simple et sans dépendance externe</strong>. La table <code>jobs</code> dans SQLite
+      <em>est</em> la file. Pour la charge attendue (quelques événements, quelques dizaines de
+      vidéos), un poll toutes les 5 s est largement suffisant et évite d'ajouter un Redis à
+      déployer. C'est un choix d'architecture assumé — voir <a href="#/decisions">Décisions</a>.
+      Le compromis : une latence jusqu'à 5 s avant qu'un nouveau job soit pris. Acceptable ici.
+    </p>
+  </div>
+</div>
+
+<h2>Le « claim » atomique</h2>
+<pre><code class="js">export function claimNextJob(db) {
+  return db.transaction(() => {
+    const job = db.prepare(`SELECT * FROM jobs WHERE status = 'pending'
+                            ORDER BY created_at ASC LIMIT 1`).get();
+    if (!job) return null;
+    db.prepare(`UPDATE jobs SET status = 'running', started_at = CURRENT_TIMESTAMP,
+                attempts = attempts + 1 WHERE id = ?`).run(job.id);
+    return job;
+  })();
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Pourquoi le SELECT + UPDATE est dans une transaction</div>
+  <p>
+    « Prendre un job » = le lire <em>et</em> le marquer <code>running</code>. Si ces deux étapes
+    n'étaient pas atomiques, deux workers (ou deux itérations concurrentes) pourraient lire le même
+    job <code>pending</code> avant que l'un le marque <code>running</code> → double traitement. La
+    <code>transaction()</code> garantit que le SELECT et l'UPDATE forment un tout indivisible.
+    Comme better-sqlite3 est <a href="#/core-eventdbschema">synchrone</a>, aucune autre opération
+    ne peut s'intercaler entre les deux — la transaction est réellement atomique. Le projet actuel
+    ne lance qu'un worker, mais ce verrouillage rend le design correct même avec plusieurs.
+  </p>
+</div>
+
+<h2>Récupération après crash</h2>
+<pre><code class="js">export function recoverOrphans(db) {
+  const result = db.prepare(
+    "UPDATE jobs SET status = 'pending', started_at = NULL WHERE status = 'running'"
+  ).run();
+  if (result.changes &gt; 0) console.log(`[worker] ${result.changes} job(s) orphelin(s) remis en pending`);
+}</code></pre>
+<p>
+  Si le worker crashe pendant un job, ce job reste <code>running</code> à jamais (personne ne le
+  finira). Au redémarrage, <code>recoverOrphans</code> repasse tous les <code>running</code> en
+  <code>pending</code> — ils seront retraités. C'est une récupération simple et robuste : on part du
+  principe qu'au démarrage, aucun job ne devrait légitimement être <code>running</code> (le worker
+  vient de démarrer). <code>result.changes</code> indique combien de lignes ont été modifiées.
+</p>
+
+<h2>L'import dynamique des handlers</h2>
+<pre><code class="js">let _handlers = null;
+async function getHandlers() {
+  if (!_handlers) {
+    const [{ runProbe }, { runThumbnail }, { runArchive }] = await Promise.all([
+      import('./jobs/probe.js'),
+      import('./jobs/thumbnail.js'),
+      import('./jobs/archive.js'),
+    ]);
+    _handlers = { probe: runProbe, thumbnail: runThumbnail, archive: runArchive };
+  }
+  return _handlers;
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title"><code>import()</code> dynamique + <code>Promise.all</code></span>
+  </div>
+  <p>
+    Au lieu d'un <code>import</code> statique en tête de fichier, on charge les handlers
+    <strong>à la demande</strong> avec <code>import('./jobs/probe.js')</code>. Contrairement à
+    l'<code>import</code> classique (statique, résolu au chargement), <code>import()</code> est une
+    <strong>fonction qui retourne une Promise</strong> — on peut donc l'appeler n'importe où, et
+    différer le chargement. Le commentaire du code l'explique : ça évite de bloquer le démarrage si
+    une dépendance optionnelle (comme <code>archiver</code>) n'est pas installée.
+  </p>
+  <p>
+    <code>Promise.all([...])</code> lance les trois imports <strong>en parallèle</strong> et attend
+    qu'ils soient tous résolus. Le <code>const [{ runProbe }, …] = await Promise.all(...)</code>
+    combine destructuring de tableau (les 3 résultats) et destructuring d'objet (extraire
+    <code>runProbe</code> de chaque module). <code>_handlers</code> est mémoïsé : les imports n'ont
+    lieu qu'une fois.
+  </p>
+  <table class="compare">
+    <tr><th>Forme</th><th>Quand</th></tr>
+    <tr><td class="lang">import statique</td><td>résolu au chargement du module, en haut du fichier</td></tr>
+    <tr><td class="lang">import() dynamique</td><td>résolu à l'exécution, retourne une Promise, chargement paresseux</td></tr>
+  </table>
+</div>
+
+<h2>Traiter un job et marquer l'événement <code>processed</code></h2>
+<pre><code class="js">// dans processJob : succès
+db.prepare(`UPDATE jobs SET status = 'done', finished_at = CURRENT_TIMESTAMP, error = NULL WHERE id = ?`).run(job.id);
+maybeMarkProcessed(db, job.event_id);
+
+// maybeMarkProcessed : si plus aucun job non-'done' pour cet événement → events.status = 'processed'
+const pending = db.prepare(`SELECT COUNT(*) AS n FROM jobs WHERE event_id = ? AND status NOT IN ('done')`).get(eventId);
+if (pending.n === 0) {
+  db.prepare(`UPDATE events SET status = 'processed', processed_at = CURRENT_TIMESTAMP
+              WHERE id = ? AND status = 'pushed'`).run(eventId);
+}</code></pre>
+<p>
+  Chaque fois qu'un job se termine, on vérifie s'il restait des jobs à faire pour cet événement.
+  Quand le dernier passe <code>done</code>, l'événement bascule <code>pushed → processed</code> :
+  toutes ses vidéos sont sondées, ses miniatures faites, son archive prête. La galerie devient
+  pleinement exploitable. Si un job <strong>échoue</strong>, il passe <code>failed</code> avec le
+  message d'erreur (tronqué à 500 caractères) — visible dans <a href="#/hub-routes-admin">overview</a>.
+</p>
+
+<table class="api-table">
+  <tr><th>Fonction</th><th>Rôle</th></tr>
+  <tr><td>loop(dataDir)</td><td>Boucle infinie de scrutation. Point d'entrée du processus worker.</td></tr>
+  <tr><td>claimNextJob(db)</td><td>Prend atomiquement le plus ancien job <code>pending</code> → <code>running</code>.</td></tr>
+  <tr><td>processJob(db, job, dataDir)</td><td>Exécute le handler du type, met à jour le statut (done/failed).</td></tr>
+  <tr><td>recoverOrphans(db)</td><td>Remet les <code>running</code> en <code>pending</code> au démarrage.</td></tr>
+  <tr><td>maybeMarkProcessed(db, eventId)</td><td>Passe l'événement <code>processed</code> quand tous ses jobs sont finis.</td></tr>
+  <tr><td>_setHandlers(h)</td><td>Injection de handlers factices pour les <a href="#/tests-runner">tests</a>.</td></tr>
+</table>
