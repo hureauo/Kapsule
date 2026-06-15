@@ -51,6 +51,18 @@ Ce fichier est interne au processus de génération. Il trace l'analyse du code 
 ## TERMINÉ
 Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.server` puis localhost:8000.
 
+## Sync incrémentale — db32702 (thèmes commutables du parcours invité)
+- core-constants : ajout `THEMES` + `DEFAULTS.THEME`, encadré « liste blanche » + RGPD, ligne API.
+- borne-routes-events : `theme` à la création, nouvelle section `PUT /events/:id/settings`
+  (gardes 404/400/409/401, upsert event_meta), callout 409 (cache 1 slot) + callout config/RGPD,
+  `theme` dans `GET /event`, ligne API.
+- web-client-borne : ajout `updateEventSettings`, correction du test `Content-Type` d'`apiFetch`
+  (corps plutôt que jeton), ligne API.
+- pages.js : enrichi `js` de core-constants et borne-routes-events (recherche).
+- Hors scope doc (aucune page UI) : app.css, QuestionNav.jsx, RecordingScreen.jsx, GuestPage.jsx,
+  EventPanel.jsx ; tests events.test.js couverts par le pattern générique de tests-runner.
+- Vérifs : manifeste/fichiers OK (0/0), liens internes OK, `node --check pages.js` OK.
+
 ---
 
 ## Conventions du site (décidées avec l'utilisateur)

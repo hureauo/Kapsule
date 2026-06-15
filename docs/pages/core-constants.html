@@ -86,12 +86,29 @@ export const LIMITS = {
   DISK_ALERT_BYTES: 10 * 1024 * 1024 * 1024,  // 10 Go
 };
 
+// Thèmes visuels du parcours invité, sélectionnables depuis l'admin de la borne.
+// 'cute' = Cutealism (défaut), 'dark' = sombre historique, 'modern' = blanc épuré,
+// plat (sans transparence ni backdrop-filter — léger sur Raspberry/iPad).
+export const THEMES = ['cute', 'dark', 'modern'];
+
 export const DEFAULTS = {
   MAX_DURATION_S: 60,
   COUNTDOWN_S: 3,
   IDLE_TIMEOUT_S: 120,
   CONSENT_TEXT: "En participant, vous acceptez que vos vidéos…",
+  THEME: 'cute',
 };</code></pre>
+
+<p>
+  <code>THEMES</code> est une <strong>liste blanche</strong> : la route admin qui change le thème
+  d'un événement valide la valeur reçue contre ce tableau (<code>THEMES.includes(theme)</code>) avant
+  de l'écrire en base. <code>'modern'</code> est volontairement <em>plat</em> (sans transparence ni
+  <code>backdrop-filter</code>) pour rester léger à l'affichage sur le matériel Borne (Raspberry / iPad).
+  Le thème est une <strong>config d'événement</strong>, stockée dans <code>event_meta</code>
+  (<span class="path">events/&lt;id&gt;/db.sqlite</span>) — jamais dans <code>registry.sqlite</code>
+  (invariant RGPD §11.13). Détail côté serveur :
+  <a href="#/borne-routes-events">borne/routes/events.js</a>.
+</p>
 
 <p>
   Détail d'écriture : <code>500 * 1024 * 1024</code> plutôt que <code>524288000</code>. JS évalue
@@ -108,6 +125,7 @@ export const DEFAULTS = {
   <tr><td>LIMITS.DISK_ALERT_BYTES</td><td>Seuil d'alerte disque du <a href="#/borne-routes-events">preflight</a> Borne.</td></tr>
   <tr><td>DEFAULTS.MAX_DURATION_S / COUNTDOWN_S</td><td>Valeurs par défaut du schéma SQL et des routes questions.</td></tr>
   <tr><td>DEFAULTS.CONSENT_TEXT</td><td>Texte de consentement servi au kiosque si l'événement n'en définit pas.</td></tr>
+  <tr><td>THEMES / DEFAULTS.THEME</td><td>Liste blanche des thèmes du parcours invité + thème par défaut, validés/écrits par la route <a href="#/borne-routes-events">settings</a> de la Borne et exposés par <code>GET /event</code>.</td></tr>
   <tr><td>STATUS_ORDER</td><td>Vérification des transitions de statut (machine à états).</td></tr>
 </table>
 

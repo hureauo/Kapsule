@@ -38,6 +38,7 @@
     db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('event_id', id);
     db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('name', name.trim());
     db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('origin', 'local');
+    db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('theme', DEFAULTS.THEME);
     if (event_date) db.prepare(`INSERT OR IGNORE INTO event_meta ...`).run('event_date', event_date);
     db.close();
 
@@ -49,12 +50,76 @@
 <p>
   Un événement créé sur la Borne a l'origine <code>'local'</code> (vs <code>'hub'</code> pour un
   pullé). On crée le dossier + le <code>db.sqlite</code> (via <a href="#/core-eventdbschema">createEventDb</a>,
-  qui seede les questions par défaut), on remplit <code>event_meta</code>, puis on l'enregistre dans
-  le registre local. <code>INSERT OR IGNORE</code> évite une erreur si la clé existe déjà
+  qui seede les questions par défaut), on remplit <code>event_meta</code> (dont le
+  <a href="#/core-constants">thème par défaut</a> <code>DEFAULTS.THEME</code>), puis on l'enregistre
+  dans le registre local. <code>INSERT OR IGNORE</code> évite une erreur si la clé existe déjà
   (idempotence). Noter le <code>db.close()</code> <strong>explicite</strong> : ici on ouvre une base
   hors du cache <a href="#/borne-eventdb">eventDb</a> (juste pour l'initialiser), donc on la ferme
   manuellement.
 </p>
+
+<h2>Régler le thème : <code>PUT /events/:id/settings</code></h2>
+<pre><code class="js">// Réglages d'événement (config, pas donnée invité → conforme RGPD §11).
+// Pour l'instant : le thème visuel du parcours invité. Écrit dans event_meta.
+router.put('/events/:id/settings', auth, (req, res, next) =&gt; {
+  try {
+    const { id } = req.params;
+    const { theme } = req.body;
+    const event = listEvents().find(e =&gt; e.id === id);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+
+    if (theme !== undefined &amp;&amp; !THEMES.includes(theme)) {
+      return res.status(400).json({ error: `Thème invalide (attendu : ${THEMES.join(', ')})` });
+    }
+
+    // Le thème ne concerne que l'événement vu par les invités (l'actif).
+    // Restreindre à l'actif évite aussi que getActiveEventDb (cache à un slot)
+    // ne ferme le handle de l'actif en ouvrant celui d'un autre événement.
+    const activeEvent = getActiveEvent();
+    if (!activeEvent || activeEvent.id !== id) {
+      return res.status(409).json({ error: 'Seul l\'événement actif peut être configuré' });
+    }
+
+    const db = getActiveEventDb(dataDir, activeEvent);
+    if (theme !== undefined) {
+      db.prepare(`INSERT INTO event_meta (key, value) VALUES ('theme', ?)
+                  ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(theme);
+    }
+    const getMeta = (key) =&gt; db.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value ?? null;
+    res.json({ id, theme: getMeta('theme') ?? DEFAULTS.THEME });
+  } catch (err) { next(err); }
+});</code></pre>
+<p>
+  Cette route admin permet de changer le <strong>thème visuel du parcours invité</strong>
+  (sélectionné depuis le panneau admin). Quatre gardes, dans l'ordre : <strong>404</strong> si l'id
+  n'existe pas, <strong>400</strong> si le thème reçu n'est pas dans la liste blanche
+  <a href="#/core-constants">THEMES</a>, <strong>409</strong> si l'événement n'est pas l'actif,
+  <strong>401</strong> si pas authentifié (le middleware <code>auth</code> en amont). L'écriture se
+  fait en <em>upsert</em> (<code>ON CONFLICT … DO UPDATE</code>) sur la clé <code>theme</code> de
+  <code>event_meta</code>.
+</p>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Pourquoi restreindre à l'événement actif (409) ?</div>
+  <p>
+    Deux raisons. <strong>Fonctionnelle</strong> : seul l'événement actif est vu par les invités, donc
+    seul son thème a un effet visible. <strong>Technique</strong> : le cache
+    <a href="#/borne-eventdb">eventDb</a> de la Borne n'a <em>qu'un seul slot</em>. Ouvrir le
+    <code>db.sqlite</code> d'un autre événement via <code>getActiveEventDb</code> fermerait le handle
+    de l'actif — d'où la restriction, qui garde le cache cohérent.
+  </p>
+</div>
+
+<div class="callout tip">
+  <div class="callout-title">💡 Le thème est une config, pas une donnée invité</div>
+  <p>
+    Le thème vit dans <code>event_meta</code> de <span class="path">events/&lt;id&gt;/db.sqlite</span>,
+    <strong>jamais</strong> dans <code>registry.sqlite</code> — comme toute config d'événement, et
+    conformément à l'<a href="#/invariants">invariant RGPD §11.13</a>. Côté kiosque il est appliqué via
+    <code>data-theme</code> sur <code>&lt;html&gt;</code> (recalcul de variables CSS, sans re-render) ;
+    le bouton REC reste rouge dans tous les thèmes.
+  </p>
+</div>
 
 <h2>Le preflight : tout vérifier avant d'ouvrir le kiosque</h2>
 <pre><code class="js">router.get('/preflight', auth, async (req, res, next) =&gt; {
@@ -126,12 +191,14 @@
     id: activeEvent.id, name: activeEvent.name, status: activeEvent.status,
     consent_text: getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT,
     idle_timeout: parseInt(getMeta('idle_timeout') ?? String(DEFAULTS.IDLE_TIMEOUT_S), 10),
+    theme: getMeta('theme') ?? DEFAULTS.THEME,
   });
 });</code></pre>
 <p>
   C'est ce que le kiosque (l'iPad) interroge pour savoir quel événement afficher : nom, texte de
-  consentement, délai d'inactivité. Les valeurs viennent de <code>event_meta</code>, avec un repli
-  sur les <a href="#/core-constants">DEFAULTS</a> si non définies. <code>getMeta</code> est un petit
+  consentement, délai d'inactivité, et le <strong>thème</strong> (appliqué au chargement en
+  <code>data-theme</code> sur <code>&lt;html&gt;</code>). Les valeurs viennent de
+  <code>event_meta</code>, avec un repli sur les <a href="#/core-constants">DEFAULTS</a> si non définies. <code>getMeta</code> est un petit
   helper local (closure sur <code>db</code>) qui lit une clé meta, avec optional chaining + nullish
   pour gérer l'absence.
 </p>
@@ -142,6 +209,7 @@
   <tr><td>POST /events</td><td>admin</td><td>Crée un événement local (origine 'local').</td></tr>
   <tr><td>PUT /events/:id/activate</td><td>admin</td><td>Rend un événement actif (refusé si push en cours).</td></tr>
   <tr><td>PUT /events/:id/close</td><td>admin</td><td>Clôture un événement live.</td></tr>
+  <tr><td>PUT /events/:id/settings</td><td>admin</td><td>Règle le thème du parcours invité (event actif seulement). 400 thème invalide, 404 id inconnu, 409 si pas l'actif.</td></tr>
   <tr><td>GET /preflight</td><td>admin</td><td>Vérifs : événement chargé, questions, disque, horloge.</td></tr>
-  <tr><td>GET /event</td><td><strong>public</strong></td><td>L'événement actif pour le kiosque.</td></tr>
+  <tr><td>GET /event</td><td><strong>public</strong></td><td>L'événement actif pour le kiosque (dont le <code>theme</code>).</td></tr>
 </table>

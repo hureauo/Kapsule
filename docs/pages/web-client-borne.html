@@ -110,6 +110,15 @@ export function uploadVideo({ sessionId, questionId, questionText, blob, mimeTyp
 </p>
 <a class="see-also" href="#/web-client-hub">→ détail : apiFetch, localStorage, ?token= (vu dans hub/web client.js)</a>
 
+<p>
+  Parmi les méthodes admin, <code>updateEventSettings(id, settings)</code> appelle la route
+  <a href="#/borne-routes-events">PUT /events/:id/settings</a> (changement de thème) en
+  <code>JSON.stringify(settings)</code>. À cette occasion, le test du <code>Content-Type</code> dans
+  <code>apiFetch</code> a été corrigé : il ne dépend plus de la présence du jeton mais de celle d'un
+  <em>corps</em> de requête (<code>if (options.body &amp;&amp; !(options.body instanceof FormData))</code>),
+  pour qu'un POST/PUT non authentifié envoie quand même <code>application/json</code>.
+</p>
+
 <h2>L'URL vidéo invité (capability)</h2>
 <pre><code class="js">export function guestVideoUrl(sessionId, questionId) {
   return `/api/sessions/${sessionId}/videos/${questionId}/file`;   // pas de token : capability
@@ -124,6 +133,7 @@ export function uploadVideo({ sessionId, questionId, questionText, blob, mimeTyp
   <tr><th>Élément</th><th>Détail</th></tr>
   <tr><td>uploadVideo({...})</td><td>Upload XHR avec <code>onProgress</code>. Retourne une Promise. Champ <code>video</code> + métadonnées de session.</td></tr>
   <tr><td>apiFetch / api.*</td><td>Comme le Hub (clé <code>admin_token</code>). Routes admin + publiques.</td></tr>
+  <tr><td>updateEventSettings(id, settings)</td><td>PUT du thème vers <a href="#/borne-routes-events">/events/:id/settings</a> (JSON).</td></tr>
   <tr><td>videoStreamUrl / csvExportUrl / …</td><td>URLs avec <code>?token=</code> pour l'admin (§11.2).</td></tr>
   <tr><td>guestVideoUrl(sid, qid)</td><td>URL vidéo invité sans jeton (capability via UUID session).</td></tr>
 </table>
