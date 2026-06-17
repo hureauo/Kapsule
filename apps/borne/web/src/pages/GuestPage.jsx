@@ -4,6 +4,7 @@ import { DEFAULTS } from '@kapsule/core';
 import StartScreen from '../components/guest/StartScreen.jsx';
 import NameInput from '../components/guest/NameInput.jsx';
 import QuestionNav from '../components/guest/QuestionNav.jsx';
+import QuestionSheet from '../components/guest/QuestionSheet.jsx';
 import RecordingScreen from '../components/guest/RecordingScreen.jsx';
 import RecapScreen from '../components/guest/RecapScreen.jsx';
 import ThankYouScreen from '../components/guest/ThankYouScreen.jsx';
@@ -105,9 +106,13 @@ export default function GuestPage() {
   const [sessionId, setSessionId] = useState(null);
   const [guestName, setGuestName] = useState('');
   const [questionIndex, setQuestionIndex] = useState(0);
-  // V2.5 — origine d'entrée dans une question : 'flow' (parcours linéaire) ou
-  // 'recap' (ré-enregistrement depuis le récap). Détermine où aller après l'upload.
+  // Origine d'entrée dans une question :
+  //   'flow'  — parcours linéaire (question suivante)
+  //   'recap' — ré-enregistrement depuis le récap (retour au récap après upload)
+  //   'sheet' — navigation depuis le panneau slide-up (retour à returnIndex après upload)
   const [questionOrigin, setQuestionOrigin] = useState('flow');
+  const [returnIndex, setReturnIndex] = useState(0); // question à retrouver après origin='sheet'
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [answers, setAnswers] = useState([]);
 
   // V2.7 — confirmation avant retour accueil
@@ -200,13 +205,18 @@ export default function GuestPage() {
   }
 
   // Après l'upload d'une réponse :
-  // - origine 'recap' → retour au récap (ré-enregistrement terminé)
-  // - origine 'flow' → question suivante, ou récap si dernière question
+  // - origine 'recap' → retour au récap
+  // - origine 'sheet' → retour à la question d'où le panneau avait été ouvert (returnIndex)
+  // - origine 'flow'  → question suivante, ou récap si dernière question
   function handleQuestionNext() {
     refreshAnswers();
     if (questionOrigin === 'recap') {
-      setQuestionOrigin('flow'); // reset pour la prochaine fois
+      setQuestionOrigin('flow');
       setScreen(S.RECAP);
+    } else if (questionOrigin === 'sheet') {
+      setQuestionOrigin('flow');
+      saveSession(sessionId, guestName, returnIndex);
+      setQuestionIndex(returnIndex);
     } else if (questionIndex < questions.length - 1) {
       const next = questionIndex + 1;
       saveSession(sessionId, guestName, next);
@@ -217,14 +227,18 @@ export default function GuestPage() {
     }
   }
 
-  // Navigation par pastille (barre basse) → flux normal, pas depuis le récap
-  function handleGoQuestion(i) {
-    if (i >= 0 && i < questions.length) {
-      refreshAnswers();
-      saveSession(sessionId, guestName, i);
-      setQuestionIndex(i);
-      setQuestionOrigin('flow');
-    }
+  // Navigation depuis le panneau slide-up → après upload, revenir à la question courante.
+  // Seules les questions déjà répondues sont accessibles (les futures restent bloquées).
+  function handleSheetGo(i) {
+    setSheetOpen(false);
+    if (i === questionIndex) return; // déjà sur cette question, juste fermer
+    const targetAnswered = answers.some((a) => (a.question_id ?? a) === questions[i]?.id);
+    if (!targetAnswered) return; // garde : question future — ne pas naviguer
+    setReturnIndex(questionIndex);
+    setQuestionOrigin('sheet');
+    refreshAnswers();
+    saveSession(sessionId, guestName, i);
+    setQuestionIndex(i);
   }
 
   // Navigation depuis le récap → après upload, revenir au récap
@@ -245,7 +259,9 @@ export default function GuestPage() {
     setSessionId(null);
     setGuestName('');
     setQuestionIndex(0);
+    setReturnIndex(0);
     setQuestionOrigin('flow');
+    setSheetOpen(false);
     setAnswers([]);
     setHomeConfirmVisible(false);
     loadEvent();
@@ -342,14 +358,24 @@ export default function GuestPage() {
               onNext={handleQuestionNext}
               onLockChange={setNavLocked}
             />
-            {/* Barre de progression en BAS (design/parcours-invite.md §12) */}
+            {/* Barre de progression en BAS — tap ou swipe up → ouvre le panneau */}
             <QuestionNav
               questions={questions}
               currentIndex={questionIndex}
               answers={answers}
-              onGo={handleGoQuestion}
+              onOpenSheet={() => setSheetOpen(true)}
               locked={navLocked}
             />
+            {/* Panneau slide-up de navigation inter-questions */}
+            {sheetOpen && (
+              <QuestionSheet
+                questions={questions}
+                currentIndex={questionIndex}
+                answers={answers}
+                onGo={handleSheetGo}
+                onClose={() => setSheetOpen(false)}
+              />
+            )}
           </div>
         );
       })()}

@@ -14,7 +14,7 @@ Un système de **borne d'enregistrement de messages vidéo pour événements** (
 **Cycle de vie** : le client configure sur le Hub → la Borne **tire** (pull) la configuration → l'événement se déroule offline, **la Borne est maître** → de retour sur la fibre, on **pousse** (push, déclenchement manuel) vidéos + configuration finale vers le Hub → traitement → consultation → purge.
 
 **Contraintes structurantes :**
-- Multi-événements, multi-clients.
+- Multi-événements, multi-clients **côté Hub** ; **une Borne (un Raspberry) ne sert qu'un seul événement**. Chaque Raspberry est déployé à un lieu donné pour un événement donné : pas de gestion multi-événements sur la Borne. Le **token d'appairage est lié à l'événement** (table `box_tokens`, §5.3) — fournir ce token à une Borne (réelle ou conteneur d'essai) l'initialise sur cet événement précis, sans étape d'assignation séparée.
 - **RGPD : cloisonnement strict par événement — une base SQLite et un dossier de fichiers indépendants par événement.** Effacer un événement = supprimer son dossier.
 - **RGPD : consentement explicite de l'invité** — case à cocher obligatoire avant tout enregistrement (écran du prénom), texte configurable par événement, acceptation **horodatée en base** (preuve de consentement).
 - La Borne doit être **utilisable seule** (mode autonome : créer un événement localement sans Hub).
@@ -252,25 +252,37 @@ derived (                                      -- rempli par le worker du Hub un
 users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,                 -- argon2id
+  password_hash TEXT,                           -- argon2id ; NULL tant que le client n'a pas posé son
+                                                -- mot de passe via le lien d'enregistrement (compte créé par l'admin)
   name TEXT,
   role TEXT NOT NULL DEFAULT 'client' CHECK(role IN ('admin','client')),
+  active INTEGER NOT NULL DEFAULT 1,            -- compte désactivable sans suppression (login refusé si 0)
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-boxes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
+registration_tokens (                          -- lien d'inscription (pas de SMTP : l'URL est affichée à l'admin)
+  token_hash TEXT PRIMARY KEY,                 -- sha256(token) ; le token clair n'apparaît que dans l'URL affichée
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at DATETIME NOT NULL,                -- défaut +7 jours
+  used_at DATETIME,                            -- NULL = encore valable ; usage unique
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+box_tokens (                                   -- token = ÉVÉNEMENT (§1) : un jeton initialise une Borne sur CET événement.
+  id INTEGER PRIMARY KEY AUTOINCREMENT,        -- plusieurs tokens possibles par événement (ex. réel + essai).
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   token_hash TEXT UNIQUE NOT NULL,             -- sha256(token) ; le token clair n'est montré qu'une fois
-  last_seen_at DATETIME,
+  label TEXT,                                  -- libellé libre (« Borne salle des fêtes », « Démo client »)
+  location TEXT,                               -- lieu du Raspberry (les bornes sont à des endroits différents)
+  is_preview INTEGER NOT NULL DEFAULT 0,       -- 1 = token d'essai : la Borne se met en mode démo (push interdit, quota, bandeau)
+  last_seen_at DATETIME,                       -- mis à jour à chaque appel sync (remplace boxes.last_seen_at)
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 events (
   id TEXT PRIMARY KEY,                         -- uuid
   owner_id INTEGER NOT NULL REFERENCES users(id),
-  box_id INTEGER REFERENCES boxes(id),         -- borne assignée (NULL = pas encore)
-  name TEXT NOT NULL,
+  name TEXT NOT NULL,                          -- (plus de box_id : le lien Borne↔événement vit dans box_tokens, §1)
   event_date DATE,
   status TEXT NOT NULL DEFAULT 'draft'
     CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
@@ -300,7 +312,7 @@ sync_log (
 );
 ```
 
-**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. La purge d'un événement : `rm -rf events/<id>` + `status='purged'` + ligne `sync_log`.
+**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` et `box_tokens` ne stockent que des hash de jetons et des métadonnées techniques (jamais de secret en clair, jamais de donnée invité). La purge d'un événement : `rm -rf events/<id>` + `status='purged'` + ligne `sync_log` ; le `ON DELETE CASCADE` sur `box_tokens.event_id` retire au passage les tokens de l'événement purgé.
 
 ### 5.4 Registre de la Borne — `registry.sqlite`
 
@@ -387,7 +399,7 @@ Base `/api`. `GET /api/health`.
 - `GET /api/events` — ceux du user (tous si admin).
 - `POST /api/events` `{ name, event_date }` → uuid, statut `draft`, crée `events/<id>/db.sqlite` avec questions par défaut.
 - `PUT /api/events/:id` — métadonnées, dont `consent_text` et `idle_timeout` (écrits dans `event_meta` de la BD événement, donc transférés à la Borne via le bundle) ; `PUT /api/events/:id/status` `{ status:'ready' }` (seules transitions manuelles : `draft→ready`, `ready→draft`). Même règle de gel d'édition que les questions (voir ci-dessous).
-- `PUT /api/events/:id/assign` `{ box_id }`.
+- (Plus de `PUT …/assign` : avec token = événement, le lien Borne↔événement se crée en générant un token de borne pour l'événement, voir le super-admin ci-dessous. La Borne s'auto-rattache via son token au moment du pull.)
 - `DELETE /api/events/:id` — **purge RGPD** : `rm -rf events/<id>` + `status='purged'` + `sync_log`. Confirmation `{ confirm: name }`.
 
 **Questions** (`routes/questions.js`) — user + owner ; mêmes routes que la Borne mais sur `eventStore.openEventDb(eventId)` : `GET/POST/PUT/DELETE /api/events/:id/questions`, `PUT /api/events/:id/questions/reorder/batch`.
@@ -405,13 +417,18 @@ Base `/api`. `GET /api/health`.
 - `DELETE /api/events/:id/videos/:videoId` — invalide l'archive (ré-enfile un job `archive`).
 
 **Super-admin** (`routes/admin.js`) — rôle `admin` uniquement (l'opérateur ; les clients n'y ont pas accès) :
-- `POST /api/admin/boxes` `{ name }` → génère token (32 octets hex), stocke `sha256(token)`, **retourne le token en clair une seule fois**.
-- `GET /api/admin/boxes`, `DELETE /api/admin/boxes/:id`.
-- `GET /api/admin/overview` — vue d'ensemble : tous les événements (tous clients), espace disque consommé par événement (`du` sur `events/<id>/`), disque libre du volume, jobs `failed` récents, bornes et leur `last_seen_at`.
+- **Comptes clients** (pas de SMTP → l'URL d'enregistrement est renvoyée à l'admin) :
+  - `POST /api/admin/users` `{ email, name? }` → crée un compte `client` **sans mot de passe** (`password_hash` NULL), génère un `registration_token` (expire +7 j, usage unique), **retourne `{ user, registration_url }`** — l'URL `…/register?token=<clair>` est affichée à l'admin qui la transmet au client.
+  - `GET /api/admin/users` — liste (email, name, role, active, a-un-mot-de-passe).
+  - `PUT /api/admin/users/:id` `{ active?, name? }` — désactive/réactive (login refusé si `active=0`), renomme. Régénération d'un lien d'enregistrement : `POST /api/admin/users/:id/registration-link` → nouveau token + URL.
+- **Tokens de borne, par événement** (token = événement, §1) :
+  - `POST /api/admin/events/:id/tokens` `{ label?, location?, is_preview? }` → génère token (32 octets hex), stocke `sha256(token)` dans `box_tokens` lié à `:id`, **retourne le token en clair une seule fois**.
+  - `GET /api/admin/events/:id/tokens` (sans le hash), `DELETE /api/admin/tokens/:tokenId` (révocation), `PUT /api/admin/tokens/:tokenId` `{ label?, location? }`.
+- `GET /api/admin/overview` — vue d'ensemble : tous les événements (tous clients), espace disque consommé par événement (`du` sur `events/<id>/`), disque libre du volume, jobs `failed` récents, et pour chaque événement ses tokens de borne (label, location, `is_preview`, `last_seen_at`).
 
-**Synchro** (`routes/sync.js`) — `requireBox` (header `X-Box-Token`) ; chaque appel met à jour `boxes.last_seen_at` et écrit `sync_log` :
-- `GET /api/sync/assigned` — événements `status IN ('ready','loaded')` assignés à cette borne : `[{ id, name, event_date, status, updated_at }]`.
-- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […] }`. Passe `ready→loaded`, set `pulled_at`.
+**Synchro** (`routes/sync.js`) — `requireBox` (header `X-Box-Token`) résout le token via `box_tokens`, met à jour `box_tokens.last_seen_at`, écrit `sync_log`, et **expose `req.box = { token_id, event_id, is_preview }`** (le token désigne directement l'événement, §1) :
+- `GET /api/sync/event` — l'**unique** événement de ce token s'il est `status IN ('ready','loaded')` : `{ id, name, event_date, status, updated_at, is_preview }`. **404** si l'événement n'est plus pullable (purgé, ou déjà ≥ `live`). Remplace l'ancien `GET /assigned` (liste) — une borne = un événement.
+- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […] }`. **403 si `:id` ≠ `req.box.event_id`** (un token ne peut tirer que son propre événement). Passe `ready→loaded`, set `pulled_at`.
 - `POST /api/sync/events/:id/status` `{ status: 'live'|'closed' }` — **heartbeat best effort** envoyé par la Borne quand elle est online : met à jour le statut du registre (transitions avant uniquement, jamais de retour en arrière) pour que le Hub gèle l'édition et informe le client. Le Hub ne doit jamais dépendre de cet appel pour fonctionner.
 - `POST /api/sync/events/:id/manifest` — body `{ files: [{ video_id, filename, size, checksum }], db: { size, checksum } }`. Réponse : `{ missing: [video_id…] }` (ceux non encore reçus ou de checksum différent) → **c'est ce qui rend le push reprenable et idempotent**.
 - `PUT /api/sync/events/:id/files/:videoId` — upload multipart d'UN fichier ; le Hub recalcule le sha256, 422 si mismatch (la Borne retentera).
@@ -499,13 +516,17 @@ Base `/api`. `GET /api/health`.
 
 | Variable | App | Défaut | Rôle |
 |---|---|---|---|
-| `ADMIN_PASSWORD` | Borne | `admin123` | Admin local |
+| `ADMIN_PASSWORD` | Borne | `admin123` | Admin **client** (questions, textes, vidéos, design) |
+| `TECH_PASSWORD` | Borne | `tech123` | Admin **technicien** (préflight, synchro, clôture) — `/admin/tech` |
 | `JWT_SECRET` | Borne+Hub | `change-me` | Signature JWT |
 | `DATA_DIR` | Borne+Hub | `/app/data` | Racine stockage |
 | `PORT` | Borne+Hub | `3001` | Port backend |
 | `HUB_URL` | Borne | _(vide = mode autonome)_ | URL du Hub |
-| `BOX_TOKEN` | Borne | _(vide)_ | Token d'appairage |
-| `ALLOW_REGISTER` | Hub | `false` | Ouvrir l'inscription |
+| `BOX_TOKEN` | Borne | _(vide)_ | Token d'appairage = **événement** (§1) |
+| `MAX_DATA_BYTES` | Borne | _(vide = illimité)_ | Quota disque de l'événement (essai : `1073741824` = 1 Go) ; upload invité → 507 au-delà |
+| `PREVIEW_MODE` | Borne | _(déduit du token `is_preview`)_ | Force le mode démo (bandeau « BORNE D'ESSAI », push interdit). Override optionnel ; normalement déduit du token |
+| `PUBLIC_URL` | Hub | _(vide)_ | Base des liens d'enregistrement client (`…/register?token=`) affichés à l'admin (pas de SMTP) |
+| `ALLOW_REGISTER` | Hub | `false` | Ouvrir l'inscription publique (indépendant des comptes créés par l'admin) |
 | `PULL_INTERVAL_MS` | Borne | `300000` | Période du pull auto |
 
 > **TLS / iPad** : iOS Safari exige HTTPS pour la caméra. Faire confiance au certificat auto-signé sur l'iPad (Réglages → Général → VPN et gestion de l'appareil) ou fournir un vrai cert. Utiliser Accès Guidé + « Ajouter à l'écran d'accueil » pour le mode kiosque.
@@ -532,6 +553,10 @@ Base `/api`. `GET /api/health`.
 16. **Le Raspberry n'a pas d'horloge RTC** : sans Internet, l'heure dérive ou repart du dernier arrêt — or `consent_at` est la **preuve légale RGPD** et tous les timestamps en dépendent. Matériel requis : module **RTC DS3231** (~5 €, I2C) + chrony ; le Préflight vérifie l'écart d'horloge avec l'appareil admin.
 17. Le ZIP d'archive se génère **sans compression** (mode store) : la vidéo est déjà compressée, recompresser brûle du CPU sur le VPS pour 0 % de gain.
 18. Progression d'upload côté kiosque : `fetch` n'expose pas la progression d'envoi — utiliser `XMLHttpRequest` (`xhr.upload.onprogress`).
+19. **Admin Borne à deux niveaux** : `requireAdmin` (client) ≠ `requireTech`. Le tech peut tout faire (sur-ensemble), mais un token client doit recevoir **403** sur préflight, clôture et toute la synchro — re-tagger chaque route, ne pas se contenter de cacher l'onglet côté front.
+20. **Token = événement** : `requireBox` doit exposer `event_id` et **rejeter (403) toute route `…/events/:id/…` où `:id` ≠ l'événement du token**. Un token ne tire/pousse que son propre événement. `GET /sync/event` (singulier) remplace `/assigned`.
+21. **Borne d'essai** : une borne dont le token est `is_preview=1` (ou `PREVIEW_MODE=true`) **ne doit jamais pouvoir push** (409) — ce sont des données jetables. Quota `MAX_DATA_BYTES` vérifié **avant** d'écrire le fichier d'upload invité (507 si plein), sinon un client peut saturer le disque du VPS via l'aperçu.
+22. **Compte client sans mot de passe** : `users.password_hash` est NULL tant que le client n'a pas suivi le lien d'enregistrement. Le login (argon2) doit gérer ce cas **avant** d'appeler `argon2.verify(null, …)` (sinon exception) ; un compte `active=0` ou sans hash → 401 « identifiants invalides » (ne pas divulguer lequel).
 
 ---
 
@@ -544,7 +569,10 @@ Base `/api`. `GET /api/health`.
 | **2 — Hub minimal** | Registre Hub, `create-admin`, auth argon2/JWT **+ rate limiting**, CRUD événements + questions avec cloisonnement `requireOwner`, frontend (login, events, éditeur questions), règle de gel d'édition (§7) | Deux comptes ne voient que leurs événements respectifs ; questions éditables en ligne |
 | **3 — Synchro** | `boxes` + tokens, `GET assigned` + `bundle` + pull (auto et manuel) avec règle `loaded`, **heartbeat live/closed**, push complet (manifest/upload/db/finalize, exige `closed`) avec reprise, `SyncPanel`, onglet Synchro du Hub (avec bandeau « modifs non récupérées »), purge Borne, **tests d'intégration du protocole** (pull → uploads → coupure simulée → reprise → finalize, via supertest) | Scénario manuel complet OK **et les tests d'intégration passent** (reprise incluse) |
 | **4 — Traitement & galerie** | Worker (boucle jobs), `probe` + `thumbnail` + **`archive` (ZIP)** (ffmpeg/archiver), passage `processed`, galerie Hub (miniatures, lecture range, download, **« Tout télécharger »**, CSV), suppression RGPD côté Hub, **page super-admin** (overview stockage/jobs/bornes) | Après un push, le client voit ses vidéos en ligne avec miniatures et télécharge le ZIP complet ; supprimer l'événement efface tout |
-| **5 — Évolutions** | Machine de capture dédiée (appareil photo), job `chromakey` (fond vert), portail invités, mode point d'accès Wi-Fi de la Borne (hostapd) | Au fil de l'eau |
+| **6 — Refonte administration** | Borne : **admin client / tech** (deux mots de passe, deux rôles, re-tagging des routes, routing manuel). Hub : **comptes clients** (création + lien d'enregistrement affiché + activation), **modèle token=événement** (`box_tokens` remplace `boxes` + `events.box_id` ; `GET /sync/event` remplace `/assigned`), **super-admin UI** (événements, tokens réel/essai, clients), **aperçu distant** (borne d'essai `is_preview`, quota 1 Go, push interdit, onglet client, `docker-compose.preview.yml`) | Le client gère sa borne sans voir le tech ; un compte client se crée via lien ; lancer le conteneur d'essai avec un token le rattache à son événement ; le client valide sa config à distance (≤ 1 Go, sans push) |
+| **7 — Évolutions** | Machine de capture dédiée (appareil photo), job `chromakey` (fond vert), portail invités, mode point d'accès Wi-Fi de la Borne (hostapd) | Au fil de l'eau |
+
+> **Impact de la Phase 6 sur la Phase 3 (déjà faite)** : le passage à token=événement réécrit `boxes` → `box_tokens`, `requireBox` (expose `event_id`), `GET /sync/assigned` → `GET /sync/event`, et côté Borne `pullAssigned()` → `pullMyEvent()`. Les tests d'intégration sync (3.9) sont à adapter. Ces cases de la Phase 3 sont rouvertes dans ROADMAP.md avec la mention « révisé Phase 6 » plutôt que décochées, pour garder la traçabilité.
 
 **Ordre interne conseillé pour chaque phase** : schéma BD → routes backend → client API frontend → écrans → CSS → test iPad.
 
@@ -562,4 +590,6 @@ Base `/api`. `GET /api/health`.
 - Filtres de la galerie Hub par invité / par question.
 - Politique de retry formalisée du worker (max attempts, bouton « Relancer », reprise des jobs `running` orphelins au démarrage).
 - Verrouillage de `QuestionNav` pendant `recording`/`uploading`.
-- `ON DELETE SET NULL` explicite sur `events.box_id` à la suppression d'une borne.
+- **Token éphémère « pur événement » sans entité `box_tokens`** (un token = une colonne sur `events`) : écarté au profit de `box_tokens` (§5.3) qui autorise plusieurs tokens par événement (réel + essai) et la révocation indépendante.
+- **Lien de partage sans compte pour l'aperçu client** : écarté au profit d'un onglet dans l'espace client (compte Hub) — un seul système d'accès à maintenir. À réévaluer si un client refuse de créer un compte.
+- **SMTP / envoi automatique des liens d'enregistrement** : hors périmètre Phase 6 (l'URL est affichée à l'admin qui la transmet manuellement). À brancher quand un serveur mail est disponible.

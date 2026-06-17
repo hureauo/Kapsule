@@ -54,6 +54,16 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 
 **Terminé quand** : un événement entier se déroule sur iPad **sans aucun Hub**.
 
+## Phase V2 — Revue parcours invité (UX kiosque)
+
+Améliorations UX du kiosque invité, en dehors du cycle de phases principal.
+Pas de backend modifié. Tests frontend : pas d'infrastructure de test front dans ce projet
+(CLAUDE.md exige des tests uniquement pour les routes backend via supertest).
+
+- [x] V2.1–V2.8 Thèmes commutables cute/dark/modern, textes éditables (consent, titre, invite prénom…), `QuestionNav` en barre basse avec dots, `QuestionSheet` slide-up pour naviguer entre questions, gestion du swipe tactile — voir commit `302aeee phase V2: revue parcours invité (V2.1→V2.8)`
+- [x] V2.9 `QuestionSheet.jsx` (nouveau panneau slide-up liste des questions), `QuestionNav.jsx` (swipe-up pour ouvrir le panneau), `GuestPage.jsx` (navigation `returnIndex` + `questionOrigin='sheet'` pour revenir à la bonne question après réenregistrement)
+- [ ] 🧑 V2.10 Vérification tactile iPad : swipe-up barre basse, swipe-down pour fermer le panneau, conflit éventuel avec scroll natif de `qsheet__list`, taille cible ≥ 80 px
+
 ## Phase 2 — Hub minimal
 
 - [x] 2.1 `registry.js` Hub (users, boxes, events, jobs, sync_log) + script `create-admin`

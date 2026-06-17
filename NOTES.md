@@ -6,6 +6,75 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase V2.9 — QuestionSheet / QuestionNav (revue kapsule-reviewer)
+
+### `touchStartY.current` non réinitialisé dans `handleTouchEnd`
+
+**Fichiers :** `QuestionSheet.jsx:17-20`, `QuestionNav.jsx:242-246`
+
+**Observation :** Si `handleTouchEnd` est déclenché sans `handleTouchStart` préalable (événement
+tactile partiel ou replay synthétique), `touchStartY.current` vaut `null` → `dy = null - clientY`
+→ `NaN`. La comparaison `NaN > 60` est `false`, donc pas d'effet visible sur kiosque réel. Fragile
+néanmoins si les handlers sont réutilisés dans un autre contexte.
+
+**À ne pas corriger maintenant.**
+
+---
+
+### Absence de focus trap / fermeture Échap sur `QuestionSheet` (`role="dialog"`)
+
+**Fichier :** `QuestionSheet.jsx`
+
+**Observation :** Le panneau est marqué `role="dialog"` / `aria-modal="true"` mais n'implé-mente ni
+focus trap ni fermeture par Échap. Sur kiosque tactile plein écran, l'impact est mineur (pas de
+clavier physique, focus management non attendu). À revoir si l'accessibilité clavier devient un
+critère (ex. borne avec clavier Bluetooth).
+
+**À ne pas corriger maintenant.**
+
+---
+
+## Phase 6 (planification) — pistes écartées pour la refonte administration
+
+Décisions prises lors du cadrage de la Phase 6 (admin client/tech + token=événement + aperçu).
+Reportées dans PROJET.md §13 ; rappelées ici pour le contexte de mise en œuvre.
+
+### Token « pur événement » sans table `box_tokens`
+Modéliser le token directement comme une colonne `box_token_hash` sur `events` (1 token = 1 colonne)
+aurait été plus minimal, mais empêche d'avoir **plusieurs tokens par événement** (le réel + l'essai)
+et la révocation indépendante d'un token. Retenu : table `box_tokens` (§5.3).
+**À ne pas reconsidérer maintenant** sauf si la gestion de plusieurs tokens s'avère inutile à l'usage.
+
+### Lien de partage sans compte pour l'aperçu client
+Un lien tokenisé ouvrant directement l'aperçu (sans login Hub) aurait évité au client de créer un
+compte, mais ajoute un 2ᵉ système d'accès à maintenir. Retenu : onglet « Aperçu de la borne » dans
+l'espace client existant. **À réévaluer** seulement si un client refuse de créer un compte.
+
+### Auto-détection du mode démo via le token vs `PREVIEW_MODE`
+Le mode démo est **déduit du token `is_preview`** (le token porte déjà l'info) ; `PREVIEW_MODE` reste
+un override d'env optionnel. Ne pas dupliquer la source de vérité : si un jour les deux divergent,
+le token (côté Hub) prime sur l'env (côté conteneur).
+
+---
+
+## Phase V2 — revue parcours invité
+
+### `??` vs `||` incohérent sur les champs texte dans `GET /event`
+
+**Fichier :** [events.js (borne)](apps/borne/server/src/routes/events.js) — handler `GET /event`
+
+**Observation :** `welcome_title`/`welcome_subtitle` utilisent `||` (chaîne vide → fallback dynamique),
+mais `consent_text`/`name_prompt`/`consent_details`/`thanks_text` utilisent `??` (chaîne vide stockée
+→ servie telle quelle). Conséquence : si l'admin enregistre un `consent_text` vide, les invités voient
+un consentement vide. Risque RGPD réel.
+
+**Correction simple :** remplacer `??` par `||` pour tous ces champs dans `GET /event`, ou refuser
+un `consent_text` vide à l'écriture (validation dans `PUT /settings`).
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase 4.5 — Frontend Hub VideoGallery + AdminPage
 
 ### Duplication de helpers de formatage entre VideoGallery et AdminPage
