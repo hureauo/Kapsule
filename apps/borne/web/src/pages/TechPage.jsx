@@ -38,6 +38,7 @@ export default function TechPage() {
       onLogout={() => setAuthed(false)}
       tabs={TECH_TABS}
       clearTokenFn={clearTechToken}
+      role="tech"
     >
       {renderPanel()}
     </AdminLayout>

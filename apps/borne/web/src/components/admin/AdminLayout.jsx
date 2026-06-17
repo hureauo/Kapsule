@@ -18,7 +18,8 @@ function DiskIndicator({ freeBytes }) {
 
 // tabs : [{ id, label }] — définit les onglets affichés
 // clearTokenFn : fonction de déconnexion (clearToken pour client, clearTechToken pour tech)
-export default function AdminLayout({ activeTab, onTabChange, onLogout, children, tabs, clearTokenFn = clearToken }) {
+// role : 'client' | 'tech' — affiche le bandeau « espace technicien » si 'tech'
+export default function AdminLayout({ activeTab, onTabChange, onLogout, children, tabs, clearTokenFn = clearToken, role = 'client' }) {
   const [freeBytes, setFreeBytes] = useState(null);
   const intervalRef = useRef(null);
 
@@ -41,7 +42,12 @@ export default function AdminLayout({ activeTab, onTabChange, onLogout, children
   }
 
   return (
-    <div className="admin-layout">
+    <div className={`admin-layout${role === 'tech' ? ' admin-layout--tech' : ''}`}>
+      {role === 'tech' && (
+        <div className="admin-banner admin-banner--tech" role="status">
+          ⚙️ Espace technicien
+        </div>
+      )}
       <header className="admin-header">
         <span className="admin-header__title">Kapsule — Admin</span>
         <DiskIndicator freeBytes={freeBytes} />

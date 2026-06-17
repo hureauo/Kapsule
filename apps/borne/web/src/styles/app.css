@@ -430,39 +430,34 @@ input, textarea, [contenteditable] {
   padding: 0.75rem 1.25rem;
 }
 
-.question-nav__arrow {
+/* La ligne entière est un bouton — reset des styles natifs */
+.question-nav__row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  width: 100%;
   background: none;
   border: none;
-  font-size: 1.5rem;
-  color: var(--primary);
-  min-width: 48px;
-  min-height: 48px;
+  color: inherit;
   cursor: pointer;
-  border-radius: 50%;
   -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s;
 }
-.question-nav__arrow:disabled { opacity: 0.3; cursor: default; }
-.question-nav__arrow:not(:disabled):active { background: var(--primary-tint); }
+.question-nav__row:not(:disabled):active { background: var(--surface-alt); }
+.question-nav__row:disabled { cursor: default; }
 
 .question-nav__dots { display: flex; gap: 0.5rem; flex: 1; justify-content: center; }
 
+/* Dots purement visuels (non-interactifs) — spans, pas de pseudo-element ::after */
 .question-nav__dot {
+  display: inline-block;
   width: 16px;
   height: 16px;
   border-radius: 50%;
   border: 2px solid var(--text-muted);
   background: transparent;
-  cursor: pointer;
-  padding: 0;
-  /* Cible tactile ≥ 44px (invariant iPad) sans grossir le point visible */
-  position: relative;
   transition: background 0.15s, border-color 0.15s, transform 0.15s;
-  -webkit-tap-highlight-color: transparent;
-}
-.question-nav__dot::after {
-  content: '';
-  position: absolute;
-  inset: -14px;            /* 16 + 2×14 = 44px de zone cliquable */
 }
 .question-nav__dot--current  { border-color: var(--accent); background: var(--accent); transform: scale(1.2); }
 .question-nav__dot--answered { border-color: var(--primary); background: var(--primary); }
@@ -474,6 +469,14 @@ input, textarea, [contenteditable] {
   color: var(--text-muted);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* Chevron discret indiquant que la barre est tappable */
+.question-nav__chevron {
+  font-size: 1rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  opacity: 0.7;
 }
 
 /* ── RecordingScreen ──────────────────────────────────────────────────────── */
@@ -794,6 +797,28 @@ input, textarea, [contenteditable] {
   flex: 1;
   padding: 2rem;
   overflow-y: auto;
+}
+
+/* ── Zone technicien ─────────────────────────────────────────────────────────
+   Bandeau ambre + accent sur le header pour distinguer /admin/tech de /admin.
+   Réutilise les tokens CSS de l'admin (thème clair — pas de nouvelle palette). */
+.admin-banner {
+  flex-shrink: 0;
+  text-align: center;
+  padding: 0.35rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.admin-banner--tech {
+  background: #b45309;
+  color: #fff;
+}
+
+.admin-layout--tech .admin-header {
+  border-left: 4px solid #b45309;
 }
 
 /* Placeholder panels */
@@ -1191,3 +1216,109 @@ input, textarea, [contenteditable] {
   min-height: 3.5rem;
   font-family: inherit;
 }
+
+/* ── QuestionSheet — panneau slide-up de navigation inter-questions ─────────
+   Overlay semi-transparent + panneau ancré en bas. Animation depuis le bas.
+   z-index 150 : au-dessus de la barre basse (z auto) et du bouton Accueil (50),
+   en dessous de la modal de confirmation (200).                               */
+.qsheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  z-index: 150;
+}
+
+.qsheet {
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  width: 100%;
+  max-height: 72vh;
+  overflow-y: auto;
+  padding: 0 1.25rem 2.5rem;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.18);
+  animation: qsheet-slide-up 0.25s ease;
+}
+
+@keyframes qsheet-slide-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+/* Poignée visuelle — invite au swipe-down pour fermer */
+.qsheet__handle {
+  width: 40px;
+  height: 4px;
+  background: var(--input-border);
+  border-radius: 2px;
+  margin: 0.85rem auto 1.25rem;
+}
+
+.qsheet__title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.qsheet__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Item : large zone de tap (min-height 72px) pour les gros doigts sur iPad */
+.qsheet__item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  padding: 1rem 1.25rem;
+  background: var(--surface-alt);
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  min-height: 72px;
+  color: var(--text);
+  font-size: 1rem;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.qsheet__item:active { background: var(--btn-secondary-bg); }
+
+/* Question en cours : bordure accent pour la distinguer */
+.qsheet__item--current { border-color: var(--accent); }
+
+/* Question répondue : badge bleu */
+.qsheet__item--answered .qsheet__index { background: var(--primary); }
+.qsheet__item--answered .qsheet__status { color: var(--primary); }
+
+/* Badge numéro (reprend le style .recap__index) */
+.qsheet__index {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.qsheet__text   { flex: 1; line-height: 1.35; }
+.qsheet__status { font-size: 1.2rem; flex-shrink: 0; color: var(--text-muted); }
+
+/* Question future : grisée, non cliquable — l'ordre doit être respecté */
+.qsheet__item--future {
+  opacity: 0.35;
+  cursor: default;
+  background: var(--surface);
+}
+.qsheet__item--future .qsheet__index { background: var(--text-muted); }
