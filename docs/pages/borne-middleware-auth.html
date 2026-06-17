@@ -2,9 +2,11 @@
 <h1>borne/middleware/auth.js</h1>
 
 <p>
-  L'authentification de la Borne diffère de celle du Hub : pas de table d'utilisateurs, juste un
-  <strong>mot de passe admin unique</strong>. Ce fichier contient le handler de login et le
-  middleware <code>requireAdmin</code>. Deux notions à connaître ici : la comparaison à temps
+  L'authentification de la Borne diffère de celle du Hub : pas de table d'utilisateurs, juste
+  <strong>deux mots de passe statiques</strong> qui distinguent deux rôles —
+  <strong>client</strong> et <strong>technicien</strong> (§11.19). Ce fichier contient le handler de
+  login et deux middlewares de garde : <code>requireAdmin</code> (client OU tech) et
+  <code>requireTech</code> (tech seul). Deux notions à connaître ici : la comparaison à temps
   constant (<code>timingSafeEqual</code>) et le pattern <strong>factory à closure de config</strong>.
 </p>
 
@@ -19,18 +21,38 @@ function safeCompare(a, b) {
   return timingSafeEqual(ba, bb);
 }
 
+// Compare les DEUX mots de passe (toujours évalués, sans court-circuit) puis signe
+// 'client' ou 'tech' selon celui qui correspond.
 export function makeAuthRouter(config) {
   return async function loginHandler(req, res, next) {
     try {
       const { password } = req.body;
-      if (!password || !safeCompare(password, config.adminPassword)) {
+      if (!password) return res.status(401).json({ error: 'Mot de passe incorrect' });
+      const isClient = safeCompare(password, config.adminPassword);
+      const isTech   = safeCompare(password, config.techPassword);
+      if (!isClient &amp;&amp; !isTech) {
         return res.status(401).json({ error: 'Mot de passe incorrect' });
       }
-      const token = jwt.sign({ role: 'admin' }, config.jwtSecret, { expiresIn: '24h' });
+      const role = isClient ? 'client' : 'tech';
+      const token = jwt.sign({ role }, config.jwtSecret, { expiresIn: '24h' });
       res.json({ token });
     } catch (err) { next(err); }
   };
 }</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Un seul endpoint de login, le mot de passe décide du rôle</div>
+  <p>
+    <code>POST /api/admin/login</code> est partagé par les deux espaces (<code>/admin</code> et
+    <code>/admin/tech</code>). Le formulaire n'envoie que le mot de passe ; le serveur le compare aux
+    deux secrets et signe le rôle correspondant dans le JWT. Les <strong>deux</strong> comparaisons
+    sont faites à chaque login (pas de <code>||</code> qui court-circuiterait après la première
+    réussie) : le temps de réponse ne dépend donc pas du rôle saisi — même logique anti-timing que
+    <code>safeCompare</code> lui-même. C'est ensuite le composant front qui range le jeton dans la
+    bonne clé <code>localStorage</code> (<code>admin_token</code> ou <code>tech_token</code>) ; voir
+    <a href="#/web-client-borne">borne/web client.js</a>.
+  </p>
+</div>
 
 <div class="js-note">
   <div class="js-note-head">
@@ -75,26 +97,58 @@ export function makeAuthRouter(config) {
   <div class="callout-title">⛔ §S5.2 : pourquoi c'est important <em>ici</em></div>
   <p>
     Le Hub compare les mots de passe via <a href="#/hub-routes-auth">argon2.verify</a>, qui est
-    déjà résistant au timing. Mais la Borne compare un mot de passe <strong>en clair</strong>
-    (<code>config.adminPassword</code>) directement — sans hachage. Sans <code>timingSafeEqual</code>,
-    elle serait vulnérable à une attaque par timing sur ce mot de passe unique. C'est l'ajout de la
-    phase S5.2 visible dans l'historique git.
+    déjà résistant au timing. Mais la Borne compare ses mots de passe <strong>en clair</strong>
+    (<code>config.adminPassword</code> et <code>config.techPassword</code>) directement — sans
+    hachage. Sans <code>timingSafeEqual</code>, elle serait vulnérable à une attaque par timing sur
+    ces secrets statiques. C'est l'ajout de la phase S5.2 visible dans l'historique git ; les deux
+    comparaisons étant faites à chaque login (§11.19), le temps de réponse ne révèle pas non plus
+    quel rôle correspond.
   </p>
 </div>
 
-<h2><code>requireAdmin</code> : même JWT que le Hub, avec injection de config</h2>
-<pre><code class="js">// Accepte Authorization: Bearer <token> OU ?token= (invariant §11.2)
+<h2><code>requireAdmin</code> et <code>requireTech</code> : deux gardes, un extracteur de jeton</h2>
+<p>
+  L'extraction du jeton (header <code>Bearer</code> ou <code>?token=</code>, §11.2) est factorisée
+  dans un helper <code>extractToken</code>, partagé par les deux middlewares :
+</p>
+<pre><code class="js">function extractToken(req) {
+  const authHeader = req.headers['authorization'];
+  return (
+    (authHeader &amp;&amp; authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null) ??
+    req.query.token ??
+    null
+  );
+}
+
+// requireAdmin : accepte 'client' OU 'tech' (le tech est un sur-ensemble du client, §11.19)
 export function requireAdmin(config) {
   return function (req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token =
-      (authHeader &amp;&amp; authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null) ??
-      req.query.token ?? null;
-
+    const token = extractToken(req);
     if (!token) return res.status(401).json({ error: 'Token manquant' });
     try {
       const payload = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
-      if (payload.role !== 'admin') return res.status(403).json({ error: 'Accès refusé' });
+      if (payload.role !== 'client' &amp;&amp; payload.role !== 'tech') {
+        return res.status(403).json({ error: 'Accès refusé' });
+      }
+      req.admin = payload;
+      next();
+    } catch {
+      res.status(401).json({ error: 'Token invalide ou expiré' });
+    }
+  };
+}
+
+// requireTech : réservé au technicien (préflight, clôture, synchro) — §11.19
+// Un token 'client' reçoit 403, pas 401.
+export function requireTech(config) {
+  return function (req, res, next) {
+    const token = extractToken(req);
+    if (!token) return res.status(401).json({ error: 'Token manquant' });
+    try {
+      const payload = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
+      if (payload.role !== 'tech') {
+        return res.status(403).json({ error: 'Accès refusé' });
+      }
       req.admin = payload;
       next();
     } catch {
@@ -105,9 +159,25 @@ export function requireAdmin(config) {
 
 <p>
   La logique JWT est identique au Hub : extraction header-ou-query (§11.2), vérification avec
-  <code>algorithms: ['HS256']</code> épinglé (§S5.1), 403 si le rôle n'est pas admin.
+  <code>algorithms: ['HS256']</code> épinglé (§S5.1). La nuance des codes d'erreur est importante :
+  un jeton <strong>valide mais du mauvais rôle</strong> reçoit <strong>403</strong> (« connu mais
+  interdit »), alors qu'un jeton absent ou invalide reçoit <strong>401</strong>. Un client qui tape
+  une route tech voit donc 403, pas 401 — il est bien authentifié, mais pas autorisé.
 </p>
 <a class="see-also" href="#/hub-middleware-auth">→ notion JS : jsonwebtoken, algorithms pin, ?token= (vue dans hub/middleware/auth.js)</a>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ §11.19 : le contrôle d'accès est dans le middleware, pas dans l'UI</div>
+  <p>
+    <code>requireTech</code> traduit l'invariant §11.19 : le technicien est un <em>sur-ensemble</em>
+    du client (il peut tout faire), mais un jeton client doit recevoir <strong>403</strong> sur le
+    préflight, la clôture et <strong>toute</strong> la synchro. Le contrôle se fait route par route
+    côté serveur (voir <a href="#/borne-routes-events">events.js</a> et
+    <a href="#/borne-routes-sync">sync.js</a>) — <strong>jamais</strong> en se contentant de cacher
+    l'onglet côté front. Cacher un bouton n'empêche pas un appel <code>fetch</code> direct avec un
+    jeton client.
+  </p>
+</div>
 
 <div class="js-note">
   <div class="js-note-head">
@@ -143,6 +213,7 @@ export function requireAdmin(config) {
 
 <table class="api-table">
   <tr><th>Export</th><th>Détail</th></tr>
-  <tr><td>makeAuthRouter(config)</td><td>Retourne le handler de <code>POST /api/admin/login</code> (compare le mdp, renvoie un JWT).</td></tr>
-  <tr><td>requireAdmin(config)</td><td>Retourne un middleware qui exige un JWT admin valide (header ou <code>?token=</code>).</td></tr>
+  <tr><td>makeAuthRouter(config)</td><td>Handler de <code>POST /api/admin/login</code> : compare les deux mots de passe, signe <code>role: 'client'|'tech'</code> dans le JWT.</td></tr>
+  <tr><td>requireAdmin(config)</td><td>Middleware exigeant un JWT <strong>client OU tech</strong> (header ou <code>?token=</code>). 403 si autre rôle.</td></tr>
+  <tr><td>requireTech(config)</td><td>Middleware exigeant un JWT <strong>tech</strong> uniquement (§11.19). 403 sur un jeton client.</td></tr>
 </table>

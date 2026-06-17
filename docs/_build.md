@@ -78,6 +78,31 @@ Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.s
   tests events.test.js couverts par le pattern générique de tests-runner.
 - Vérifs : manifeste/fichiers OK, liens internes OK, `node --check pages.js` OK.
 
+## Sync incrémentale — Phase 6A (admin Borne client/tech) + V2.9 (nav parcours invité)
+- Diff base : `302aeee..HEAD` (commits 6A.1→6A.4, V2.9). Périmètre code réellement implémenté =
+  **Borne uniquement** (admin deux rôles + nav invité). Phases 6B/6C/6D (Hub, token=événement,
+  preview) PAS codées dans ce lot (cases ROADMAP non cochées) → invariants §11.20/21/22 non documentés
+  comme implémentés (note de périmètre ajoutée dans invariants.html).
+- borne-config : ajout `techPassword`/`TECH_PASSWORD` (extrait + table env) ; callout « un seul admin »
+  réécrit en « deux mots de passe par rôle » (§11.19).
+- borne-middleware-auth : login signe `client|tech` (deux `safeCompare`, callout endpoint unique) ;
+  `extractToken` factorisé ; `requireAdmin` accepte client OU tech, nouveau `requireTech` (403 jeton
+  client) ; callout danger §11.19 ; callout S5.2 mis au pluriel ; table d'API.
+- borne-index : `routerCfg` injecte aussi `requireTech` (extrait + js-note + callout).
+- borne-routes-events : `/close` et `/preflight` re-taggés `authTech` (intro trois niveaux, extrait
+  preflight, table d'API colonne auth client/tech).
+- borne-routes-sync : auth = `requireTech` (callout danger §11.19 en tête + note avant table d'API).
+- web-client-borne : section « deux jetons / deux wrappers » (apiFetch vs techApiFetch, save/clear/is*
+  par rôle, mapping api.* client/tech) ; retrait du commentaire « pas de token » obsolète ; table d'API.
+- invariants : nouvel item §11.19 + note de périmètre (§11.20/21/22 à venir) ; comptage « 18 » retiré.
+- Hors scope doc (aucune page UI dédiée — convention : seuls client.js/hooks sont documentés côté front) :
+  App.jsx (routing manuel), AdminPage/TechPage/DesignPanel/EventPanel/AdminLayout/AdminLogin.jsx,
+  QuestionSheet.jsx (nouveau), QuestionNav.jsx, GuestPage.jsx (V2.9), app.css ; tests *.test.js couverts
+  par le pattern générique de tests-runner.
+- pages.js : inchangé (aucune notion JS nouvelle à indexer ; les fichiers touchés sont des composants UI
+  sans page, et les pages existantes gardent leurs notions).
+- Vérifs : manifeste/fichiers OK, liens internes OK, `node --check pages.js` OK.
+
 ---
 
 ## Conventions du site (décidées avec l'utilisateur)

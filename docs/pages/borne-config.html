@@ -13,6 +13,7 @@
 export const config = {
   port: parseInt(env.PORT ?? '3001', 10),
   adminPassword: env.ADMIN_PASSWORD ?? 'admin123',
+  techPassword: env.TECH_PASSWORD ?? 'tech123',
   jwtSecret: env.JWT_SECRET ?? 'change-me',
   dataDir: env.DATA_DIR ?? '/app/data',
   hubUrl: env.HUB_URL ?? '',
@@ -25,7 +26,8 @@ export const config = {
 <h2>Les réglages spécifiques à la Borne</h2>
 <table class="api-table">
   <tr><th>Champ</th><th>Variable</th><th>Défaut</th><th>Rôle</th></tr>
-  <tr><td>adminPassword</td><td>ADMIN_PASSWORD</td><td>'admin123'</td><td>Mot de passe unique de l'admin local (pas de comptes multiples sur la Borne).</td></tr>
+  <tr><td>adminPassword</td><td>ADMIN_PASSWORD</td><td>'admin123'</td><td>Mot de passe de l'admin <strong>client</strong> (questions, vidéos, textes, design). Espace <code>/admin</code>.</td></tr>
+  <tr><td>techPassword</td><td>TECH_PASSWORD</td><td>'tech123'</td><td>Mot de passe de l'admin <strong>technicien</strong> (préflight, synchro, clôture). Espace <code>/admin/tech</code> (§11.19).</td></tr>
   <tr><td>hubUrl</td><td>HUB_URL</td><td>'' (vide)</td><td>URL du Hub. <strong>Vide = mode autonome</strong> (pas de synchro).</td></tr>
   <tr><td>boxToken</td><td>BOX_TOKEN</td><td>'' (vide)</td><td>Jeton d'identification auprès du Hub (en-tête <code>X-Box-Token</code>).</td></tr>
   <tr><td>pullIntervalMs</td><td>PULL_INTERVAL_MS</td><td>300000 (5 min)</td><td>Période du pull automatique.</td></tr>
@@ -33,14 +35,17 @@ export const config = {
 </table>
 
 <div class="callout info">
-  <div class="callout-title">ℹ Différence clé avec le Hub : un seul admin, un mot de passe</div>
+  <div class="callout-title">ℹ Différence clé avec le Hub : pas de table d'utilisateurs, deux mots de passe par rôle</div>
   <p>
-    Le Hub a une table <code>users</code> avec emails et rôles. La Borne, elle, n'a
-    <strong>qu'un admin local</strong> identifié par un simple mot de passe
-    (<code>ADMIN_PASSWORD</code>). C'est cohérent avec son usage : un seul opérateur configure la
-    borne sur place. Pas de base d'utilisateurs, pas d'inscription. La page
-    <a href="#/borne-middleware-auth">borne/middleware/auth.js</a> montre comment ce mot de passe
-    unique est comparé de façon sûre.
+    Le Hub a une table <code>users</code> avec emails et comptes. La Borne, elle, n'a
+    <strong>pas de base d'utilisateurs</strong> : juste deux mots de passe statiques qui distinguent
+    <strong>deux rôles</strong> (§11.19). <code>ADMIN_PASSWORD</code> ouvre l'espace
+    <strong>client</strong> (<code>/admin</code> : questions, vidéos, textes, design) ;
+    <code>TECH_PASSWORD</code> ouvre l'espace <strong>technicien</strong> (<code>/admin/tech</code> :
+    préflight, synchro, clôture). C'est cohérent avec l'usage : le client gère le contenu sans voir
+    les outils de déploiement réservés à l'installateur. Pas d'inscription. La page
+    <a href="#/borne-middleware-auth">borne/middleware/auth.js</a> montre comment le mot de passe est
+    comparé de façon sûre et comment le rôle est inscrit dans le JWT.
   </p>
 </div>
 

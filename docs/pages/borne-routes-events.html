@@ -8,19 +8,23 @@
   (protégées) et publiques.
 </p>
 
-<h2>Le pattern d'authentification injectée</h2>
+<h2>Le pattern d'authentification injectée — trois niveaux</h2>
 <pre><code class="js">export function makeEventsRouter(dataDir, cfg) {
   const router = Router();
-  const auth = cfg.requireAdmin;            // middleware injecté (voir borne/index.js)
+  const auth     = cfg.requireAdmin;        // client OU tech
+  const authTech = cfg.requireTech;         // tech seul (§11.19)
 
-  router.get('/events', auth, (req, res) =&gt; { res.json(listEvents()); });   // admin
+  router.get('/events', auth, (req, res) =&gt; { res.json(listEvents()); });   // admin client
+  router.put('/events/:id/close', authTech, /* … */);                       // tech uniquement
+  router.get('/preflight', authTech, /* … */);                              // tech uniquement
   router.get('/event', (req, res, next) =&gt; { /* … */ });                    // PUBLIC (pas de auth)
   // …</code></pre>
 <p>
-  <code>cfg.requireAdmin</code> est le middleware d'auth « armé » passé par
-  <a href="#/borne-index">index.js</a>. Les routes admin le placent en 2ᵉ argument
-  (<code>router.get('/events', auth, handler)</code>) ; les routes publiques (kiosque) ne l'ont
-  pas. C'est la distinction admin/public, lisible route par route.
+  Deux middlewares injectés par <a href="#/borne-index">index.js</a> :
+  <code>cfg.requireAdmin</code> (client ou tech) et <code>cfg.requireTech</code> (tech seul). Chaque
+  route choisit sa garde en 2ᵉ argument ; les routes publiques (kiosque) n'en ont aucune. C'est la
+  distinction client/tech/public, lisible route par route. <strong>La clôture et le préflight sont
+  des actions technicien</strong> (§11.19) : un jeton client y reçoit 403.
 </p>
 
 <h2>Création d'un événement local</h2>
@@ -151,7 +155,7 @@ router.put('/events/:id/settings', auth, (req, res, next) =&gt; {
 </div>
 
 <h2>Le preflight : tout vérifier avant d'ouvrir le kiosque</h2>
-<pre><code class="js">router.get('/preflight', auth, async (req, res, next) =&gt; {
+<pre><code class="js">router.get('/preflight', authTech, async (req, res, next) =&gt; {   // tech uniquement (§11.19)
   try {
     const activeEvent = getActiveEvent();
     const stats = await statfs(dataDir);
@@ -248,11 +252,11 @@ router.put('/events/:id/settings', auth, (req, res, next) =&gt; {
 
 <table class="api-table">
   <tr><th>Endpoint</th><th>Auth</th><th>Rôle</th></tr>
-  <tr><td>GET /events</td><td>admin</td><td>Liste les événements locaux.</td></tr>
-  <tr><td>POST /events</td><td>admin</td><td>Crée un événement local (origine 'local').</td></tr>
-  <tr><td>PUT /events/:id/activate</td><td>admin</td><td>Rend un événement actif (refusé si push en cours).</td></tr>
-  <tr><td>PUT /events/:id/close</td><td>admin</td><td>Clôture un événement live.</td></tr>
-  <tr><td>PUT /events/:id/settings</td><td>admin</td><td>Règle le thème + les textes du parcours invité (event actif seulement). 400 thème/texte invalide, 404 id inconnu, 409 si pas l'actif.</td></tr>
-  <tr><td>GET /preflight</td><td>admin</td><td>Vérifs : événement chargé, questions, disque, horloge.</td></tr>
+  <tr><td>GET /events</td><td>client</td><td>Liste les événements locaux.</td></tr>
+  <tr><td>POST /events</td><td>client</td><td>Crée un événement local (origine 'local').</td></tr>
+  <tr><td>PUT /events/:id/activate</td><td>client</td><td>Rend un événement actif (refusé si push en cours).</td></tr>
+  <tr><td>PUT /events/:id/close</td><td><strong>tech</strong></td><td>Clôture un événement live (§11.19 : 403 sur jeton client).</td></tr>
+  <tr><td>PUT /events/:id/settings</td><td>client</td><td>Règle le thème + les textes du parcours invité (event actif seulement). 400 thème/texte invalide, 404 id inconnu, 409 si pas l'actif.</td></tr>
+  <tr><td>GET /preflight</td><td><strong>tech</strong></td><td>Vérifs : événement chargé, questions, disque, horloge (§11.19 : 403 sur jeton client).</td></tr>
   <tr><td>GET /event</td><td><strong>public</strong></td><td>L'événement actif pour le kiosque (<code>theme</code> + textes résolus avec leurs fallbacks dynamiques).</td></tr>
 </table>

@@ -24,7 +24,6 @@ export function uploadVideo({ sessionId, questionId, questionText, blob, mimeTyp
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/videos');
     xhr.setRequestHeader('Accept', 'application/json');
-    // Pas de token sur l'upload invité (route publique)
 
     if (onProgress) {
       xhr.upload.onprogress = (e) =&gt; {
@@ -100,23 +99,77 @@ export function uploadVideo({ sessionId, questionId, questionText, blob, mimeTyp
   </p>
 </div>
 
-<h2>Le reste : jumeau du Hub</h2>
+<h2>Deux jetons, deux wrappers : <code>apiFetch</code> et <code>techApiFetch</code></h2>
 <p>
-  <code>apiFetch</code>, l'objet <code>api</code>, et les fonctions d'URL avec <code>?token=</code>
-  fonctionnent comme côté Hub (avec la clé <code>admin_token</code> dans <code>localStorage</code>).
-  Une particularité : certaines routes invité (créer une session, uploader) sont
-  <strong>publiques</strong> — pas de jeton. Le client distingue les appels admin (avec jeton) des
-  appels kiosque (sans).
+  L'admin Borne est scindé en deux espaces (§11.19) — client (<code>/admin</code>) et technicien
+  (<code>/admin/tech</code>) — chacun avec <strong>son propre jeton</strong> en
+  <code>localStorage</code> :
+</p>
+<pre><code class="js">const TOKEN_KEY = 'admin_token';
+const TECH_TOKEN_KEY = 'tech_token';
+
+function getToken()     { return localStorage.getItem(TOKEN_KEY); }
+function getTechToken() { return localStorage.getItem(TECH_TOKEN_KEY); }
+
+export function saveToken(token)      { localStorage.setItem(TOKEN_KEY, token); }
+export function saveTechToken(token)  { localStorage.setItem(TECH_TOKEN_KEY, token); }
+export function clearToken()          { localStorage.removeItem(TOKEN_KEY); }
+export function clearTechToken()      { localStorage.removeItem(TECH_TOKEN_KEY); }
+export function isAuthenticated()     { return Boolean(getToken()); }
+export function isTechAuthenticated() { return Boolean(getTechToken()); }</code></pre>
+<p>
+  Comme le même endpoint de login sert les deux espaces (le serveur signe le rôle dans le JWT, voir
+  <a href="#/borne-middleware-auth">auth.js</a>), c'est le composant front qui range le jeton dans la
+  bonne clé : <code>AdminPage</code> appelle <code>saveToken</code>, <code>TechPage</code> appelle
+  <code>saveTechToken</code>. Le routage entre les deux est manuel (lecture de
+  <code>window.location.pathname</code> dans <code>App.jsx</code>, sans react-router).
+</p>
+<p>
+  Conséquence côté client : <strong>deux</strong> wrappers <code>fetch</code> jumeaux. Le wrapper par
+  défaut <code>apiFetch</code> attache <code>admin_token</code> ; <code>techApiFetch</code> attache
+  <code>tech_token</code>. Les méthodes de l'objet <code>api</code> choisissent l'un ou l'autre selon
+  que la route est protégée par <code>requireAdmin</code> ou <code>requireTech</code> côté serveur :
+</p>
+<pre><code class="js">// Routes tech (préflight, synchro, clôture) — lisent tech_token (§11.19)
+async function techApiFetch(path, options = {}) {
+  const token = getTechToken();
+  // … identique à apiFetch, mais avec le jeton tech …
+}
+
+export const api = {
+  // Routes client (requireAdmin = client OU tech) → apiFetch / admin_token
+  listEvents:          () =&gt; apiFetch('/api/events'),
+  updateEventSettings: (id, s) =&gt; apiFetch(`/api/events/${id}/settings`, { method: 'PUT', body: JSON.stringify(s) }),
+  // …
+  // Routes tech (requireTech) → techApiFetch / tech_token
+  closeEvent:    (id) =&gt; techApiFetch(`/api/events/${id}/close`, { method: 'PUT' }),
+  getPreflight:  (t)  =&gt; techApiFetch(`/api/preflight?client_time=${encodeURIComponent(t)}`),
+  getSyncStatus: ()   =&gt; techApiFetch('/api/sync/status'),
+  triggerPull:   ()   =&gt; techApiFetch('/api/sync/pull', { method: 'POST' }),
+  triggerPush:   (id) =&gt; techApiFetch(`/api/sync/push/${id}`, { method: 'POST' }),
+  purgeEvent:    (id, confirm) =&gt; techApiFetch(`/api/sync/purge/${id}`, { method: 'POST', body: JSON.stringify({ confirm }) }),
+};</code></pre>
+<p>
+  Le découpage côté client doit <strong>refléter</strong> le re-tagging côté serveur : si
+  <code>closeEvent</code> partait sur <code>apiFetch</code> (jeton client), elle enverrait
+  <code>admin_token</code> à une route <code>requireTech</code> et récolterait un 403. L'autorité
+  reste le middleware serveur (§11.19) ; le bon wrapper côté front n'est qu'une commodité pour
+  envoyer d'emblée le bon jeton.
 </p>
 <a class="see-also" href="#/web-client-hub">→ détail : apiFetch, localStorage, ?token= (vu dans hub/web client.js)</a>
 
 <p>
-  Parmi les méthodes admin, <code>updateEventSettings(id, settings)</code> appelle la route
-  <a href="#/borne-routes-events">PUT /events/:id/settings</a> (changement de thème) en
-  <code>JSON.stringify(settings)</code>. À cette occasion, le test du <code>Content-Type</code> dans
-  <code>apiFetch</code> a été corrigé : il ne dépend plus de la présence du jeton mais de celle d'un
-  <em>corps</em> de requête (<code>if (options.body &amp;&amp; !(options.body instanceof FormData))</code>),
-  pour qu'un POST/PUT non authentifié envoie quand même <code>application/json</code>.
+  Une particularité inchangée : certaines routes invité (créer une session, uploader) sont
+  <strong>publiques</strong> — pas de jeton du tout.
+</p>
+
+<p>
+  Parmi les méthodes client, <code>updateEventSettings(id, settings)</code> appelle la route
+  <a href="#/borne-routes-events">PUT /events/:id/settings</a> (thème + textes) en
+  <code>JSON.stringify(settings)</code>. Le test du <code>Content-Type</code> dans
+  <code>apiFetch</code> ne dépend pas de la présence du jeton mais de celle d'un <em>corps</em> de
+  requête (<code>if (options.body &amp;&amp; !(options.body instanceof FormData))</code>), pour qu'un
+  POST/PUT envoie bien <code>application/json</code>.
 </p>
 
 <h2>L'URL vidéo invité (capability)</h2>
@@ -131,9 +184,13 @@ export function uploadVideo({ sessionId, questionId, questionText, blob, mimeTyp
 
 <table class="api-table">
   <tr><th>Élément</th><th>Détail</th></tr>
-  <tr><td>uploadVideo({...})</td><td>Upload XHR avec <code>onProgress</code>. Retourne une Promise. Champ <code>video</code> + métadonnées de session.</td></tr>
-  <tr><td>apiFetch / api.*</td><td>Comme le Hub (clé <code>admin_token</code>). Routes admin + publiques.</td></tr>
-  <tr><td>updateEventSettings(id, settings)</td><td>PUT du thème vers <a href="#/borne-routes-events">/events/:id/settings</a> (JSON).</td></tr>
-  <tr><td>videoStreamUrl / csvExportUrl / …</td><td>URLs avec <code>?token=</code> pour l'admin (§11.2).</td></tr>
+  <tr><td>uploadVideo({...})</td><td>Upload XHR avec <code>onProgress</code>. Retourne une Promise. Champ <code>video</code> + métadonnées de session. Route publique (pas de jeton).</td></tr>
+  <tr><td>apiFetch / techApiFetch</td><td>Deux wrappers <code>fetch</code> jumeaux : <code>admin_token</code> (client) vs <code>tech_token</code> (tech, §11.19).</td></tr>
+  <tr><td>saveToken / clearToken / isAuthenticated</td><td>Gèrent <code>admin_token</code> (espace <code>/admin</code>).</td></tr>
+  <tr><td>saveTechToken / clearTechToken / isTechAuthenticated</td><td>Gèrent <code>tech_token</code> (espace <code>/admin/tech</code>).</td></tr>
+  <tr><td>api.* (client)</td><td>listEvents, createEvent, activateEvent, updateEventSettings, questions, vidéos, sessions → <code>apiFetch</code>.</td></tr>
+  <tr><td>api.* (tech)</td><td>closeEvent, getPreflight, getSyncStatus, triggerPull, triggerPush, purgeEvent → <code>techApiFetch</code>.</td></tr>
+  <tr><td>updateEventSettings(id, settings)</td><td>PUT du thème + textes vers <a href="#/borne-routes-events">/events/:id/settings</a> (JSON).</td></tr>
+  <tr><td>videoStreamUrl / csvExportUrl / …</td><td>URLs avec <code>?token=</code> (<code>admin_token</code>) pour l'admin (§11.2).</td></tr>
   <tr><td>guestVideoUrl(sid, qid)</td><td>URL vidéo invité sans jeton (capability via UUID session).</td></tr>
 </table>

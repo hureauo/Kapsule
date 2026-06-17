@@ -14,7 +14,8 @@
   const app = express();
   app.use(express.json());
 
-  const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg) };   // config + middleware prêt
+  // config + les deux middlewares d'auth déjà armés (client et tech, §11.19)
+  const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg), requireTech: requireTech(cfg) };
   app.post('/api/admin/login', makeAuthRouter(cfg));
   app.use('/api', makeEventsRouter(dataDir, routerCfg));
   app.use('/api', makeQuestionsRouter(dataDir, routerCfg));
@@ -31,22 +32,24 @@
 <div class="js-note">
   <div class="js-note-head">
     <span class="js-badge">JS</span>
-    <span class="js-note-title">Injection de config par le spread : <code>{ ...cfg, requireAdmin: requireAdmin(cfg) }</code></span>
+    <span class="js-note-title">Injection de config par le spread : <code>{ ...cfg, requireAdmin: …, requireTech: … }</code></span>
   </div>
   <p>
     <code>createApp(dataDir, cfg = config)</code> prend la config <strong>en paramètre</strong>
     (avec le module <code>config</code> comme défaut). Cela permet aux tests de passer une config
     sur mesure. Ensuite :
   </p>
-  <pre><code class="js">const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg) };</code></pre>
+  <pre><code class="js">const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg), requireTech: requireTech(cfg) };</code></pre>
   <p>
     Le spread <code>...cfg</code> copie tous les champs de la config dans un nouvel objet, puis on
-    y <strong>ajoute</strong> une propriété <code>requireAdmin</code> : le middleware d'auth déjà
-    « armé » avec cette config (rappel : <a href="#/borne-middleware-auth">requireAdmin(cfg)</a> est
-    une factory). Chaque routeur reçoit donc <code>routerCfg</code> et y trouve à la fois les
-    réglages (<code>hubUrl</code>, <code>adminPassword</code>…) et le middleware
-    <code>requireAdmin</code> prêt à l'emploi — sans devoir réimporter la config ni recréer le
-    middleware. C'est de l'injection de dépendances « à la main », légère et explicite.
+    y <strong>ajoute</strong> deux propriétés <code>requireAdmin</code> et <code>requireTech</code> :
+    les middlewares d'auth déjà « armés » avec cette config (rappel :
+    <a href="#/borne-middleware-auth">requireAdmin(cfg)</a> et <code>requireTech(cfg)</code> sont des
+    factories). Chaque routeur reçoit donc <code>routerCfg</code> et y trouve à la fois les
+    réglages (<code>hubUrl</code>, <code>adminPassword</code>…) et les deux gardes prêtes à l'emploi —
+    il choisit <code>cfg.requireAdmin</code> ou <code>cfg.requireTech</code> selon la route (§11.19),
+    sans réimporter la config ni recréer le middleware. C'est de l'injection de dépendances « à la
+    main », légère et explicite.
   </p>
 </div>
 

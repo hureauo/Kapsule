@@ -2,12 +2,25 @@
 <h1>borne/routes/sync.js</h1>
 
 <p>
-  Les routes admin qui pilotent la synchronisation depuis la Borne : consulter l'état, déclencher un
-  pull manuel, lancer un push, purger un événement poussé. Ce sont des <strong>déclencheurs</strong>
-  — la logique réelle vit dans <span class="path">sync/</span>
+  Les routes technicien qui pilotent la synchronisation depuis la Borne : consulter l'état,
+  déclencher un pull manuel, lancer un push, purger un événement poussé. Ce sont des
+  <strong>déclencheurs</strong> — la logique réelle vit dans <span class="path">sync/</span>
   (<a href="#/borne-sync-pull">pull.js</a>, <a href="#/borne-sync-push">push.js</a>). La notion clé
   ici : lancer une <strong>tâche de fond</strong> sans bloquer la réponse HTTP.
 </p>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ §11.19 : toute la synchro est réservée au technicien</div>
+  <p>
+    Le routeur lie sa garde au middleware <strong>tech</strong>, pas au middleware client :
+    <code>const auth = cfg.requireTech;</code>. Toutes les routes ci-dessous utilisent ce
+    <code>auth</code> — un jeton client (espace <code>/admin</code>) reçoit donc <strong>403</strong>
+    sur <code>/sync/status</code>, <code>/sync/pull</code>, <code>/sync/push</code> et
+    <code>/sync/purge</code>. La synchro fait partie des outils de déploiement réservés à
+    l'installateur (espace <code>/admin/tech</code>). Voir
+    <a href="#/borne-middleware-auth">requireTech</a>.
+  </p>
+</div>
 
 <h2>Lancer un push en tâche de fond</h2>
 <pre><code class="js">router.post('/sync/push/:eventId', auth, (req, res, next) =&gt; {
@@ -110,6 +123,8 @@
   <a href="#/borne-sync-autopull">pull automatique périodique</a>) sans attendre son résultat. Utile
   pour forcer une synchro quand l'opérateur vient de préparer l'événement côté Hub.
 </p>
+
+<p>Toutes ces routes exigent un jeton <strong>tech</strong> (<code>requireTech</code>, §11.19).</p>
 
 <table class="api-table">
   <tr><th>Endpoint</th><th>Rôle</th></tr>
