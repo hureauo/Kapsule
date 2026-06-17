@@ -7,10 +7,11 @@ import request from 'supertest';
 import jwt from 'jsonwebtoken';
 import { createApp } from '../src/index.js';
 import { closeRegistry } from '../src/registry.js';
-import { requireAdmin } from '../src/middleware/auth.js';
+import { requireAdmin, requireTech } from '../src/middleware/auth.js';
 
 const TEST_CONFIG = {
   adminPassword: 'motdepasse-test',
+  techPassword: 'tech-test',
   jwtSecret: 'secret-test',
   dataDir: '',
 };
@@ -28,14 +29,24 @@ describe('POST /api/admin/login', () => {
     rmSync(dir, { recursive: true });
   });
 
-  test('retourne un token JWT avec le bon mot de passe', async () => {
+  test('login client → role client', async () => {
     const res = await request(app)
       .post('/api/admin/login')
       .send({ password: 'motdepasse-test' });
     assert.equal(res.status, 200);
     assert.ok(res.body.token);
     const payload = jwt.verify(res.body.token, 'secret-test');
-    assert.equal(payload.role, 'admin');
+    assert.equal(payload.role, 'client');
+  });
+
+  test('login tech → role tech', async () => {
+    const res = await request(app)
+      .post('/api/admin/login')
+      .send({ password: 'tech-test' });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.token);
+    const payload = jwt.verify(res.body.token, 'secret-test');
+    assert.equal(payload.role, 'tech');
   });
 
   test('retourne 401 avec un mauvais mot de passe', async () => {
@@ -68,7 +79,6 @@ describe('requireAdmin middleware', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'borne-mw-'));
     app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
-    // Route de test protégée
     app.get('/api/admin/ping', requireAdmin(TEST_CONFIG), (req, res) => res.json({ ok: true }));
   });
 
@@ -77,11 +87,20 @@ describe('requireAdmin middleware', () => {
     rmSync(dir, { recursive: true });
   });
 
-  const makeToken = (payload = { role: 'admin' }) =>
+  const makeToken = (payload = { role: 'client' }) =>
     jwt.sign(payload, TEST_CONFIG.jwtSecret, { expiresIn: '1h' });
 
-  test('accepte un token valide dans Authorization: Bearer', async () => {
-    const token = makeToken();
+  test('accepte un token client dans Authorization: Bearer', async () => {
+    const token = makeToken({ role: 'client' });
+    const res = await request(app)
+      .get('/api/admin/ping')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+  });
+
+  test('accepte un token tech (sur-ensemble, §11.19)', async () => {
+    const token = makeToken({ role: 'tech' });
     const res = await request(app)
       .get('/api/admin/ping')
       .set('Authorization', `Bearer ${token}`);
@@ -109,7 +128,7 @@ describe('requireAdmin middleware', () => {
   });
 
   test('retourne 401 si token signé avec une autre clé', async () => {
-    const token = jwt.sign({ role: 'admin' }, 'autre-secret', { expiresIn: '1h' });
+    const token = jwt.sign({ role: 'client' }, 'autre-secret', { expiresIn: '1h' });
     const res = await request(app)
       .get('/api/admin/ping')
       .set('Authorization', `Bearer ${token}`);
@@ -117,9 +136,8 @@ describe('requireAdmin middleware', () => {
   });
 
   test('retourne 401 pour un token alg:none (§S5.1/L1)', async () => {
-    // Forge un JWT avec alg:none pour tester que l'épinglage algorithms rejet bien ce cas
     const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({ role: 'admin', iat: Math.floor(Date.now() / 1000) })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ role: 'client', iat: Math.floor(Date.now() / 1000) })).toString('base64url');
     const noneToken = `${header}.${payload}.`;
     const res = await request(app)
       .get('/api/admin/ping')
@@ -127,11 +145,51 @@ describe('requireAdmin middleware', () => {
     assert.equal(res.status, 401);
   });
 
-  test('retourne 403 si le rôle n\'est pas admin', async () => {
+  test('retourne 403 si le rôle est inconnu', async () => {
     const token = makeToken({ role: 'user' });
     const res = await request(app)
       .get('/api/admin/ping')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(res.status, 403);
+  });
+});
+
+describe('requireTech middleware', () => {
+  let dir, app;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-tech-'));
+    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+    app.get('/api/tech/ping', requireTech(TEST_CONFIG), (req, res) => res.json({ ok: true }));
+  });
+
+  afterEach(() => {
+    closeRegistry();
+    rmSync(dir, { recursive: true });
+  });
+
+  const makeToken = (payload) =>
+    jwt.sign(payload, TEST_CONFIG.jwtSecret, { expiresIn: '1h' });
+
+  test('accepte un token tech', async () => {
+    const token = makeToken({ role: 'tech' });
+    const res = await request(app)
+      .get('/api/tech/ping')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+  });
+
+  test('retourne 403 pour un token client (§11.19)', async () => {
+    const token = makeToken({ role: 'client' });
+    const res = await request(app)
+      .get('/api/tech/ping')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 403);
+  });
+
+  test('retourne 401 si token manquant', async () => {
+    const res = await request(app).get('/api/tech/ping');
+    assert.equal(res.status, 401);
   });
 });

@@ -3,7 +3,7 @@ import { statfs } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import { config } from './config.js';
 import { openRegistry, getActiveEvent } from './registry.js';
-import { makeAuthRouter, requireAdmin } from './middleware/auth.js';
+import { makeAuthRouter, requireAdmin, requireTech } from './middleware/auth.js';
 import { makeEventsRouter } from './routes/events.js';
 import { makeQuestionsRouter } from './routes/questions.js';
 import { makeSessionsRouter } from './routes/sessions.js';
@@ -16,7 +16,7 @@ export function createApp(dataDir, cfg = config) {
   const app = express();
   app.use(express.json());
 
-  const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg) };
+  const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg), requireTech: requireTech(cfg) };
   app.post('/api/admin/login', makeAuthRouter(cfg));
   app.use('/api', makeEventsRouter(dataDir, routerCfg));
   app.use('/api', makeQuestionsRouter(dataDir, routerCfg));

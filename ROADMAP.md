@@ -67,8 +67,12 @@ Référence : plan de phases PROJET.md §12, critères de fin inclus.
 
 ## Phase 3 — Synchro
 
-- [x] 3.1 Hub : `middleware/boxAuth.js`, CRUD bornes super-admin (token affiché une fois), `last_seen_at`, `sync_log`
-- [x] 3.2 Hub : `GET /sync/assigned`, `GET /sync/events/:id/bundle` (ready→loaded), heartbeat `POST /status` (transitions avant uniquement)
+> ⚠️ **Révisé en Phase 6** : le passage à token=événement réécrit le modèle `boxes`. Les cases
+> 3.1/3.2/3.9 restent cochées (le travail a bien été fait et validé), mais leur implémentation est
+> remplacée par `box_tokens` / `GET /sync/event` / `pullMyEvent()` en Phase 6C. Voir 6C.2–6C.3.
+
+- [x] 3.1 Hub : `middleware/boxAuth.js`, CRUD bornes super-admin (token affiché une fois), `last_seen_at`, `sync_log` — *révisé 6C.2 (`box_tokens`)*
+- [x] 3.2 Hub : `GET /sync/assigned`, `GET /sync/events/:id/bundle` (ready→loaded), heartbeat `POST /status` (transitions avant uniquement) — *`/assigned` révisé 6C.3 (`GET /sync/event`)*
 - [x] 3.3 Hub : `POST /manifest` (réponse `missing`), `PUT /files/:videoId` (recalcul sha256, 422 mismatch), `PUT /db` (fermer handle avant écrasement), `POST /finalize` (enfile les jobs)
 - [x] 3.4 Borne : `hubClient.js` (retry/backoff), `pull.js` (règle `loaded` vérifiée à l'application)
 - [x] 3.5 Borne : `autoPull.js` (intervalle, heartbeat best effort silencieux)
@@ -123,6 +127,46 @@ bloqué), relu par `kapsule-reviewer`, committé en sous-lot.
 
 **Terminé quand** : H1 et M1–M3 corrigés et testés ; le tableau de suivi de SECURITY.md est à jour (statut « Corrigé » + n° de commit).
 
-## Phase 6 — Évolutions (au fil de l'eau)
+## Phase 6 — Refonte administration
+
+Voir PROJET.md §12 (ligne « 6 — Refonte administration ») et les invariants §11.19–22.
+Ordre conseillé : **6A → 6B → 6C → 6D → 6E**. 6A est autonome (Borne seule) ; 6C porte le
+changement de schéma token=événement dont dépend 6D. Mêmes règles : un sous-lot backend n'est
+terminé que **testé** (nominal + cas d'erreur/d'attaque), relu par `kapsule-reviewer` (`/verif-spec`),
+committé en `phase 6X.Y: …`.
+
+### 6A — Borne : admin client / tech
+- [x] 6A.1 `config.js` : `TECH_PASSWORD`. `middleware/auth.js` : login signe `role:'client'|'tech'` selon le mot de passe (les deux comparés en `timingSafeEqual`, cf. S5.2) ; `requireTech` (accepte `tech`), `requireAdmin` = client OU tech + tests (login client→client, login tech→tech, 403 client sur route tech)
+- [ ] 6A.2 Re-tagger les routes Borne : `requireTech` sur `/preflight`, `/events/:id/close`, tout `/sync/*` ; `requireAdmin` ailleurs (questions, vidéos, settings, activate) + tests (token client rejeté sur `/sync/push`, accepté sur `/questions`) — invariant §11.19
+- [ ] 6A.3 Front : routing manuel (`window.location.pathname`) → `/admin` (client : Événement, Questions, Vidéos, Design) et `/admin/tech` (login séparé : Préflight, Synchro) ; deux logins, deux clés `localStorage` (`admin_token`/`tech_token`)
+- [ ] 6A.4 `AdminLayout` paramétré par rôle (jeu d'onglets), bandeau « espace technicien » sur `/admin/tech` ; CSS des deux zones (réutilise l'existant)
+
+### 6B — Hub : comptes clients
+- [ ] 6B.1 Schéma `users` : `active INTEGER DEFAULT 1`, `password_hash` nullable ; table `registration_tokens` (token_hash, user_id, expires_at, used_at) + helpers registry
+- [ ] 6B.2 `routes/admin.js` : `POST /api/admin/users` (compte sans mdp + token d'inscription +7 j, retourne `registration_url`), `GET /api/admin/users`, `PUT /api/admin/users/:id` (active/rename), `POST /api/admin/users/:id/registration-link` + tests (email dupliqué 409, désactivation)
+- [ ] 6B.3 `routes/auth.js` : `POST /api/auth/set-password` `{ token, password }` (token non expiré/non utilisé → pose hash argon2, marque utilisé) ; login refuse `active=0` et `password_hash` NULL **sans appeler `argon2.verify(null,…)`** (invariant §11.22) + tests (token expiré 410, réutilisé 409, mdp court 400, login compte désactivé 401)
+- [ ] 6B.4 Front : `RegisterPage` (`/register?token=`, pose le mot de passe) ; section « Clients » de l'admin Hub (créer, copier le lien, activer/désactiver)
+
+### 6C — Hub : super-admin UI + modèle token=événement ⚠️ change le schéma
+- [ ] 6C.1 `App.jsx` : câbler la route `/admin` (composant `AdminPage.jsx` existe, orphelin) gardée `role==='admin'`
+- [ ] 6C.2 Schéma : **`box_tokens`** (event_id, token_hash, label, location, is_preview, last_seen_at) remplace `boxes` ; retirer `events.box_id`. Migrer `middleware/boxAuth.js` → `requireBox` charge la ligne et expose `req.box={token_id,event_id,is_preview}`. `routes/admin.js` : `POST/GET /api/admin/events/:id/tokens`, `DELETE/PUT /api/admin/tokens/:tokenId` + tests
+- [ ] 6C.3 `routes/sync.js` Hub : `GET /sync/assigned` → `GET /sync/event` (singulier, 404 si non pullable) ; `bundle` rejette (403) si `:id` ≠ `req.box.event_id` (invariant §11.20). Borne : `pull.js` `pullAssigned()` → `pullMyEvent()`, adapter `autoPull.js` + **mettre à jour les tests d'intégration 3.9**
+- [ ] 6C.4 Front super-admin : onglets Vue d'ensemble (existant), Événements (créer + générer token réel/essai avec token affiché une fois + location), Clients (6B)
+
+### 6D — Aperçu distant (borne d'essai) — dépend de 6C
+- [ ] 6D.1 Borne : `config.js` lit `MAX_DATA_BYTES` ; `routes/videos.js` refuse l'upload invité (507) si `dirSize(events/) ≥ MAX_DATA_BYTES` (vérif **avant** écriture, invariant §11.21) + test
+- [ ] 6D.2 Borne : mode démo déduit du token `is_preview` (ou `PREVIEW_MODE`) → push refusé (409) + bandeau « BORNE D'ESSAI » (kiosque + admin) + test
+- [ ] 6D.3 Borne : `POST /api/sync/reset-preview` (tech) — purge sessions/vidéos de l'événement actif sans toucher aux questions ; refusé hors mode démo + test
+- [ ] 6D.4 Hub front : onglet client « Aperçu de la borne » dans `EventDetailPage` (visible si l'événement a un token `is_preview`) → lien/iframe vers l'URL de preview (proxy interne)
+- [ ] 6D.5 `docker-compose.preview.yml` : service `borne-preview` (`BOX_TOKEN=<token-essai>`, `MAX_DATA_BYTES=1073741824`, port interne), documenté ; entrée dans CLAUDE.md §Commandes
+- [ ] 🧑 6D.6 Vérif bout en bout : conteneur d'essai lancé avec un token → client valide la config à distance → reset → push bien refusé
+
+### 6E — Documentation
+- [ ] 6E.1 `kapsule-doc-sync` sur le site `docs/` au fil des sous-lots (déjà couvert par `/verif-spec`)
+- [ ] 6E.2 Vérifier la cohérence finale PROJET.md ↔ code (schéma `box_tokens`, routes admin/sync, env)
+
+**Terminé quand** : le client gère sa borne sans accès tech ; un compte client se crée via lien d'enregistrement ; lancer le conteneur d'essai avec un token le rattache à son événement ; le client valide sa config à distance (≤ 1 Go, push impossible).
+
+## Phase 7 — Évolutions (au fil de l'eau)
 
 Machine de capture dédiée, job `chromakey`, portail invités, mode point d'accès Wi-Fi (hostapd).
