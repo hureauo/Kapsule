@@ -1,28 +1,38 @@
 import React, { useState } from 'react';
-import { isAuthenticated } from '../api/client.js';
+import { isAuthenticated, saveToken, clearToken } from '../api/client.js';
 import AdminLogin from '../components/admin/AdminLogin.jsx';
 import AdminLayout from '../components/admin/AdminLayout.jsx';
 import EventPanel from '../components/admin/EventPanel.jsx';
-import PreflightPanel from '../components/admin/PreflightPanel.jsx';
 import QuestionManager from '../components/admin/QuestionManager.jsx';
 import VideoList from '../components/admin/VideoList.jsx';
-import SyncPanel from '../components/admin/SyncPanel.jsx';
+import DesignPanel from '../components/admin/DesignPanel.jsx';
+
+const CLIENT_TABS = [
+  { id: 'event',     label: 'Événement' },
+  { id: 'questions', label: 'Questions' },
+  { id: 'videos',    label: 'Vidéos'   },
+  { id: 'design',    label: 'Design'   },
+];
 
 export default function AdminPage() {
   const [authed, setAuthed] = useState(isAuthenticated());
   const [activeTab, setActiveTab] = useState('event');
 
   if (!authed) {
-    return <AdminLogin onSuccess={() => setAuthed(true)} />;
+    return (
+      <AdminLogin
+        title="Administration"
+        onSuccess={(token) => { saveToken(token); setAuthed(true); }}
+      />
+    );
   }
 
   function renderPanel() {
     switch (activeTab) {
       case 'event':     return <EventPanel />;
-      case 'preflight': return <PreflightPanel />;
       case 'questions': return <QuestionManager />;
       case 'videos':    return <VideoList />;
-      case 'sync':      return <SyncPanel />;
+      case 'design':    return <DesignPanel />;
       default:          return null;
     }
   }
@@ -32,6 +42,8 @@ export default function AdminPage() {
       activeTab={activeTab}
       onTabChange={setActiveTab}
       onLogout={() => setAuthed(false)}
+      tabs={CLIENT_TABS}
+      clearTokenFn={clearToken}
     >
       {renderPanel()}
     </AdminLayout>

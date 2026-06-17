@@ -138,7 +138,7 @@ committé en `phase 6X.Y: …`.
 ### 6A — Borne : admin client / tech
 - [x] 6A.1 `config.js` : `TECH_PASSWORD`. `middleware/auth.js` : login signe `role:'client'|'tech'` selon le mot de passe (les deux comparés en `timingSafeEqual`, cf. S5.2) ; `requireTech` (accepte `tech`), `requireAdmin` = client OU tech + tests (login client→client, login tech→tech, 403 client sur route tech)
 - [x] 6A.2 Re-tagger les routes Borne : `requireTech` sur `/preflight`, `/events/:id/close`, tout `/sync/*` ; `requireAdmin` ailleurs (questions, vidéos, settings, activate) + tests (token client rejeté sur `/sync/push`, accepté sur `/questions`) — invariant §11.19
-- [ ] 6A.3 Front : routing manuel (`window.location.pathname`) → `/admin` (client : Événement, Questions, Vidéos, Design) et `/admin/tech` (login séparé : Préflight, Synchro) ; deux logins, deux clés `localStorage` (`admin_token`/`tech_token`)
+- [x] 6A.3 Front : routing manuel (`window.location.pathname`) → `/admin` (client : Événement, Questions, Vidéos, Design) et `/admin/tech` (login séparé : Préflight, Synchro) ; deux logins, deux clés `localStorage` (`admin_token`/`tech_token`)
 - [ ] 6A.4 `AdminLayout` paramétré par rôle (jeu d'onglets), bandeau « espace technicien » sur `/admin/tech` ; CSS des deux zones (réutilise l'existant)
 
 ### 6B — Hub : comptes clients

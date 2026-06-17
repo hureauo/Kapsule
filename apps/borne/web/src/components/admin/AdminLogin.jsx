@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { api, saveToken } from '../../api/client.js';
+import { api } from '../../api/client.js';
 
-export default function AdminLogin({ onSuccess }) {
+// onSuccess(token) : le composant parent décide où stocker le token
+// (admin_token pour /admin, tech_token pour /admin/tech)
+export default function AdminLogin({ onSuccess, title = 'Administration' }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -12,8 +14,7 @@ export default function AdminLogin({ onSuccess }) {
     setError('');
     try {
       const data = await api.login(password);
-      saveToken(data.token);
-      onSuccess();
+      onSuccess(data.token);
     } catch {
       setError('Mot de passe incorrect.');
     } finally {
@@ -23,7 +24,7 @@ export default function AdminLogin({ onSuccess }) {
 
   return (
     <div className="admin-login screen screen--center">
-      <h2 className="screen__title">Administration</h2>
+      <h2 className="screen__title">{title}</h2>
       <form onSubmit={handleSubmit} className="name-form">
         <input
           className="name-form__input"
@@ -31,7 +32,7 @@ export default function AdminLogin({ onSuccess }) {
           autoFocus
           value={password}
           onChange={(e) => { setPassword(e.target.value); setError(''); }}
-          placeholder="Mot de passe admin"
+          placeholder="Mot de passe"
           disabled={loading}
         />
         {error && <p className="text--error" role="alert">{error}</p>}

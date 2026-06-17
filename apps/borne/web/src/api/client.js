@@ -1,31 +1,47 @@
 const TOKEN_KEY = 'admin_token';
+const TECH_TOKEN_KEY = 'tech_token';
 
-function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
-}
+// ── Gestion des tokens ────────────────────────────────────────────────────────
 
-export function saveToken(token) {
-  localStorage.setItem(TOKEN_KEY, token);
-}
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function getTechToken() { return localStorage.getItem(TECH_TOKEN_KEY); }
 
-export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-}
+export function saveToken(token) { localStorage.setItem(TOKEN_KEY, token); }
+export function saveTechToken(token) { localStorage.setItem(TECH_TOKEN_KEY, token); }
+export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+export function clearTechToken() { localStorage.removeItem(TECH_TOKEN_KEY); }
+export function isAuthenticated() { return Boolean(getToken()); }
+export function isTechAuthenticated() { return Boolean(getTechToken()); }
 
-export function isAuthenticated() {
-  return Boolean(getToken());
-}
+// ── Wrappers fetch ────────────────────────────────────────────────────────────
 
-// Wrapper fetch : attache Authorization si token présent, gère les erreurs HTTP
 async function apiFetch(path, options = {}) {
   const token = getToken();
   const headers = { ...options.headers };
   if (options.body && !(options.body instanceof FormData)) {
     headers['Content-Type'] = headers['Content-Type'] ?? 'application/json';
   }
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(path, { ...options, headers });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const err = new Error(body.error ?? `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
   }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// Routes tech (préflight, synchro, clôture) — lisent tech_token (§11.19)
+async function techApiFetch(path, options = {}) {
+  const token = getTechToken();
+  const headers = { ...options.headers };
+  if (options.body && !(options.body instanceof FormData)) {
+    headers['Content-Type'] = headers['Content-Type'] ?? 'application/json';
+  }
+  if (token) headers['Authorization'] = `Bearer ${token}`;
 
   const res = await fetch(path, { ...options, headers });
   if (!res.ok) {
@@ -41,11 +57,9 @@ async function apiFetch(path, options = {}) {
 // ── API publique (kiosque) ────────────────────────────────────────────────────
 
 export const api = {
-  // Événement actif
   getEvent: () => apiFetch('/api/event'),
   getQuestions: () => apiFetch('/api/questions'),
 
-  // Sessions
   createSession: (guest_name) =>
     apiFetch('/api/sessions', {
       method: 'POST',
@@ -55,7 +69,7 @@ export const api = {
   completeSession: (sessionId) =>
     apiFetch(`/api/sessions/${sessionId}/complete`, { method: 'PUT' }),
 
-  // ── API admin ───────────────────────────────────────────────────────────────
+  // ── Auth ──────────────────────────────────────────────────────────────────
 
   login: (password) =>
     apiFetch('/api/admin/login', {
@@ -63,18 +77,18 @@ export const api = {
       body: JSON.stringify({ password }),
     }),
 
-  // Événements
+  // ── Routes client admin (requireAdmin = client OU tech) ───────────────────
+
+  health: () => apiFetch('/api/health'), // public, pas d'auth requise
+
   listEvents: () => apiFetch('/api/events'),
   createEvent: (data) =>
     apiFetch('/api/events', { method: 'POST', body: JSON.stringify(data) }),
   activateEvent: (id) =>
     apiFetch(`/api/events/${id}/activate`, { method: 'PUT' }),
-  closeEvent: (id) =>
-    apiFetch(`/api/events/${id}/close`, { method: 'PUT' }),
   updateEventSettings: (id, settings) =>
     apiFetch(`/api/events/${id}/settings`, { method: 'PUT', body: JSON.stringify(settings) }),
 
-  // Questions
   listQuestions: () => apiFetch('/api/questions'),
   listAllQuestions: () => apiFetch('/api/questions/all'),
   createQuestion: (data) =>
@@ -86,30 +100,31 @@ export const api = {
   reorderQuestions: (order) =>
     apiFetch('/api/questions/reorder/batch', { method: 'PUT', body: JSON.stringify({ order }) }),
 
-  // Vidéos admin
   listVideos: (sessionId) =>
     apiFetch(`/api/videos${sessionId ? `?session_id=${sessionId}` : ''}`),
   deleteVideo: (id) => apiFetch(`/api/videos/${id}`, { method: 'DELETE' }),
-
-  // Sessions admin
   listSessions: () => apiFetch('/api/sessions'),
 
-  // Preflight
+  // ── Routes tech admin (requireTech — tech_token) ──────────────────────────
+
+  closeEvent: (id) =>
+    techApiFetch(`/api/events/${id}/close`, { method: 'PUT' }),
+
   getPreflight: (clientTime) =>
-    apiFetch(`/api/preflight?client_time=${encodeURIComponent(clientTime)}`),
+    techApiFetch(`/api/preflight?client_time=${encodeURIComponent(clientTime)}`),
 
-  health: () => apiFetch('/api/health'),
-
-  // Synchro
-  getSyncStatus: () => apiFetch('/api/sync/status'),
-  triggerPull: () => apiFetch('/api/sync/pull', { method: 'POST' }),
-  triggerPush: (eventId) => apiFetch(`/api/sync/push/${eventId}`, { method: 'POST' }),
+  getSyncStatus: () => techApiFetch('/api/sync/status'),
+  triggerPull: () => techApiFetch('/api/sync/pull', { method: 'POST' }),
+  triggerPush: (eventId) => techApiFetch(`/api/sync/push/${eventId}`, { method: 'POST' }),
   purgeEvent: (eventId, confirm) =>
-    apiFetch(`/api/sync/purge/${eventId}`, { method: 'POST', body: JSON.stringify({ confirm }) }),
+    techApiFetch(`/api/sync/purge/${eventId}`, {
+      method: 'POST',
+      body: JSON.stringify({ confirm }),
+    }),
 };
 
-// URLs de ressources — ajoutent ?token= pour <video src>, <a href>, CSV
-// Le navigateur ne peut pas envoyer de header custom pour ces ressources (§11.2)
+// ── URLs de ressources (ajoutent ?token= pour <video src>, downloads, CSV) ───
+
 export function videoStreamUrl(videoId) {
   const t = getToken();
   return `/api/videos/${videoId}/file${t ? `?token=${t}` : ''}`;
@@ -129,7 +144,8 @@ export function guestVideoUrl(sessionId, questionId) {
   return `/api/sessions/${sessionId}/videos/${questionId}/file`;
 }
 
-// Upload vidéo invité via XHR (seul XHR expose upload.onprogress — fetch ne le fait pas)
+// ── Upload vidéo invité via XHR (fetch n'expose pas upload.onprogress) ────────
+
 export function uploadVideo({ sessionId, questionId, questionText, blob, mimeType, onProgress }) {
   return new Promise((resolve, reject) => {
     const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
@@ -144,7 +160,6 @@ export function uploadVideo({ sessionId, questionId, questionText, blob, mimeTyp
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/videos');
     xhr.setRequestHeader('Accept', 'application/json');
-    // Pas de token sur l'upload invité (route publique)
 
     if (onProgress) {
       xhr.upload.onprogress = (e) => {

@@ -1,14 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, clearToken } from '../../api/client.js';
 
-const TABS = [
-  { id: 'event',     label: 'Événement' },
-  { id: 'preflight', label: 'Préflight'  },
-  { id: 'questions', label: 'Questions'  },
-  { id: 'videos',    label: 'Vidéos'    },
-  { id: 'sync',      label: 'Synchro'   },
-];
-
 const GB = 1024 ** 3;
 const DISK_WARN_BYTES = 10 * GB;
 const DISK_POLL_MS = 30_000;
@@ -24,7 +16,9 @@ function DiskIndicator({ freeBytes }) {
   );
 }
 
-export default function AdminLayout({ activeTab, onTabChange, onLogout, children }) {
+// tabs : [{ id, label }] — définit les onglets affichés
+// clearTokenFn : fonction de déconnexion (clearToken pour client, clearTechToken pour tech)
+export default function AdminLayout({ activeTab, onTabChange, onLogout, children, tabs, clearTokenFn = clearToken }) {
   const [freeBytes, setFreeBytes] = useState(null);
   const intervalRef = useRef(null);
 
@@ -42,7 +36,7 @@ export default function AdminLayout({ activeTab, onTabChange, onLogout, children
   }, [fetchDisk]);
 
   function handleLogout() {
-    clearToken();
+    clearTokenFn();
     onLogout();
   }
 
@@ -57,7 +51,7 @@ export default function AdminLayout({ activeTab, onTabChange, onLogout, children
       </header>
 
       <nav className="admin-tabs" role="tablist">
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             role="tab"

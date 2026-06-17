@@ -1,16 +1,13 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import GuestPage from './pages/GuestPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
+import TechPage from './pages/TechPage.jsx';
 
+// Routing manuel : pas de react-router pour les deux zones admin (§6A.3)
+// Navigation entre zones via window.location.href = '...' → rechargement complet.
 export default function App() {
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<GuestPage />} />
-        <Route path="/admin/*" element={<AdminPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </BrowserRouter>
-  );
+  const path = window.location.pathname;
+  if (path.startsWith('/admin/tech')) return <TechPage />;
+  if (path.startsWith('/admin')) return <AdminPage />;
+  return <GuestPage />;
 }
