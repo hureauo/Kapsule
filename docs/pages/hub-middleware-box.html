@@ -10,7 +10,7 @@
 
 <p>Le fichier entier :</p>
 <pre><code class="js">import { createHash } from 'node:crypto';
-import { getDb, getBoxByTokenHash, updateBoxSeen } from '../registry.js';
+import { getDb, getBoxTokenByHash, updateBoxTokenSeen } from '../registry.js';
 
 export function requireBox(req, res, next) {
   const raw = req.headers['x-box-token'];
@@ -18,12 +18,12 @@ export function requireBox(req, res, next) {
 
   const hash = createHash('sha256').update(raw).digest('hex');
   const db = getDb();
-  const box = getBoxByTokenHash(db, hash);
-  if (!box) return res.status(401).json({ error: 'Token borne invalide' });
+  const row = getBoxTokenByHash(db, hash);
+  if (!row) return res.status(401).json({ error: 'Token borne invalide' });
 
-  updateBoxSeen(db, box.id);
-  // Pas de sync_log ici — chaque route pose son propre log avec l'action précise
-  req.box = box;
+  updateBoxTokenSeen(db, row.id);
+  // Exposer token_id, event_id et is_preview (invariant §11.20)
+  req.box = { token_id: row.id, event_id: row.event_id, is_preview: row.is_preview };
   next();
 }</code></pre>
 
@@ -37,19 +37,35 @@ export function requireBox(req, res, next) {
     (impossible en notation pointée).
   </li>
   <li>
-    On calcule le <strong>SHA-256</strong> du jeton reçu, puis on cherche une borne ayant ce hash.
+    On calcule le <strong>SHA-256</strong> du jeton reçu, puis on cherche un token de borne
+    (<code>box_tokens</code>) ayant ce hash.
   </li>
   <li>
-    Si trouvée → on note la date de dernier contact (<code>updateBoxSeen</code>), on attache la
-    borne à <code>req.box</code>, et on passe la main.
+    Si trouvé → on note la date de dernier contact (<code>updateBoxTokenSeen</code>), on attache à
+    <code>req.box</code> un objet réduit <code>{ token_id, event_id, is_preview }</code>, et on passe
+    la main.
   </li>
 </ol>
 
 <div class="callout danger">
+  <div class="callout-title">⛔ §11.20 — <code>req.box</code> porte l'<code>event_id</code> (token = événement)</div>
+  <p>
+    Depuis la Phase 6C, un token de borne désigne <strong>directement</strong> un événement (voir la
+    table <a href="#/hub-registry"><code>box_tokens</code></a>). Le middleware n'expose donc plus la
+    ligne brute mais un objet ciblé : <code>req.box = { token_id, event_id, is_preview }</code>.
+    Toutes les routes de <a href="#/hub-routes-sync">sync.js</a> s'en servent pour rejeter (403)
+    toute requête <code>…/events/:id/…</code> où <code>:id ≠ req.box.event_id</code> — un token ne
+    peut tirer ou pousser que son propre événement. C'est le cœur de l'invariant §11.20. On
+    n'expose volontairement <strong>pas</strong> <code>token_hash</code> dans <code>req.box</code>
+    (rien à en faire en aval, et on évite de le promener).
+  </p>
+</div>
+
+<div class="callout danger">
   <div class="callout-title">⛔ On stocke le hash du jeton, jamais le jeton en clair</div>
   <p>
-    La table <code>boxes</code> ne contient que <code>token_hash</code>, pas le jeton lui-même. À
-    la création d'une borne (<a href="#/hub-routes-admin">routes/admin.js</a>), le jeton en clair
+    La table <code>box_tokens</code> ne contient que <code>token_hash</code>, pas le jeton lui-même.
+    À la génération d'un token (<a href="#/hub-routes-admin">routes/admin.js</a>), le jeton en clair
     est renvoyé <strong>une seule fois</strong> à l'admin (pour le configurer sur la Borne), puis
     seul son hash est conservé. Si la base fuite, les jetons restent inutilisables (on ne peut pas
     inverser un SHA-256). C'est le même principe que le hachage des mots de passe — sauf qu'ici on
@@ -86,7 +102,7 @@ export function requireBox(req, res, next) {
 
 <table class="api-table">
   <tr><th>Élément</th><th>Détail</th></tr>
-  <tr><td>requireBox(req, res, next)</td><td>Middleware. 401 si en-tête absent ou hash inconnu. Sinon pose <code>req.box</code> et appelle <code>next()</code>.</td></tr>
-  <tr><td>Effet de bord</td><td>Met à jour <code>boxes.last_seen_at</code> à chaque appel authentifié.</td></tr>
+  <tr><td>requireBox(req, res, next)</td><td>Middleware. 401 si en-tête absent ou hash inconnu. Sinon pose <code>req.box = { token_id, event_id, is_preview }</code> et appelle <code>next()</code>.</td></tr>
+  <tr><td>Effet de bord</td><td>Met à jour <code>box_tokens.last_seen_at</code> à chaque appel authentifié.</td></tr>
   <tr><td>Monté où</td><td><code>router.use(requireBox)</code> en tête de <a href="#/hub-routes-sync">routes/sync.js</a> → protège toutes les routes de synchro.</td></tr>
 </table>

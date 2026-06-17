@@ -129,12 +129,13 @@ export function makeEventsRouter(dataDir) {
     ).all(event.id);
 
     const logs = db.prepare(
-      'SELECT sl.*, b.name as box_name FROM sync_log sl LEFT JOIN boxes b ON b.id = sl.box_id WHERE sl.event_id = ? ORDER BY sl.created_at DESC LIMIT 20'
+      'SELECT id, event_id, action, detail, created_at FROM sync_log WHERE event_id = ? ORDER BY created_at DESC LIMIT 20'
     ).all(event.id);
 
-    const box = event.box_id
-      ? db.prepare('SELECT id, name, last_seen_at FROM boxes WHERE id = ?').get(event.box_id)
-      : null;
+    // Tokens de borne liés à cet événement (modèle 6C : token = événement)
+    const tokens = db.prepare(
+      'SELECT id, event_id, label, location, is_preview, last_seen_at, created_at FROM box_tokens WHERE event_id = ?'
+    ).all(event.id);
 
     const jobsDone = jobs.filter(j => j.status === 'done').length;
     const jobsFailed = jobs.filter(j => j.status === 'failed').length;
@@ -148,23 +149,10 @@ export function makeEventsRouter(dataDir) {
         processed_at: event.processed_at,
         purged_at: event.purged_at,
       },
-      box,
+      tokens,
       jobs: { total: jobs.length, done: jobsDone, failed: jobsFailed, list: jobs },
       sync_log: logs,
     });
-  });
-
-  // ── PUT /api/events/:eventId/assign ───────────────────────────────────────
-  router.put('/:eventId/assign', requireUser, requireOwner, (req, res, next) => {
-    try {
-      const { box_id } = req.body;
-      if (box_id === undefined) return res.status(400).json({ error: 'box_id requis' });
-      const db = getDb();
-      updateEvent(db, req.event.id, { box_id });
-      res.json(getEvent(db, req.event.id));
-    } catch (err) {
-      next(err);
-    }
   });
 
   // ── DELETE /api/events/:eventId — purge RGPD ──────────────────────────────

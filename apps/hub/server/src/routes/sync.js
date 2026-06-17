@@ -73,16 +73,19 @@ export function makeSyncRouter(dataDir, opts = {}) {
     limits: { fileSize: maxUploadBytes, files: 1 },
   });
 
-  // ── GET /api/sync/assigned ────────────────────────────────────────────────
-  router.get('/assigned', (req, res) => {
+  // ── GET /api/sync/event ───────────────────────────────────────────────────
+  // Remplace GET /assigned (liste) — un token = un événement (§11.20)
+  router.get('/event', (req, res) => {
     const db = getDb();
-    const rows = db.prepare(`
-      SELECT id, name, event_date, status, updated_at
-      FROM events
-      WHERE box_id = ? AND status IN ('ready','loaded')
-      ORDER BY updated_at DESC
-    `).all(req.box.id);
-    res.json(rows);
+    const event = getEvent(db, req.box.event_id);
+    if (!event || !['ready', 'loaded'].includes(event.status)) {
+      return res.status(404).json({ error: 'Aucun événement pullable pour ce token' });
+    }
+    res.json({
+      id: event.id, name: event.name, event_date: event.event_date,
+      status: event.status, updated_at: event.updated_at,
+      is_preview: req.box.is_preview,
+    });
   });
 
   // ── GET /api/sync/events/:id/bundle ──────────────────────────────────────
@@ -91,14 +94,15 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const db = getDb();
       const event = getEvent(db, req.params.id);
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-      if (event.box_id !== req.box.id) return res.status(403).json({ error: 'Non assigné à cette borne' });
+      // Invariant §11.20 : un token ne peut tirer que son propre événement
+      if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Token non autorisé sur cet événement' });
       if (!['ready', 'loaded'].includes(event.status)) {
         return res.status(409).json({ error: `Statut ${event.status} — bundle non disponible` });
       }
 
       if (event.status === 'ready') {
         updateEvent(db, event.id, { status: 'loaded', pulled_at: new Date().toISOString() });
-        insertSyncLog(db, { event_id: event.id, box_id: req.box.id, action: 'pull', detail: { from: 'ready', to: 'loaded' } });
+        insertSyncLog(db, { event_id: event.id, action: 'pull', detail: { from: 'ready', to: 'loaded' } });
       }
 
       const edb = openEventDb(event.id, dataDir);
@@ -127,14 +131,14 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const db = getDb();
       const event = getEvent(db, req.params.id);
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-      if (event.box_id !== req.box.id) return res.status(403).json({ error: 'Non assigné à cette borne' });
+      if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Non assigné à cette borne' });
 
       if (statusRank(status) <= statusRank(event.status)) {
         return res.status(409).json({ error: `Transition ${event.status}→${status} non autorisée (retour en arrière)` });
       }
 
       updateEvent(db, event.id, { status });
-      insertSyncLog(db, { event_id: event.id, box_id: req.box.id, action: 'status', detail: { from: event.status, to: status } });
+      insertSyncLog(db, { event_id: event.id,  action: 'status', detail: { from: event.status, to: status } });
 
       res.json({ ok: true, status });
     } catch (err) {
@@ -150,7 +154,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const db = getDb();
       const event = getEvent(db, req.params.id);
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-      if (event.box_id !== req.box.id) return res.status(403).json({ error: 'Non assigné à cette borne' });
+      if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Non assigné à cette borne' });
       if (!['closed', 'pushed'].includes(event.status)) {
         return res.status(409).json({ error: `Statut ${event.status} — push non disponible (événement non clôturé)` });
       }
@@ -170,7 +174,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
 
       // Persiste le manifest pour que finalize puisse vérifier la complétude
       writeFileSync(manifestPath(dataDir, event.id), JSON.stringify({ files, db: dbMeta }));
-      insertSyncLog(db, { event_id: event.id, box_id: req.box.id, action: 'push_manifest', detail: { total: files.length, missing: missing.length } });
+      insertSyncLog(db, { event_id: event.id,  action: 'push_manifest', detail: { total: files.length, missing: missing.length } });
 
       res.json({ missing });
     } catch (err) {
@@ -190,7 +194,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
         try { unlinkSync(req.file.path); } catch {}
         return res.status(404).json({ error: 'Événement introuvable' });
       }
-      if (event.box_id !== req.box.id) {
+      if (req.params.id !== req.box.event_id) {
         try { unlinkSync(req.file.path); } catch {}
         return res.status(403).json({ error: 'Non assigné à cette borne' });
       }
@@ -216,7 +220,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
         return res.status(422).json({ error: 'Checksum mismatch — fichier corrompu, réessayez' });
       }
 
-      insertSyncLog(db, { event_id: event.id, box_id: req.box.id, action: 'push_file', detail: { video_id: req.params.videoId, size: req.file.size } });
+      insertSyncLog(db, { event_id: event.id,  action: 'push_file', detail: { video_id: req.params.videoId, size: req.file.size } });
       res.json({ ok: true, video_id: req.params.videoId, checksum: actual });
     } catch (err) {
       next(err);
@@ -235,7 +239,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
         try { unlinkSync(req.file.path); } catch {}
         return res.status(404).json({ error: 'Événement introuvable' });
       }
-      if (event.box_id !== req.box.id) {
+      if (req.params.id !== req.box.event_id) {
         try { unlinkSync(req.file.path); } catch {}
         return res.status(403).json({ error: 'Non assigné à cette borne' });
       }
@@ -270,7 +274,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       // Remplace atomiquement db.sqlite
       renameSync(req.file.path, dest);
 
-      insertSyncLog(db, { event_id: event.id, box_id: req.box.id, action: 'push_db', detail: { checksum: actual } });
+      insertSyncLog(db, { event_id: event.id,  action: 'push_db', detail: { checksum: actual } });
       res.json({ ok: true, checksum: actual });
     } catch (err) {
       next(err);
@@ -284,7 +288,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const db = getDb();
       const event = getEvent(db, req.params.id);
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-      if (event.box_id !== req.box.id) return res.status(403).json({ error: 'Non assigné à cette borne' });
+      if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Non assigné à cette borne' });
       if (!['closed', 'pushed'].includes(event.status)) {
         return res.status(409).json({ error: `Statut ${event.status} — finalize non disponible` });
       }
@@ -339,7 +343,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
 
       // Passe en pushed
       updateEvent(db, event.id, { status: 'pushed', pushed_at: new Date().toISOString() });
-      insertSyncLog(db, { event_id: event.id, box_id: req.box.id, action: 'finalize', detail: { videos: manifest.files.length, jobs: jobsToCreate.length } });
+      insertSyncLog(db, { event_id: event.id,  action: 'finalize', detail: { videos: manifest.files.length, jobs: jobsToCreate.length } });
 
       res.json({ ok: true, jobs: jobsToCreate.length });
     } catch (err) {

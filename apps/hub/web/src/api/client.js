@@ -5,6 +5,12 @@ export function saveToken(t) { localStorage.setItem(TOKEN_KEY, t); }
 export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
 export function isAuthenticated() { return !!getToken(); }
 
+export function getRole() {
+  const token = getToken();
+  if (!token) return null;
+  try { return JSON.parse(atob(token.split('.')[1])).role; } catch { return null; }
+}
+
 async function apiFetch(path, opts = {}) {
   const token = getToken();
   const headers = { ...(opts.headers ?? {}) };
@@ -30,7 +36,6 @@ export const api = {
   getEvent: (id) => apiFetch(`/events/${id}`),
   updateEvent: (id, fields) => apiFetch(`/events/${id}`, { method: 'PUT', body: fields }),
   setEventStatus: (id, status) => apiFetch(`/events/${id}/status`, { method: 'PUT', body: { status } }),
-  assignBox: (id, box_id) => apiFetch(`/events/${id}/assign`, { method: 'PUT', body: { box_id } }),
   deleteEvent: (id, confirm) => apiFetch(`/events/${id}`, { method: 'DELETE', body: { confirm } }),
 
   listQuestions: (eventId) => apiFetch(`/events/${eventId}/questions`),
@@ -48,10 +53,12 @@ export const api = {
     headers: { Authorization: `Bearer ${getToken()}` },
   }),
 
-  // Admin overview + boxes
+  // Admin overview + tokens de borne
   getOverview: () => apiFetch('/admin/overview'),
-  createBox: (name) => apiFetch('/admin/boxes', { method: 'POST', body: { name } }),
-  deleteBox: (id) => apiFetch(`/admin/boxes/${id}`, { method: 'DELETE' }),
+  createBoxToken: (eventId, fields) => apiFetch(`/admin/events/${eventId}/tokens`, { method: 'POST', body: fields }),
+  listBoxTokens: (eventId) => apiFetch(`/admin/events/${eventId}/tokens`),
+  deleteBoxToken: (tokenId) => apiFetch(`/admin/tokens/${tokenId}`, { method: 'DELETE' }),
+  updateBoxToken: (tokenId, fields) => apiFetch(`/admin/tokens/${tokenId}`, { method: 'PUT', body: fields }),
 
   // Admin : gestion des comptes clients
   listUsers: () => apiFetch('/admin/users'),

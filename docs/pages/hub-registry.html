@@ -4,7 +4,7 @@
 <p>
   Ce fichier gère <span class="path">registry.sqlite</span>, l'annuaire global du Hub. Il fait
   deux choses : (1) ouvrir/initialiser la base (schéma des tables <code>users</code>,
-  <code>boxes</code>, <code>events</code>, <code>jobs</code>, <code>sync_log</code>), et (2)
+  <code>box_tokens</code>, <code>events</code>, <code>jobs</code>, <code>sync_log</code>), et (2)
   fournir un jeu de fonctions d'accès (insert/get/update/delete) que les routes appellent. Rappel :
   <strong>aucune donnée invité ici</strong> (invariant RGPD §11.13).
 </p>
@@ -80,7 +80,6 @@ export function closeRegistry() {
 <pre><code class="js">CREATE TABLE IF NOT EXISTS events (
   id           TEXT PRIMARY KEY,
   owner_id     INTEGER NOT NULL REFERENCES users(id),
-  box_id       INTEGER REFERENCES boxes(id),
   name         TEXT NOT NULL,
   event_date   DATE,
   status       TEXT NOT NULL DEFAULT 'draft'
@@ -96,6 +95,40 @@ export function closeRegistry() {
   JS et en SQL) qui ajoute une dernière ligne de défense — même un bug applicatif ne peut pas
   écrire un statut invalide. Idem pour <code>role CHECK(role IN ('admin','client'))</code> dans
   <code>users</code>.
+</p>
+
+<h2>La table <code>box_tokens</code> : un token = un événement (§11.20)</h2>
+<pre><code class="js">CREATE TABLE IF NOT EXISTS box_tokens (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id     TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  token_hash   TEXT UNIQUE NOT NULL,
+  label        TEXT,
+  location     TEXT,
+  is_preview   INTEGER NOT NULL DEFAULT 0,
+  last_seen_at DATETIME,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+);</code></pre>
+<p>
+  Cette table <strong>remplace l'ancienne <code>boxes</code></strong> (et la colonne
+  <code>events.box_id</code> a disparu). Le changement de modèle : au lieu d'enregistrer des
+  « bornes » nommées qu'on assignait ensuite à un événement, on génère désormais un
+  <strong>token par événement</strong>. Le <code>event_id NOT NULL REFERENCES events(id) ON DELETE
+  CASCADE</code> ancre chaque token à son événement — purger l'événement supprime
+  automatiquement ses tokens. Conséquences à connaître :
+</p>
+<ul>
+  <li>Un token désigne <em>directement</em> son événement : plus besoin d'un <code>PUT …/assign</code>
+      (supprimé). Le lien Borne↔événement se crée en générant le token.</li>
+  <li>Plusieurs tokens peuvent pointer le même événement (un réel + un d'essai), d'où une <em>table</em>
+      plutôt qu'une colonne sur <code>events</code> — chacun révocable indépendamment.</li>
+  <li><code>is_preview = 1</code> marque un token d'essai (borne de démo, §11.21 — à venir) ;
+      <code>label</code>/<code>location</code> sont purement descriptifs (affichés à l'admin).</li>
+  <li>Comme pour les autres jetons, seul <code>token_hash</code> (SHA-256) est stocké, jamais le
+      clair (voir <a href="#/hub-routes-admin">routes/admin.js</a>).</li>
+</ul>
+<p>
+  La table <code>sync_log</code> a aussi perdu sa colonne <code>box_id</code> : avec un token par
+  événement, <code>event_id</code> suffit à tracer qui a fait quoi.
 </p>
 
 <h2>Les fonctions d'accès : <code>db</code> passé en argument</h2>
@@ -123,7 +156,7 @@ export function insertEvent(db, { id, owner_id, name, event_date = null }) {
   <code>updateEvent</code> mérite une lecture attentive — c'est un mini-générateur de SQL :
 </p>
 <pre><code class="js">export function updateEvent(db, id, fields) {
-  const allowed = ['name', 'event_date', 'box_id', 'status',
+  const allowed = ['name', 'event_date', 'status',
     'pulled_at', 'pushed_at', 'processed_at', 'purged_at'];
   const updates = Object.keys(fields)
     .filter((k) => allowed.includes(k))      // ne garde que les colonnes autorisées
@@ -176,7 +209,7 @@ export function insertEvent(db, { id, owner_id, name, event_date = null }) {
   <tr><td>Cycle de vie</td><td><code>openRegistry</code>, <code>getDb</code>, <code>closeRegistry</code></td></tr>
   <tr><td>users</td><td><code>insertUser</code>, <code>getUserByEmail</code>, <code>getUserById</code></td></tr>
   <tr><td>events</td><td><code>listEvents</code>, <code>getEvent</code>, <code>insertEvent</code>, <code>updateEvent</code>, <code>deleteEvent</code></td></tr>
-  <tr><td>boxes</td><td><code>listBoxes</code>, <code>insertBox</code>, <code>getBoxByTokenHash</code>, <code>updateBoxSeen</code>, <code>deleteBox</code></td></tr>
+  <tr><td>box_tokens</td><td><code>insertBoxToken</code>, <code>listBoxTokensByEvent</code>, <code>getBoxTokenById</code>, <code>getBoxTokenByHash</code>, <code>updateBoxToken</code>, <code>updateBoxTokenSeen</code>, <code>deleteBoxToken</code></td></tr>
   <tr><td>sync_log</td><td><code>insertSyncLog</code></td></tr>
 </table>
 <p>

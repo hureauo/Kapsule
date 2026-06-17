@@ -158,10 +158,10 @@ committé en `phase 6X.Y: …`.
 - [x] 6B.4 Front : `RegisterPage` (`/register?token=`, pose le mot de passe) ; section « Clients » de l'admin Hub (créer, copier le lien, activer/désactiver)
 
 ### 6C — Hub : super-admin UI + modèle token=événement ⚠️ change le schéma
-- [ ] 6C.1 `App.jsx` : câbler la route `/admin` (composant `AdminPage.jsx` existe, orphelin) gardée `role==='admin'`
-- [ ] 6C.2 Schéma : **`box_tokens`** (event_id, token_hash, label, location, is_preview, last_seen_at) remplace `boxes` ; retirer `events.box_id`. Migrer `middleware/boxAuth.js` → `requireBox` charge la ligne et expose `req.box={token_id,event_id,is_preview}`. `routes/admin.js` : `POST/GET /api/admin/events/:id/tokens`, `DELETE/PUT /api/admin/tokens/:tokenId` + tests
-- [ ] 6C.3 `routes/sync.js` Hub : `GET /sync/assigned` → `GET /sync/event` (singulier, 404 si non pullable) ; `bundle` rejette (403) si `:id` ≠ `req.box.event_id` (invariant §11.20). Borne : `pull.js` `pullAssigned()` → `pullMyEvent()`, adapter `autoPull.js` + **mettre à jour les tests d'intégration 3.9**
-- [ ] 6C.4 Front super-admin : onglets Vue d'ensemble (existant), Événements (créer + générer token réel/essai avec token affiché une fois + location), Clients (6B)
+- [x] 6C.1 `App.jsx` : câbler la route `/admin` (composant `AdminPage.jsx` existe, orphelin) gardée `role==='admin'`
+- [x] 6C.2 Schéma : **`box_tokens`** (event_id, token_hash, label, location, is_preview, last_seen_at) remplace `boxes` ; retirer `events.box_id`. Migrer `middleware/boxAuth.js` → `requireBox` charge la ligne et expose `req.box={token_id,event_id,is_preview}`. `routes/admin.js` : `POST/GET /api/admin/events/:id/tokens`, `DELETE/PUT /api/admin/tokens/:tokenId` + tests
+- [x] 6C.3 `routes/sync.js` Hub : `GET /sync/assigned` → `GET /sync/event` (singulier, 404 si non pullable) ; `bundle` rejette (403) si `:id` ≠ `req.box.event_id` (invariant §11.20). Borne : `pull.js` `pullAssigned()` → `pullMyEvent()`, adapter `autoPull.js` + **mettre à jour les tests d'intégration 3.9**
+- [x] 6C.4 Front super-admin : onglets Vue d'ensemble (existant), Événements (créer + générer token réel/essai avec token affiché une fois + location), Clients (6B)
 
 ### 6D — Aperçu distant (borne d'essai) — dépend de 6C
 - [ ] 6D.1 Borne : `config.js` lit `MAX_DATA_BYTES` ; `routes/videos.js` refuse l'upload invité (507) si `dirSize(events/) ≥ MAX_DATA_BYTES` (vérif **avant** écriture, invariant §11.21) + test

@@ -51,7 +51,7 @@
 <p><strong>registry.sqlite</strong> (Hub) — <a href="#/hub-registry">détail</a> :</p>
 <ul>
   <li><code>users</code> — les comptes clients et admins (email, hash de mot de passe).</li>
-  <li><code>boxes</code> — les Bornes enregistrées (nom, hash du token).</li>
+  <li><code>box_tokens</code> — les tokens de borne, un par événement (hash du token, <code>event_id</code>, label, location, <code>is_preview</code>) — modèle « token = événement » (§11.20).</li>
   <li><code>events</code> — la fiche de chaque événement (nom, propriétaire, statut, dates). <strong>Pas</strong> les questions ni les vidéos.</li>
   <li><code>jobs</code> — la file de traitement (probe, thumbnail, archive).</li>
   <li><code>sync_log</code> — journal des synchronisations.</li>

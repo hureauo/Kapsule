@@ -37,7 +37,7 @@ import Database from 'better-sqlite3';
 import { createApp as createHubApp } from '../src/index.js';
 import {
   getDb as getHubDb, closeRegistry as closeHubRegistry,
-  insertUser, insertBox,
+  insertUser, insertBoxToken,
 } from '../src/registry.js';
 import { closeAllEventDbs } from '../src/eventStore.js';
 
@@ -50,11 +50,12 @@ import {
 } from '../../../borne/server/src/registry.js';
 import { closeEventDb as closeBorneEventDb } from '../../../borne/server/src/eventDb.js';
 import { config as borneConfig } from '../../../borne/server/src/config.js';
-import { pullAssigned } from '../../../borne/server/src/sync/pull.js';
+import { pullMyEvent } from '../../../borne/server/src/sync/pull.js';
 import { pushEvent } from '../../../borne/server/src/sync/push.js';
 
 // ── Constantes
 const BOX_TOKEN = randomBytes(32).toString('hex');
+const BOX_TOKEN_2 = randomBytes(32).toString('hex');
 const HUB_URL = 'https://hub.test';
 
 // ── Adaptateur fetch → supertest ─────────────────────────────────────────────
@@ -129,7 +130,7 @@ function makeFetchAdapter(agent) {
 let hubDir, borneDir;
 let hubAgent;
 let tokenClient;
-let boxId, eventId;
+let eventId;
 let savedFetch;
 
 before(async () => {
@@ -144,12 +145,7 @@ before(async () => {
   const loginRes = await hubAgent.post('/api/auth/login').send({ email: 'client@integ.test', password: 'pass-client' });
   tokenClient = loginRes.body.token;
 
-  // Borne enregistrée côté Hub
-  const tokenHash = createHash('sha256').update(BOX_TOKEN).digest('hex');
-  const boxRes = insertBox(db, { name: 'Borne Integ', token_hash: tokenHash });
-  boxId = boxRes.lastInsertRowid;
-
-  // Événement Hub ready assigné à la borne
+  // Événement Hub ready
   const evRes = await hubAgent
     .post('/api/events')
     .set('Authorization', `Bearer ${tokenClient}`)
@@ -161,10 +157,9 @@ before(async () => {
     .set('Authorization', `Bearer ${tokenClient}`)
     .send({ status: 'ready' });
 
-  await hubAgent
-    .put(`/api/events/${eventId}/assign`)
-    .set('Authorization', `Bearer ${tokenClient}`)
-    .send({ box_id: boxId });
+  // Token de borne lié à cet événement (modèle token = événement §11.20)
+  const tokenHash = createHash('sha256').update(BOX_TOKEN).digest('hex');
+  insertBoxToken(db, { event_id: eventId, token_hash: tokenHash, label: 'Borne Integ' });
 
   // Questions Hub
   await hubAgent
@@ -224,7 +219,7 @@ function insertVideoInDb(edb, videoId, sessionId, filename, size, content) {
 
 describe('Intégration 3.9 — pull', () => {
   it('pull : Borne reçoit l\'événement et les questions du Hub', async () => {
-    const count = await pullAssigned(borneDir);
+    const count = await pullMyEvent(borneDir);
     assert.ok(count >= 1, 'au moins 1 event pulled');
 
     // Vérification local_events
@@ -349,11 +344,18 @@ describe('Intégration 3.9 — coupure à mi-upload et reprise', () => {
     eventId2 = evRes.body.id;
 
     await hubAgent.put(`/api/events/${eventId2}/status`).set('Authorization', `Bearer ${tokenClient}`).send({ status: 'ready' });
-    await hubAgent.put(`/api/events/${eventId2}/assign`).set('Authorization', `Bearer ${tokenClient}`).send({ box_id: boxId });
     await hubAgent.post(`/api/events/${eventId2}/questions`).set('Authorization', `Bearer ${tokenClient}`).send({ text: 'Q Coupure', max_duration: 60, countdown: 3 });
 
+    // Token de borne lié à eventId2 (token distinct — un token = un événement §11.20)
+    const db = getHubDb();
+    const hash2 = createHash('sha256').update(BOX_TOKEN_2).digest('hex');
+    insertBoxToken(db, { event_id: eventId2, token_hash: hash2, label: 'Borne Integ 2' });
+
+    // Basculer le token de la Borne sur BOX_TOKEN_2 pour ce scénario
+    borneConfig.boxToken = BOX_TOKEN_2;
+
     // Pull Borne
-    await pullAssigned(borneDir);
+    await pullMyEvent(borneDir);
 
     // Vidéos simulées
     const borneEventDir = join(borneDir, 'events', eventId2);

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import supertest from 'supertest';
 import argon2 from 'argon2';
 import { createApp } from '../src/index.js';
-import { getDb, closeRegistry, insertUser, getUserByEmail, getBoxByTokenHash } from '../src/registry.js';
+import { getDb, closeRegistry, insertUser, getUserByEmail, getBoxTokenByHash } from '../src/registry.js';
 import { createHash } from 'node:crypto';
 
 let dir, request, tokenAdmin, tokenClient;
@@ -134,7 +134,7 @@ describe('POST /api/admin/users/:id/registration-link', () => {
     targetId = getUserByEmail(db, 'newclient@test.com').id;
   });
 
-  it('génère un nouveau lien d\'enregistrement', async () => {
+  it("génère un nouveau lien d'enregistrement", async () => {
     const res = await request.post(`/api/admin/users/${targetId}/registration-link`)
       .set('Authorization', `Bearer ${tokenAdmin}`);
     assert.equal(res.status, 200);
@@ -148,129 +148,214 @@ describe('POST /api/admin/users/:id/registration-link', () => {
   });
 });
 
-// ── POST /api/admin/boxes ─────────────────────────────────────────────────────
+// ── POST /api/admin/events/:id/tokens ────────────────────────────────────────
 
-describe('POST /api/admin/boxes', () => {
-  it('crée une borne et retourne le token en clair (admin)', async () => {
-    const res = await request.post('/api/admin/boxes')
+describe('POST /api/admin/events/:id/tokens', () => {
+  let eventId;
+
+  before(async () => {
+    const evRes = await request.post('/api/events')
       .set('Authorization', `Bearer ${tokenAdmin}`)
-      .send({ name: 'Borne Salon' });
+      .send({ name: 'Événement Token Test' });
+    eventId = evRes.body.id;
+  });
+
+  it('génère un token et le retourne en clair UNE SEULE FOIS (201)', async () => {
+    const res = await request.post(`/api/admin/events/${eventId}/tokens`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ label: 'Borne Salon', location: 'Entrée', is_preview: false });
     assert.equal(res.status, 201);
     assert.ok(res.body.id);
-    assert.equal(res.body.name, 'Borne Salon');
+    assert.equal(res.body.event_id, eventId);
     assert.ok(res.body.token, 'token en clair doit être présent');
     assert.equal(res.body.token.length, 64, '32 octets hex = 64 chars');
+    assert.equal(res.body.label, 'Borne Salon');
 
     // Le hash du token retourné doit correspondre à ce qui est stocké
     const db = getDb();
     const hash = createHash('sha256').update(res.body.token).digest('hex');
-    const box = getBoxByTokenHash(db, hash);
-    assert.ok(box, 'la borne doit exister en base');
-    assert.equal(box.name, 'Borne Salon');
+    const row = getBoxTokenByHash(db, hash);
+    assert.ok(row, 'le token doit exister en base');
+    assert.equal(row.event_id, eventId);
   });
 
-  it('retourne 400 si name manquant', async () => {
-    const res = await request.post('/api/admin/boxes')
+  it('retourne 404 pour un event inexistant', async () => {
+    const res = await request.post('/api/admin/events/no-such-event/tokens')
       .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({});
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 404);
   });
 
   it('retourne 403 pour un client', async () => {
-    const res = await request.post('/api/admin/boxes')
+    const res = await request.post(`/api/admin/events/${eventId}/tokens`)
       .set('Authorization', `Bearer ${tokenClient}`)
-      .send({ name: 'Borne Test' });
+      .send({ label: 'Test' });
     assert.equal(res.status, 403);
   });
 
   it('retourne 401 sans token', async () => {
-    const res = await request.post('/api/admin/boxes').send({ name: 'Borne Test' });
+    const res = await request.post(`/api/admin/events/${eventId}/tokens`).send({});
     assert.equal(res.status, 401);
   });
 });
 
-// ── GET /api/admin/boxes ──────────────────────────────────────────────────────
+// ── GET /api/admin/events/:id/tokens ─────────────────────────────────────────
 
-describe('GET /api/admin/boxes', () => {
-  it('liste les bornes sans token_hash (admin)', async () => {
-    const res = await request.get('/api/admin/boxes')
+describe('GET /api/admin/events/:id/tokens', () => {
+  let eventId;
+
+  before(async () => {
+    const evRes = await request.post('/api/events')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Événement Tokens List' });
+    eventId = evRes.body.id;
+    await request.post(`/api/admin/events/${eventId}/tokens`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ label: 'T1' });
+    await request.post(`/api/admin/events/${eventId}/tokens`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ label: 'T2', is_preview: true });
+  });
+
+  it('liste les tokens sans token_hash (admin)', async () => {
+    const res = await request.get(`/api/admin/events/${eventId}/tokens`)
       .set('Authorization', `Bearer ${tokenAdmin}`);
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.body));
-    assert.ok(res.body.length >= 1);
+    assert.equal(res.body.length, 2);
     assert.ok(!('token_hash' in res.body[0]), 'token_hash ne doit pas être exposé');
+    assert.ok('label' in res.body[0]);
   });
 
   it('retourne 403 pour un client', async () => {
-    const res = await request.get('/api/admin/boxes')
+    const res = await request.get(`/api/admin/events/${eventId}/tokens`)
       .set('Authorization', `Bearer ${tokenClient}`);
     assert.equal(res.status, 403);
   });
 });
 
-// ── DELETE /api/admin/boxes/:id ───────────────────────────────────────────────
+// ── DELETE /api/admin/tokens/:tokenId ────────────────────────────────────────
 
-describe('DELETE /api/admin/boxes/:id', () => {
-  it('supprime une borne existante (admin)', async () => {
-    // Créer une borne à supprimer
-    const create = await request.post('/api/admin/boxes')
+describe('DELETE /api/admin/tokens/:tokenId', () => {
+  let tokenId;
+
+  before(async () => {
+    const evRes = await request.post('/api/events')
       .set('Authorization', `Bearer ${tokenAdmin}`)
-      .send({ name: 'À supprimer' });
-    const id = create.body.id;
+      .send({ name: 'Événement Delete Token' });
+    const evId = evRes.body.id;
+    const res = await request.post(`/api/admin/events/${evId}/tokens`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ label: 'À supprimer' });
+    tokenId = res.body.id;
+  });
 
-    const res = await request.delete(`/api/admin/boxes/${id}`)
+  it('révoque un token (204)', async () => {
+    const res = await request.delete(`/api/admin/tokens/${tokenId}`)
       .set('Authorization', `Bearer ${tokenAdmin}`);
     assert.equal(res.status, 204);
   });
 
-  it('retourne 404 pour une borne inexistante', async () => {
-    const res = await request.delete('/api/admin/boxes/99999')
+  it('retourne 404 pour un token inexistant', async () => {
+    const res = await request.delete('/api/admin/tokens/99999')
       .set('Authorization', `Bearer ${tokenAdmin}`);
     assert.equal(res.status, 404);
   });
 
   it('retourne 403 pour un client', async () => {
-    const res = await request.delete('/api/admin/boxes/1')
+    const res = await request.delete('/api/admin/tokens/1')
       .set('Authorization', `Bearer ${tokenClient}`);
     assert.equal(res.status, 403);
   });
 });
 
-// ── requireBox (via boxAuth.js) ───────────────────────────────────────────────
-// Testé indirectement via les routes /api/sync (phase 3.2+).
-// Ici on vérifie que le middleware est opérationnel sur un endpoint arbitraire
-// monté manuellement — utiliser la route admin pour vérifier que requireBox
-// rejette correctement sur une route protégée.
+// ── PUT /api/admin/tokens/:tokenId ───────────────────────────────────────────
 
-describe('boxAuth — middleware', () => {
-  let boxToken;
+describe('PUT /api/admin/tokens/:tokenId', () => {
+  let tokenId;
 
   before(async () => {
-    const res = await request.post('/api/admin/boxes')
+    const evRes = await request.post('/api/events')
       .set('Authorization', `Bearer ${tokenAdmin}`)
-      .send({ name: 'Borne boxAuth test' });
-    boxToken = res.body.token;
+      .send({ name: 'Événement Update Token' });
+    const evId = evRes.body.id;
+    const res = await request.post(`/api/admin/events/${evId}/tokens`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ label: 'Borne Originale' });
+    tokenId = res.body.id;
   });
 
-  it('met à jour last_seen_at quand le token est valide', async () => {
-    const db = getDb();
-    const hash = createHash('sha256').update(boxToken).digest('hex');
-    const before = getBoxByTokenHash(db, hash).last_seen_at;
+  it('met à jour label et location (200)', async () => {
+    const res = await request.put(`/api/admin/tokens/${tokenId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ label: 'Borne Renommée', location: 'Salle B' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.label, 'Borne Renommée');
+    assert.equal(res.body.location, 'Salle B');
+    assert.ok(!('token_hash' in res.body), 'token_hash ne doit pas fuiter');
+  });
 
-    // On fait une requête qui passe par requireBox (route /api/sync montée phase 3.2,
-    // mais on peut tester l'import direct du middleware)
-    // Pour l'instant, on vérifie uniquement que le hash correspond bien en base
-    assert.ok(getBoxByTokenHash(db, hash), 'le token doit être retrouvable par son hash');
-    // last_seen_at sera vérifié dans les tests de la phase 3.2
-    void before; // référencé pour éviter lint
+  it('retourne 404 pour un token inexistant', async () => {
+    const res = await request.put('/api/admin/tokens/99999')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ label: 'Test' });
+    assert.equal(res.status, 404);
+  });
+
+  it('retourne 403 pour un client', async () => {
+    const res = await request.put(`/api/admin/tokens/${tokenId}`)
+      .set('Authorization', `Bearer ${tokenClient}`)
+      .send({ label: 'Test' });
+    assert.equal(res.status, 403);
+  });
+});
+
+// ── requireBox (via boxAuth.js) ───────────────────────────────────────────────
+
+describe('boxAuth — middleware', () => {
+  let boxToken, eventIdBox;
+
+  before(async () => {
+    const evRes = await request.post('/api/events')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Événement boxAuth Test' });
+    eventIdBox = evRes.body.id;
+
+    // Passer l'event en ready pour que GET /api/sync/event retourne 200
+    await request.put(`/api/events/${eventIdBox}/status`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ status: 'ready' });
+
+    const tokenRes = await request.post(`/api/admin/events/${eventIdBox}/tokens`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ label: 'Borne boxAuth test' });
+    boxToken = tokenRes.body.token;
+  });
+
+  it('token valide → GET /api/sync/event retourne 200', async () => {
+    const res = await request.get('/api/sync/event')
+      .set('X-Box-Token', boxToken);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.id, eventIdBox);
+  });
+
+  it('token invalide → 401', async () => {
+    const res = await request.get('/api/sync/event')
+      .set('X-Box-Token', 'not-a-valid-token');
+    assert.equal(res.status, 401);
+  });
+
+  it('absent → 401', async () => {
+    const res = await request.get('/api/sync/event');
+    assert.equal(res.status, 401);
   });
 
   it('sha256 du token retourné correspond au hash en base', async () => {
     const db = getDb();
     const hash = createHash('sha256').update(boxToken).digest('hex');
-    const box = getBoxByTokenHash(db, hash);
-    assert.ok(box);
-    assert.equal(box.name, 'Borne boxAuth test');
+    const row = getBoxTokenByHash(db, hash);
+    assert.ok(row);
+    assert.equal(row.event_id, eventIdBox);
   });
 });
 
@@ -302,7 +387,6 @@ describe('GET /api/admin/overview', () => {
 
     assert.equal(res.status, 200);
 
-    // Structure attendue
     assert.ok(Array.isArray(res.body.events), 'events doit être un tableau');
     assert.ok(typeof res.body.disk?.free_bytes === 'number', 'disk.free_bytes doit être un nombre');
     assert.ok(typeof res.body.disk?.total_bytes === 'number', 'disk.total_bytes doit être un nombre');
@@ -314,12 +398,11 @@ describe('GET /api/admin/overview', () => {
     assert.ok(failed, 'le job failed doit apparaître dans overview');
     assert.equal(failed.type, 'probe');
 
-    // Les bornes ont last_seen_at
-    assert.ok(res.body.boxes.length >= 1, 'au moins une borne en base');
+    // Les box_tokens ont last_seen_at (créés dans les tests précédents)
+    assert.ok(res.body.boxes.length >= 1, 'au moins un token borne en base');
     assert.ok('last_seen_at' in res.body.boxes[0]);
 
     // Les events ont disk_bytes
-    // (pas d'événement créé dans ce test, mais la structure est vérifiée)
     for (const ev of res.body.events) {
       assert.ok(typeof ev.disk_bytes === 'number', 'disk_bytes doit être un nombre');
       assert.ok(!('token_hash' in ev), 'token_hash ne doit pas fuiter');

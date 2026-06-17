@@ -2,9 +2,9 @@
 <h1>hub/routes/events.js</h1>
 
 <p>
-  Le CRUD des événements côté Hub : créer, lister, lire, modifier, changer de statut, assigner une
-  borne, supprimer (purge RGPD). C'est le routeur le plus complet — il illustre <code>Set</code>,
-  <code>Map</code>, la gestion des transitions de statut, et un invariant de purge.
+  Le CRUD des événements côté Hub : créer, lister, lire, modifier, changer de statut, supprimer
+  (purge RGPD). C'est le routeur le plus complet — il illustre <code>Set</code>, <code>Map</code>,
+  la gestion des transitions de statut, et un invariant de purge.
 </p>
 
 <h2>Statuts gelés : un <code>Set</code></h2>
@@ -168,7 +168,6 @@ if (allowed !== status) {
   <tr><td>GET /:eventId</td><td>user+owner</td><td>Détail (sert <code>req.event</code>).</td></tr>
   <tr><td>PUT /:eventId</td><td>user+owner</td><td>Modifie nom/date + <code>consent_text</code>/<code>idle_timeout</code> (écrits dans event_meta). 409 si gelé.</td></tr>
   <tr><td>PUT /:eventId/status</td><td>user+owner</td><td>Transition manuelle draft↔ready uniquement.</td></tr>
-  <tr><td>GET /:eventId/sync</td><td>user+owner</td><td>État de synchro (jobs, sync_log, borne).</td></tr>
-  <tr><td>PUT /:eventId/assign</td><td>user+owner</td><td>Assigne une borne (<code>box_id</code>).</td></tr>
+  <tr><td>GET /:eventId/sync</td><td>user+owner</td><td>État de synchro (jobs, sync_log, <code>tokens</code> de borne liés à l'événement).</td></tr>
   <tr><td>DELETE /:eventId</td><td>user+owner</td><td>Purge RGPD (confirmation + §11.11).</td></tr>
 </table>

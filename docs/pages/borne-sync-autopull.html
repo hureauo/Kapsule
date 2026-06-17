@@ -3,9 +3,9 @@
 
 <p>
   Le pull automatique : un cycle qui tourne périodiquement pour (1) envoyer au Hub les statuts
-  <code>live</code>/<code>closed</code> des événements locaux (heartbeats), et (2) tirer les
-  nouveaux événements assignés. C'est la page de référence pour <code>setInterval</code> et le
-  pattern « timer de fond ».
+  <code>live</code>/<code>closed</code> des événements locaux (heartbeats), et (2) tirer l'événement
+  du token (<a href="#/borne-sync-pull">pullMyEvent</a>, §11.20). C'est la page de référence pour
+  <code>setInterval</code> et le pattern « timer de fond ».
 </p>
 
 <h2>Le timer</h2>
@@ -72,7 +72,7 @@ export function stopAutoPull() {
 
   if (hasLoaded || hasNone) {
     try {
-      await pullAssigned(dataDir);
+      await pullMyEvent(dataDir);
       _lastPull = new Date().toISOString();
     } catch { /* réseau — silencieux, retenté au prochain cycle */ }
   }

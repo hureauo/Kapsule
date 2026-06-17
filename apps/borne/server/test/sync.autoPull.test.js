@@ -101,8 +101,8 @@ describe('autoPull — heartbeat best-effort', () => {
 
     globalThis.fetch = async (url) => {
       if (url.includes('/status')) throw new Error('Network error');
-      // /assigned et /bundle pour le pull
-      if (url.includes('/assigned')) return { ok: true, status: 200, json: async () => [] };
+      // /sync/event et /bundle pour le pull
+      if (url.includes('/sync/event')) return { ok: true, status: 200, json: async () => [] };
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     };
 
@@ -148,9 +148,13 @@ describe('autoPull — conditions de pull par cycle', () => {
   });
 
   it('pull si aucun event local (bootstrapping)', async () => {
-    let assignedCalled = false;
+    let eventCalled = false;
     globalThis.fetch = async (url) => {
-      if (url.includes('/assigned')) { assignedCalled = true; return { ok: true, status: 200, json: async () => [] }; }
+      // GET /sync/event → 404 (aucun event pullable) : pullMyEvent retourne 0 gracieusement
+      if (url.includes('/sync/event') && !url.includes('/bundle') && !url.includes('/status')) {
+        eventCalled = true;
+        return { ok: false, status: 404, json: async () => ({ error: 'Aucun événement pullable' }) };
+      }
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     };
 
@@ -158,15 +162,18 @@ describe('autoPull — conditions de pull par cycle', () => {
     await new Promise(r => setTimeout(r, 50));
     stopAutoPull();
 
-    assert.ok(assignedCalled, 'doit appeler /assigned au bootstrap');
+    assert.ok(eventCalled, 'doit appeler /sync/event au bootstrap');
   });
 
   it('pull si un event est en statut loaded', async () => {
     insertEvent({ id: 'ev-loaded', name: 'Test', origin: 'hub', status: 'loaded' });
 
-    let assignedCalled = false;
+    let eventCalled = false;
     globalThis.fetch = async (url) => {
-      if (url.includes('/assigned')) { assignedCalled = true; return { ok: true, status: 200, json: async () => [] }; }
+      if (url.includes('/sync/event') && !url.includes('/bundle') && !url.includes('/status')) {
+        eventCalled = true;
+        return { ok: false, status: 404, json: async () => ({ error: 'Aucun' }) };
+      }
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     };
 
@@ -174,16 +181,19 @@ describe('autoPull — conditions de pull par cycle', () => {
     await new Promise(r => setTimeout(r, 50));
     stopAutoPull();
 
-    assert.ok(assignedCalled);
+    assert.ok(eventCalled);
   });
 
   it('ne pull pas si tous les events sont live ou closed', async () => {
     insertEvent({ id: 'ev-live3', name: 'Test', origin: 'hub', status: 'loaded' });
     getRegistry().prepare("UPDATE local_events SET status='live' WHERE id='ev-live3'").run();
 
-    let assignedCalled = false;
+    let eventCalled = false;
     globalThis.fetch = async (url) => {
-      if (url.includes('/assigned')) { assignedCalled = true; return { ok: true, status: 200, json: async () => [] }; }
+      if (url.includes('/sync/event') && !url.includes('/bundle') && !url.includes('/status')) {
+        eventCalled = true;
+        return { ok: false, status: 404, json: async () => ({ error: 'Aucun' }) };
+      }
       // heartbeat
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     };
@@ -192,12 +202,14 @@ describe('autoPull — conditions de pull par cycle', () => {
     await new Promise(r => setTimeout(r, 50));
     stopAutoPull();
 
-    assert.ok(!assignedCalled, 'ne doit pas puller si tous les events sont >= live');
+    assert.ok(!eventCalled, 'ne doit pas puller si tous les events sont >= live');
   });
 
-  it('met à jour lastPull après un pull réussi', async () => {
+  it('met à jour lastPull après un pull réussi (404 = gracieux, cycle OK)', async () => {
     globalThis.fetch = async (url) => {
-      if (url.includes('/assigned')) return { ok: true, status: 200, json: async () => [] };
+      if (url.includes('/sync/event') && !url.includes('/bundle') && !url.includes('/status')) {
+        return { ok: false, status: 404, json: async () => ({ error: 'Aucun' }) };
+      }
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     };
 
@@ -208,9 +220,11 @@ describe('autoPull — conditions de pull par cycle', () => {
     assert.ok(getLastPull() !== null, 'lastPull doit être défini après un cycle réussi');
   });
 
-  it('lastPull reste null si le pull échoue', async () => {
+  it('lastPull reste null si le pull échoue (erreur réseau)', async () => {
     globalThis.fetch = async (url) => {
-      if (url.includes('/assigned')) throw new Error('Network error');
+      if (url.includes('/sync/event') && !url.includes('/bundle') && !url.includes('/status')) {
+        throw new Error('Network error');
+      }
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     };
 
@@ -236,7 +250,9 @@ describe('autoPull — start / stop', () => {
     dir = mkdtempSync(join(tmpdir(), 'borne-autopull-ctrl-'));
     openRegistry(dir);
     globalThis.fetch = async (url) => {
-      if (url.includes('/assigned')) return { ok: true, status: 200, json: async () => [] };
+      if (url.includes('/sync/event') && !url.includes('/bundle') && !url.includes('/status')) {
+        return { ok: false, status: 404, json: async () => ({ error: 'Aucun' }) };
+      }
       return { ok: true, status: 200, json: async () => ({ ok: true }) };
     };
   });
@@ -261,7 +277,7 @@ describe('autoPull — start / stop', () => {
     let cycles = 0;
     config.pullIntervalMs = 20; // très court pour cet unique test
     globalThis.fetch = async (url) => {
-      if (url.includes('/assigned')) cycles++;
+      if (url.includes('/sync/event')) cycles++;
       return { ok: true, status: 200, json: async () => [] };
     };
 

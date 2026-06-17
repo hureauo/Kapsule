@@ -103,6 +103,45 @@ Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.s
   sans page, et les pages existantes gardent leurs notions).
 - Vérifs : manifeste/fichiers OK, liens internes OK, `node --check pages.js` OK.
 
+## Sync incrémentale — Phase 6C (Hub : super-admin UI + modèle token=événement)
+- Diff base : `git diff HEAD`. Périmètre code = **Hub** : `box_tokens` remplace `boxes` +
+  `events.box_id`, `GET /sync/event` remplace `/assigned`, `req.box={token_id,event_id,is_preview}`,
+  gardes 403 §11.20 sur chaque route sync, routes admin tokens (POST/GET /events/:id/tokens,
+  DELETE/PUT /tokens/:tokenId), front `pullAssigned→pullMyEvent`, `getRole` + route `/admin`.
+- hub-registry : schéma events sans `box_id` ; nouvelle section table `box_tokens` (ON DELETE
+  CASCADE, token=événement, plusieurs tokens/événement, is_preview) ; `sync_log` sans `box_id` ;
+  `updateEvent` allowed sans `box_id` ; inventaire fonctions `box_tokens` (insert/list/getById/
+  getByHash/update/updateSeen/delete) ; intro tables users/box_tokens/events/jobs/sync_log.
+- hub-middleware-box : import + extrait `requireBox` (getBoxTokenByHash/updateBoxTokenSeen,
+  `req.box={token_id,event_id,is_preview}`), callout danger §11.20, table `boxes`→`box_tokens`,
+  API table (req.box shape + last_seen_at sur box_tokens).
+- hub-routes-admin : intro (tokens par événement) ; section génération token (POST /events/:id/tokens,
+  404 event) ; callout « clair une fois » ; section lister/révoquer/renommer (GET/DELETE/PUT) +
+  js-note destructuring rest mise à jour ; overview (box_tokens sous clé `boxes`) ; API table refaite.
+- hub-routes-events : intro sans « assigner une borne » ; `/sync` renvoie `tokens` (plus `box`) ;
+  ligne API `PUT /assign` supprimée.
+- hub-routes-sync : table étapes (GET /event remplace /assigned, bundle 403) ; nouvelle section
+  §11.20 (extrait GET /event + garde 403, callout danger).
+- borne-sync-pull : section `pullAssigned`→`pullMyEvent` (extrait réel, GET /sync/event, 404→0) +
+  js-note « 404 comme cas normal » ; intro + API table.
+- borne-sync-autopull : intro + extrait runCycle (`pullMyEvent`).
+- borne-routes-sync : pull manuel (`pullMyEvent`).
+- web-client-hub : ajout `getRole` (extrait + js-note décodage JWT base64url, danger garde serveur) ;
+  API table (getRole + méthodes createBoxToken/listBoxTokens/deleteBoxToken/updateBoxToken,
+  `assignBox` disparu).
+- flux-push-pull : Phase A (génération token par événement, plus d'assignation) ; Phase B
+  (`pullMyEvent`, GET /sync/event).
+- invariants : callout périmètre révisé (§11.20 désormais implémenté ; §11.21/22 restent à venir) ;
+  nouvel item §11.20 dans Synchronisation.
+- arch-deux-apps + glossaire : `boxes`→`box_tokens` dans la liste des tables registry Hub.
+- pages.js : enrichi `js` de hub-registry, hub-middleware-box, hub-routes-admin, borne-sync-pull,
+  web-client-hub (recherche).
+- Hors scope doc (aucune page UI dédiée — convention : seuls client.js/hooks documentés côté front) :
+  App.jsx (route /admin + RequireAdmin), AdminPage.jsx (onglets Overview/Events/Clients,
+  TokenGenerator), app.css ; ROADMAP.md (cases 6C cochées, pas docs/) ; tous les *.test.js couverts
+  par le pattern générique de tests-runner. RegisterPage.jsx : pas dans ce diff (déjà commité 6B).
+- Vérifs : manifeste/fichiers OK (51/51), liens internes OK (0 mort), `node --check pages.js` OK.
+
 ---
 
 ## Conventions du site (décidées avec l'utilisateur)

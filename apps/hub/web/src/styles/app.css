@@ -276,5 +276,22 @@ button { cursor: pointer; font: inherit; }
 .disk-bar { height: 100%; background: var(--accent); transition: width .3s; }
 .disk-bar-wrap--low .disk-bar { background: var(--danger); }
 .disk-warn { color: var(--danger); }
-.new-box-token { display: flex; flex-direction: column; gap: 10px; }
 .token-display { background: #f0f0f0; padding: 8px 12px; border-radius: 4px; font-family: monospace; word-break: break-all; }
+
+/* ── Onglets admin (6C.4) */
+.admin-tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--border); margin-bottom: 24px; }
+.admin-tab { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 8px 18px; font-size: 14px; font-weight: 500; cursor: pointer; color: var(--text-muted); }
+.admin-tab--active { color: var(--accent); border-bottom-color: var(--accent); }
+
+/* ── Liste événements + tokens */
+.events-token-list { display: flex; flex-direction: column; gap: 8px; }
+.event-token-row { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.event-token-row__header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #fafafa; }
+.event-token-row__body { padding: 12px 16px; border-top: 1px solid var(--border); }
+.admin-table--sm { font-size: 13px; }
+.admin-table--sm th, .admin-table--sm td { padding: 6px 8px; }
+
+/* ── Formulaire token inline */
+.token-form { display: flex; flex-direction: column; gap: 8px; max-width: 420px; margin-top: 8px; }
+.hub-input--sm { font-size: 13px; padding: 6px 8px; }
+.token-reveal { background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 12px; margin-top: 8px; }

@@ -115,7 +115,7 @@
 
 <h2>Pull manuel</h2>
 <pre><code class="js">router.post('/sync/pull', auth, (req, res) =&gt; {
-  pullAssigned(dataDir).catch(() =&gt; {});   // best-effort, sans attendre
+  pullMyEvent(dataDir).catch(() =&gt; {});   // best-effort, sans attendre
   res.json({ ok: true });
 });</code></pre>
 <p>

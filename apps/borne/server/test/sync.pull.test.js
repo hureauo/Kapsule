@@ -11,7 +11,7 @@ import { config } from '../src/config.js';
 
 // Importer les modules sous test au top-level (ESM cache stable)
 import { hubFetch, hubFetchJson } from '../src/sync/hubClient.js';
-import { pullEvent, pullAssigned } from '../src/sync/pull.js';
+import { pullEvent, pullMyEvent } from '../src/sync/pull.js';
 
 // ── hubClient ──────────────────────────────────────────────────────────────────
 
@@ -207,9 +207,9 @@ describe('pull — pullEvent', () => {
   });
 });
 
-// ── pull.js — pullAssigned ─────────────────────────────────────────────────────
+// ── pull.js — pullMyEvent ─────────────────────────────────────────────────────
 
-describe('pull — pullAssigned', () => {
+describe('pull — pullMyEvent', () => {
   let dir;
   let savedFetch;
   const origHubUrl = config.hubUrl;
@@ -238,24 +238,20 @@ describe('pull — pullAssigned', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('pull les événements assigned non présents localement', async () => {
+  it("pull l'événement lié au token s'il est absent localement", async () => {
     globalThis.fetch = async (url) => {
-      if (url.includes('/assigned')) {
-        return { ok: true, status: 200, json: async () => [
-          { id: 'ev-A', name: 'Event A', status: 'ready' },
-          { id: 'ev-B', name: 'Event B', status: 'loaded' },
-        ]};
+      // GET /api/sync/event (exact : pas de /events/ pluriel, pas de /bundle)
+      if (url.endsWith('/sync/event')) {
+        return { ok: true, status: 200, json: async () => ({ id: 'ev-A', name: 'Event A', status: 'ready', is_preview: 0 }) };
       }
-      const id = url.match(/events\/([^/]+)\/bundle/)?.[1] ?? 'x';
+      // GET /api/sync/events/:id/bundle
       return { ok: true, status: 200, json: async () => ({
-        event: { id, name: 'Test', meta: {} }, questions: [],
+        event: { id: 'ev-A', name: 'Event A', meta: {} }, questions: [],
       })};
     };
-
-    const count = await pullAssigned(dir);
-    assert.equal(count, 2);
+    const count = await pullMyEvent(dir);
+    assert.equal(count, 1);
     assert.ok(getRegistry().prepare('SELECT * FROM local_events WHERE id = ?').get('ev-A'));
-    assert.ok(getRegistry().prepare('SELECT * FROM local_events WHERE id = ?').get('ev-B'));
   });
 
   it('ne pull pas un event déjà en statut live (§11.10)', async () => {
@@ -264,23 +260,23 @@ describe('pull — pullAssigned', () => {
 
     let bundleCalled = false;
     globalThis.fetch = async (url) => {
-      if (url.includes('/assigned')) {
-        return { ok: true, status: 200, json: async () => [{ id: 'ev-live', status: 'loaded' }] };
+      if (url.endsWith('/sync/event')) {
+        return { ok: true, status: 200, json: async () => ({ id: 'ev-live', status: 'loaded' }) };
       }
       bundleCalled = true;
       return { ok: true, status: 200, json: async () => ({ event: { id: 'ev-live', meta: {} }, questions: [] }) };
     };
 
-    const count = await pullAssigned(dir);
+    const count = await pullMyEvent(dir);
     assert.equal(count, 0);
     assert.ok(!bundleCalled, 'le bundle ne doit pas être appelé pour un event live');
   });
 
-  it('retourne 0 si aucun événement assigned', async () => {
+  it("retourne 0 si aucun événement pullable (404 Hub)", async () => {
     globalThis.fetch = async () => ({
-      ok: true, status: 200, json: async () => [],
+      ok: false, status: 404, json: async () => ({ error: 'Aucun événement pullable' }),
     });
-    const count = await pullAssigned(dir);
+    const count = await pullMyEvent(dir);
     assert.equal(count, 0);
   });
 });

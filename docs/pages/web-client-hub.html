@@ -13,7 +13,40 @@
 export function getToken() { return localStorage.getItem(TOKEN_KEY); }
 export function saveToken(t) { localStorage.setItem(TOKEN_KEY, t); }
 export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
-export function isAuthenticated() { return !!getToken(); }</code></pre>
+export function isAuthenticated() { return !!getToken(); }
+
+export function getRole() {
+  const token = getToken();
+  if (!token) return null;
+  try { return JSON.parse(atob(token.split('.')[1])).role; } catch { return null; }
+}</code></pre>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Lire le rôle <em>dans</em> le JWT, côté navigateur</span>
+  </div>
+  <p>
+    <code>getRole()</code> décode le <strong>payload</strong> du JWT sans le vérifier : un JWT est
+    fait de trois parties séparées par des points (<code>header.payload.signature</code>) ;
+    <code>token.split('.')[1]</code> isole le payload, encodé en base64url. <code>atob(...)</code>
+    le décode (« ASCII to Binary »), <code>JSON.parse</code> le transforme en objet, et on en lit
+    <code>.role</code>. Le <code>try/catch</code> renvoie <code>null</code> si le token est absent ou
+    malformé.
+  </p>
+  <div class="js-deep">
+    <p>
+      Important : ce décodage <strong>n'authentifie rien</strong> — le navigateur ne vérifie pas la
+      signature, donc un utilisateur pourrait forger un token avec <code>role: "admin"</code>. C'est
+      acceptable parce que <code>getRole()</code> ne sert qu'à l'<em>affichage</em> (router vers
+      <code>/admin</code> ou non, <a href="#/web-client-hub">RequireAdmin</a> côté front). La
+      <strong>vraie</strong> garde est côté serveur : <a href="#/hub-routes-admin">requireAdmin</a>
+      revérifie le rôle dans un token signé. Cacher l'onglet ne protège pas — un <code>fetch</code>
+      direct avec un token client est rejeté par le serveur (403). Même logique que §11.19 côté
+      Borne.
+    </p>
+  </div>
+</div>
 
 <div class="js-note">
   <div class="js-note-head">
@@ -132,7 +165,8 @@ csvExportUrl: (eventId) =&gt; `/api/events/${eventId}/videos/export/csv?token=${
 <table class="api-table">
   <tr><th>Élément</th><th>Détail</th></tr>
   <tr><td>getToken/saveToken/clearToken</td><td>Gèrent le JWT dans <code>localStorage</code> (clé <code>hub_token</code>).</td></tr>
+  <tr><td>getRole()</td><td>Décode (sans vérifier) le rôle du JWT pour l'affichage/routing. Garde réelle côté serveur.</td></tr>
   <tr><td>apiFetch(path, opts)</td><td>Wrapper : jeton + JSON auto + gestion erreurs/204. Préfixe <code>/api</code>.</td></tr>
-  <tr><td>api.*</td><td>Une méthode par endpoint (login, events, questions, galerie, admin).</td></tr>
+  <tr><td>api.*</td><td>Une méthode par endpoint (login, events, questions, galerie, admin). Tokens de borne : <code>createBoxToken(eventId, fields)</code>, <code>listBoxTokens(eventId)</code>, <code>deleteBoxToken(tokenId)</code>, <code>updateBoxToken(tokenId, fields)</code> (l'ancien <code>assignBox</code> a disparu).</td></tr>
   <tr><td>*Url(...)</td><td>Construisent des URLs avec <code>?token=</code> pour vidéos/CSV/archive (§11.2).</td></tr>
 </table>

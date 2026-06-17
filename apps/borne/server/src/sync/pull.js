@@ -71,25 +71,26 @@ export async function pullEvent(hubEventId, dataDir) {
 }
 
 /**
- * Tire tous les événements assigned (ready/loaded) depuis le Hub
- * et les applique localement (nouveaux uniquement ou re-pull si loaded).
+ * Tire l'événement unique associé à ce token depuis le Hub.
+ * Remplace pullAssigned() — un token = un événement (invariant §11.20).
  *
- * Retourne le nombre d'événements traités.
+ * Retourne 1 si un pull a eu lieu, 0 si aucun événement pullable (404 Hub).
  */
-export async function pullAssigned(dataDir) {
-  const assigned = await hubFetchJson('/api/sync/assigned');
-
-  let pulled = 0;
-  for (const ev of assigned) {
-    const db = getRegistry();
-    const existing = db.prepare('SELECT * FROM local_events WHERE id = ?').get(ev.id);
-
-    // Pull si : pas encore présent localement, ou encore en statut 'loaded' (re-pull autorisé)
-    if (!existing || existing.status === 'loaded') {
-      await pullEvent(ev.id, dataDir);
-      pulled++;
-    }
+export async function pullMyEvent(dataDir) {
+  let eventInfo;
+  try {
+    eventInfo = await hubFetchJson('/api/sync/event');
+  } catch (e) {
+    if (e.status === 404) return 0; // pas d'événement pullable pour ce token
+    throw e;
   }
 
-  return pulled;
+  const db = getRegistry();
+  const existing = db.prepare('SELECT * FROM local_events WHERE id = ?').get(eventInfo.id);
+
+  if (!existing || existing.status === 'loaded') {
+    await pullEvent(eventInfo.id, dataDir);
+    return 1;
+  }
+  return 0;
 }

@@ -32,7 +32,7 @@
 <h2>Termes techniques (stockage)</h2>
 
 <table class="api-table">
-  <tr><td>registry.sqlite</td><td>La base « annuaire » de chaque serveur. <strong>Hub</strong> : users, boxes, events, jobs, sync_log. <strong>Borne</strong> : local_events, push_state. <strong>Ne contient jamais de données invité</strong> (invariant RGPD §11.13).</td></tr>
+  <tr><td>registry.sqlite</td><td>La base « annuaire » de chaque serveur. <strong>Hub</strong> : users, box_tokens, events, jobs, sync_log. <strong>Borne</strong> : local_events, push_state. <strong>Ne contient jamais de données invité</strong> (invariant RGPD §11.13).</td></tr>
   <tr><td>db.sqlite (event store)</td><td>Une base <em>par événement</em>, dans <span class="path">events/&lt;id&gt;/db.sqlite</span>. Contient questions, sessions, videos, derived. C'est là que vivent les données invité.</td></tr>
   <tr><td>event_meta</td><td>Table clé/valeur dans le db.sqlite d'un événement (texte de consentement, timeout d'inactivité, nom…).</td></tr>
   <tr><td>derived</td><td>Données <em>dérivées</em> d'une vidéo, calculées par le worker : miniature, durée, dimensions.</td></tr>

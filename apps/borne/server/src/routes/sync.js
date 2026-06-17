@@ -6,7 +6,7 @@ import { getRegistry, updateEventStatus } from '../registry.js';
 import { closeEventDb } from '../eventDb.js';
 import { getLastPull } from '../sync/autoPull.js';
 import { pushEvent, getPushState } from '../sync/push.js';
-import { pullAssigned } from '../sync/pull.js';
+import { pullMyEvent } from '../sync/pull.js';
 
 export function makeSyncRouter(dataDir, cfg) {
   const router = Router();
@@ -28,7 +28,7 @@ export function makeSyncRouter(dataDir, cfg) {
   // ── POST /api/sync/pull ──────────────────────────────────────────────────────
   // Pull manuel immédiat (best-effort, sans attendre la fin)
   router.post('/sync/pull', auth, (req, res) => {
-    pullAssigned(dataDir).catch(() => {}); // silencieux
+    pullMyEvent(dataDir).catch(() => {}); // silencieux
     res.json({ ok: true });
   });
 

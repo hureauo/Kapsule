@@ -25,19 +25,20 @@
 <ol>
   <li>Le client crée un événement (<code>draft</code>), ajoute des questions, règle le consentement
       (<a href="#/hub-routes-events">events</a> + <a href="#/hub-routes-questions">questions</a>).</li>
-  <li>Un admin enregistre une Borne (<a href="#/hub-routes-admin">POST /admin/boxes</a>) → jeton en
-      clair, à configurer dans <code>BOX_TOKEN</code> sur la Borne.</li>
-  <li>L'admin assigne la Borne à l'événement (<a href="#/hub-routes-events">PUT /assign</a>) et passe
-      l'événement <code>ready</code>.</li>
+  <li>L'admin génère un <strong>token de borne pour cet événement</strong>
+      (<a href="#/hub-routes-admin">POST /admin/events/:id/tokens</a>) → jeton en clair, à
+      configurer dans <code>BOX_TOKEN</code> sur la Borne. Le token <em>désigne</em> l'événement
+      (modèle token = événement, §11.20) : il n'y a plus d'étape d'« assignation » séparée.</li>
+  <li>L'admin passe l'événement <code>ready</code>.</li>
 </ol>
 
 <h2>Phase B — Pull (Borne ← Hub, avant l'événement)</h2>
 <p>La Borne, quand elle a du réseau, tire l'événement :</p>
 <ol>
   <li>Le <a href="#/borne-sync-autopull">pull automatique</a> (toutes les 5 min) ou un
-      <a href="#/borne-routes-sync">pull manuel</a> appelle <code>pullAssigned</code>.</li>
-  <li><a href="#/borne-sync-pull">pull.js</a> demande la liste des événements assignés
-      (<a href="#/hub-routes-sync">GET /assigned</a>), puis pour chacun le bundle
+      <a href="#/borne-routes-sync">pull manuel</a> appelle <code>pullMyEvent</code>.</li>
+  <li><a href="#/borne-sync-pull">pull.js</a> demande l'unique événement de son token
+      (<a href="#/hub-routes-sync">GET /sync/event</a>, 404 si rien à tirer), puis son bundle
       (<a href="#/hub-routes-sync">GET /bundle</a>) — ce qui passe l'événement <code>ready→loaded</code>
       côté Hub.</li>
   <li>La Borne écrit les questions + réglages dans son <code>db.sqlite</code> local —

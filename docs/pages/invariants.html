@@ -12,9 +12,11 @@
   <div class="callout-title">ℹ Périmètre de cette page</div>
   <p>
     Seuls les invariants <strong>déjà appliqués dans le code</strong> sont détaillés ici.
-    <span class="path">PROJET.md §11</span> liste aussi §11.20 (token = événement), §11.21 (borne
-    d'essai) et §11.22 (compte client sans mot de passe) : ils relèvent de la Phase 6 Hub
-    <strong>non encore implémentée</strong> et seront documentés quand le code arrivera.
+    <span class="path">PROJET.md §11</span> liste aussi §11.21 (borne d'essai : push interdit +
+    quota) et §11.22 (login d'un compte client sans mot de passe) : ces gardes relèvent de Phases 6
+    encore <strong>non implémentées</strong> (cases ROADMAP non cochées) et seront documentées quand
+    le code arrivera. La table <code>box_tokens</code> porte déjà <code>is_preview</code>, mais le
+    refus de push (409) n'est pas encore codé.
   </p>
 </div>
 
@@ -120,6 +122,15 @@ passé <code>live</code> (invités en cours). Code : <a href="#/borne-sync-pull"
 <p>Le jeton n'est stocké qu'en hash ; un 401 du Hub (token révoqué) doit être affiché clairement.
 Casse : push qui échoue sans explication. Code : <a href="#/hub-middleware-box">boxAuth</a>,
 <a href="#/borne-sync-push">push (lastError sur 401)</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.20 — token = événement : un token ne tire/pousse que son propre événement</strong></label>
+<p><a href="#/hub-middleware-box">requireBox</a> expose <code>req.box.event_id</code> ; chaque route
+<code>…/events/:id/…</code> de la synchro rejette (<strong>403</strong>) si <code>:id ≠
+req.box.event_id</code>, et <code>GET /sync/event</code> (singulier) remplace l'ancien
+<code>/assigned</code>. Casse : un token pourrait lire ou écraser les données d'un <em>autre</em>
+événement. Code : <a href="#/hub-middleware-box">boxAuth</a>,
+<a href="#/hub-routes-sync">sync (GET /event + gardes 403)</a>, côté Borne
+<a href="#/borne-sync-pull">pullMyEvent</a>.</p>
 
 <h2>Matériel &amp; déploiement (vérification humaine)</h2>
 

@@ -12,14 +12,58 @@
 <h2>Les étapes du push, vues du Hub</h2>
 <table class="api-table">
   <tr><th>Endpoint</th><th>Rôle</th></tr>
-  <tr><td>GET /assigned</td><td>La Borne demande quels événements lui sont assignés (statut ready/loaded).</td></tr>
-  <tr><td>GET /events/:id/bundle</td><td>Pull : renvoie l'événement + questions + meta. Passe <code>ready→loaded</code>.</td></tr>
+  <tr><td>GET /event</td><td>La Borne demande l'<strong>unique</strong> événement de son token (404 si non pullable). Remplace l'ancien <code>GET /assigned</code> (§11.20).</td></tr>
+  <tr><td>GET /events/:id/bundle</td><td>Pull : renvoie l'événement + questions + meta. 403 si <code>:id ≠ req.box.event_id</code>. Passe <code>ready→loaded</code>.</td></tr>
   <tr><td>POST /events/:id/status</td><td>Heartbeat : la Borne signale <code>live</code>/<code>closed</code>.</td></tr>
   <tr><td>POST /events/:id/manifest</td><td>Push étape 1 : la Borne annonce ses fichiers ; le Hub répond la liste des <code>missing</code>.</td></tr>
   <tr><td>PUT /events/:id/files/:videoId</td><td>Push étape 2 : upload d'une vidéo, vérif checksum.</td></tr>
   <tr><td>PUT /events/:id/db</td><td>Push étape 3 : upload du db.sqlite, remplacement atomique.</td></tr>
   <tr><td>POST /events/:id/finalize</td><td>Push étape 4 : vérifie la complétude, passe <code>pushed</code>, enfile les jobs.</td></tr>
 </table>
+
+<h2>§11.20 — un token ne voit que son propre événement</h2>
+<pre><code class="js">// GET /api/sync/event — remplace GET /assigned (liste) : un token = un événement
+router.get('/event', (req, res) =&gt; {
+  const db = getDb();
+  const event = getEvent(db, req.box.event_id);                  // l'événement DU token
+  if (!event || !['ready', 'loaded'].includes(event.status)) {
+    return res.status(404).json({ error: 'Aucun événement pullable pour ce token' });
+  }
+  res.json({
+    id: event.id, name: event.name, event_date: event.event_date,
+    status: event.status, updated_at: event.updated_at,
+    is_preview: req.box.is_preview,
+  });
+});
+
+// Sur chaque route …/events/:id/… : rejeter si l'id ≠ l'événement du token
+if (req.params.id !== req.box.event_id) {
+  return res.status(403).json({ error: 'Token non autorisé sur cet événement' });
+}</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ §11.20 : le token désigne l'événement, le Hub le fait respecter</div>
+  <p>
+    Avec le modèle « token = événement » (<a href="#/hub-registry"><code>box_tokens</code></a>),
+    <a href="#/hub-middleware-box">requireBox</a> pose <code>req.box.event_id</code>. Deux
+    conséquences ici :
+  </p>
+  <ol>
+    <li>
+      <code>GET /event</code> (singulier) renvoie <strong>directement</strong> l'événement du token
+      s'il est <code>ready</code>/<code>loaded</code>, sinon <strong>404</strong> (purgé, ou déjà
+      ≥ <code>live</code>). La Borne (<a href="#/borne-sync-pull">pullMyEvent</a>) traite ce 404
+      comme « rien à tirer ». La réponse inclut <code>is_preview</code> (pour le mode démo, §11.21).
+    </li>
+    <li>
+      Toutes les routes <code>…/events/:id/…</code> (bundle, status, manifest, files, db, finalize)
+      vérifient que <code>:id === req.box.event_id</code> et répondent <strong>403</strong> sinon.
+      Un token ne peut donc ni tirer ni pousser un événement qui n'est pas le sien — même s'il
+      connaît son id. (Avant la Phase 6C, ce contrôle comparait <code>event.box_id</code> à
+      <code>req.box.id</code> ; il compare désormais les <code>event_id</code>.)
+    </li>
+  </ol>
+</div>
 
 <div class="js-note">
   <div class="js-note-head">

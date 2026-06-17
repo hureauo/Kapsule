@@ -194,32 +194,7 @@ describe('PUT /api/events/:eventId/status', () => {
   });
 });
 
-// ── PUT /api/events/:eventId/assign ──────────────────────────────────────────
-
-describe('PUT /api/events/:eventId/assign', () => {
-  let eventId;
-
-  before(async () => {
-    const res = await request.post('/api/events')
-      .set(auth(tokenAlice))
-      .send({ name: 'Événement assign' });
-    eventId = res.body.id;
-  });
-
-  it('assigne une box (null = désassigner)', async () => {
-    const res = await request.put(`/api/events/${eventId}/assign`)
-      .set(auth(tokenAlice))
-      .send({ box_id: null });
-    assert.equal(res.status, 200);
-  });
-
-  it('retourne 400 si box_id manquant', async () => {
-    const res = await request.put(`/api/events/${eventId}/assign`)
-      .set(auth(tokenAlice))
-      .send({});
-    assert.equal(res.status, 400);
-  });
-});
+// NOTE: PUT /api/events/:eventId/assign supprimé en 6C (token = événement, §11.20)
 
 // ── DELETE /api/events/:eventId — purge RGPD ─────────────────────────────────
 
@@ -284,7 +259,7 @@ describe('GET /api/events/:eventId/sync', () => {
       .set(auth(tokenAlice));
     assert.equal(res.status, 200);
     assert.ok('event' in res.body);
-    assert.ok('box' in res.body);
+    assert.ok('tokens' in res.body, 'tokens (box_tokens liés) doit être présent');
     assert.ok('jobs' in res.body);
     assert.ok('sync_log' in res.body);
     assert.equal(res.body.event.id, eventId);

@@ -1,7 +1,7 @@
 import { config } from '../config.js';
 import { getRegistry } from '../registry.js';
 import { hubFetch } from './hubClient.js';
-import { pullAssigned } from './pull.js';
+import { pullMyEvent } from './pull.js';
 
 let _timer = null;
 let _lastPull = null; // ISO string du dernier pull réussi
@@ -50,7 +50,7 @@ async function runCycle(dataDir) {
 
   if (hasLoaded || hasNone) {
     try {
-      await pullAssigned(dataDir);
+      await pullMyEvent(dataDir);
       _lastPull = new Date().toISOString();
     } catch {
       // erreur réseau — silencieux, retenté au prochain cycle

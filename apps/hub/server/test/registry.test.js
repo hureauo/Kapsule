@@ -8,7 +8,7 @@ import {
   insertUser, getUserByEmail, getUserById, listUsers, updateUser,
   createRegistrationToken, getRegistrationToken, markRegistrationTokenUsed,
   insertEvent, getEvent, listEvents, updateEvent, deleteEvent,
-  insertBox, listBoxes, getBoxByTokenHash, updateBoxSeen, deleteBox,
+  insertBoxToken, listBoxTokensByEvent, getBoxTokenByHash, updateBoxTokenSeen, deleteBoxToken,
   insertSyncLog,
 } from '../src/registry.js';
 
@@ -31,10 +31,10 @@ describe('openRegistry', () => {
     assert.strictEqual(db, db2);
   });
 
-  it('crée les tables users, boxes, events, jobs, sync_log, registration_tokens', () => {
+  it('crée les tables users, box_tokens, events, jobs, sync_log, registration_tokens', () => {
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
     assert.ok(tables.includes('users'));
-    assert.ok(tables.includes('boxes'));
+    assert.ok(tables.includes('box_tokens'));
     assert.ok(tables.includes('events'));
     assert.ok(tables.includes('jobs'));
     assert.ok(tables.includes('sync_log'));
@@ -187,30 +187,40 @@ describe('events', () => {
   });
 });
 
-describe('boxes', () => {
-  it('insère et retrouve une box par token_hash', () => {
-    insertBox(db, { name: 'Borne Salle A', token_hash: 'abc123hash' });
-    const box = getBoxByTokenHash(db, 'abc123hash');
-    assert.equal(box.name, 'Borne Salle A');
-    assert.equal(box.last_seen_at, null);
+describe('box_tokens', () => {
+  let evId;
+
+  before(() => {
+    // Créer un événement pour les FK
+    insertEvent(db, { id: 'evt-box-tok', owner_id: 1, name: 'Event box token', event_date: null });
+    evId = 'evt-box-tok';
   });
 
-  it('listBoxes retourne toutes les boxes', () => {
-    const boxes = listBoxes(db);
-    assert.ok(boxes.length >= 1);
+  it('insère et retrouve un token par hash', () => {
+    insertBoxToken(db, { event_id: evId, token_hash: 'tok-hash-1', label: 'Borne A' });
+    const row = getBoxTokenByHash(db, 'tok-hash-1');
+    assert.equal(row.event_id, evId);
+    assert.equal(row.label, 'Borne A');
+    assert.equal(row.last_seen_at, null);
   });
 
-  it('updateBoxSeen met à jour last_seen_at', () => {
-    const box = getBoxByTokenHash(db, 'abc123hash');
-    updateBoxSeen(db, box.id);
-    const updated = getBoxByTokenHash(db, 'abc123hash');
+  it('listBoxTokensByEvent liste les tokens de l\'événement', () => {
+    const list = listBoxTokensByEvent(db, evId);
+    assert.ok(list.length >= 1);
+    assert.ok(!('token_hash' in list[0]), 'token_hash ne doit pas fuiter');
+  });
+
+  it('updateBoxTokenSeen met à jour last_seen_at', () => {
+    const row = getBoxTokenByHash(db, 'tok-hash-1');
+    updateBoxTokenSeen(db, row.id);
+    const updated = getBoxTokenByHash(db, 'tok-hash-1');
     assert.ok(updated.last_seen_at !== null);
   });
 
-  it('deleteBox supprime la box', () => {
-    const box = getBoxByTokenHash(db, 'abc123hash');
-    deleteBox(db, box.id);
-    assert.strictEqual(getBoxByTokenHash(db, 'abc123hash'), undefined);
+  it('deleteBoxToken supprime le token', () => {
+    const row = getBoxTokenByHash(db, 'tok-hash-1');
+    deleteBoxToken(db, row.id);
+    assert.strictEqual(getBoxTokenByHash(db, 'tok-hash-1'), undefined);
   });
 });
 
@@ -220,7 +230,7 @@ describe('sync_log', () => {
     assert.ok(result.lastInsertRowid > 0);
   });
 
-  it('insère une ligne sans event_id ni box_id', () => {
+  it('insère une ligne sans event_id', () => {
     const result = insertSyncLog(db, { action: 'finalize' });
     assert.ok(result.lastInsertRowid > 0);
   });

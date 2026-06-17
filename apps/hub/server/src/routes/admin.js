@@ -5,9 +5,10 @@ import { join } from 'node:path';
 import { statfs } from 'node:fs/promises';
 import {
   getDb,
-  listBoxes, insertBox, deleteBox, getBoxByTokenHash,
   listUsers, insertUser, getUserById, updateUser,
   createRegistrationToken,
+  insertBoxToken, listBoxTokensByEvent, getBoxTokenById, deleteBoxToken, updateBoxToken,
+  getEvent,
 } from '../registry.js';
 import { requireUser } from '../middleware/auth.js';
 
@@ -103,37 +104,50 @@ export function makeAdminRouter(dataDir) {
     } catch (err) { next(err); }
   });
 
-  // POST /api/admin/boxes — crée une borne ; retourne le token en clair UNE SEULE FOIS
-  router.post('/boxes', (req, res) => {
-    const { name } = req.body;
-    if (!name || !name.trim()) return res.status(400).json({ error: 'name requis' });
+  // ── Tokens de borne (token = événement, §11.20) ──────────────────────────────
 
+  // POST /api/admin/events/:id/tokens — génère un token ; retourne le clair UNE SEULE FOIS
+  router.post('/events/:id/tokens', (req, res) => {
+    const db = getDb();
+    const event = getEvent(db, req.params.id);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+
+    const { label, location, is_preview } = req.body;
     const token = randomBytes(32).toString('hex');
     const token_hash = createHash('sha256').update(token).digest('hex');
-
-    const db = getDb();
-    // Collision très improbable mais on vérifie
-    if (getBoxByTokenHash(db, token_hash)) {
-      return res.status(500).json({ error: 'Collision de token, réessayez' });
-    }
-
-    const result = insertBox(db, { name: name.trim(), token_hash });
-    res.status(201).json({ id: result.lastInsertRowid, name: name.trim(), token });
+    const result = insertBoxToken(db, {
+      event_id: req.params.id,
+      token_hash,
+      label: label?.trim() ?? null,
+      location: location?.trim() ?? null,
+      is_preview: is_preview ? 1 : 0,
+    });
+    res.status(201).json({ id: result.lastInsertRowid, event_id: req.params.id, label, location, is_preview: is_preview ? 1 : 0, token });
   });
 
-  // GET /api/admin/boxes — liste toutes les bornes (sans token)
-  router.get('/boxes', (req, res) => {
+  // GET /api/admin/events/:id/tokens — liste sans hash
+  router.get('/events/:id/tokens', (req, res) => {
     const db = getDb();
-    const boxes = listBoxes(db).map(({ token_hash: _t, ...b }) => b);
-    res.json(boxes);
+    res.json(listBoxTokensByEvent(db, req.params.id));
   });
 
-  // DELETE /api/admin/boxes/:id
-  router.delete('/boxes/:id', (req, res) => {
+  // DELETE /api/admin/tokens/:tokenId — révocation
+  router.delete('/tokens/:tokenId', (req, res) => {
     const db = getDb();
-    const result = deleteBox(db, req.params.id);
-    if (result.changes === 0) return res.status(404).json({ error: 'Borne introuvable' });
+    const result = deleteBoxToken(db, req.params.tokenId);
+    if (result.changes === 0) return res.status(404).json({ error: 'Token introuvable' });
     res.status(204).end();
+  });
+
+  // PUT /api/admin/tokens/:tokenId — mise à jour label/location
+  router.put('/tokens/:tokenId', (req, res) => {
+    const db = getDb();
+    const row = getBoxTokenById(db, req.params.tokenId);
+    if (!row) return res.status(404).json({ error: 'Token introuvable' });
+    updateBoxToken(db, req.params.tokenId, req.body);
+    const updated = getBoxTokenById(db, req.params.tokenId);
+    const { token_hash: _, ...safe } = updated;
+    res.json(safe);
   });
 
   // GET /api/admin/overview
@@ -171,10 +185,10 @@ export function makeAdminRouter(dataDir) {
         LIMIT 20
       `).all();
 
-      // Bornes avec last_seen_at
-      const boxes = db.prepare(`
-        SELECT id, name, last_seen_at, created_at
-        FROM boxes
+      // Tokens de borne (box_tokens) avec last_seen_at
+      const box_tokens_overview = db.prepare(`
+        SELECT id, event_id, label, location, is_preview, last_seen_at, created_at
+        FROM box_tokens
         ORDER BY created_at DESC
       `).all();
 
@@ -182,7 +196,7 @@ export function makeAdminRouter(dataDir) {
         events: eventsWithSize,
         disk: { free_bytes: disk_free_bytes, total_bytes: disk_total_bytes },
         failed_jobs,
-        boxes,
+        boxes: box_tokens_overview,
       });
     } catch (err) { next(err); }
   });

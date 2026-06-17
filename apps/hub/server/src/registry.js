@@ -32,10 +32,13 @@ export function openRegistry(dataDir) {
       created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
-    CREATE TABLE IF NOT EXISTS boxes (
+    CREATE TABLE IF NOT EXISTS box_tokens (
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      name         TEXT NOT NULL,
+      event_id     TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
       token_hash   TEXT UNIQUE NOT NULL,
+      label        TEXT,
+      location     TEXT,
+      is_preview   INTEGER NOT NULL DEFAULT 0,
       last_seen_at DATETIME,
       created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -43,7 +46,6 @@ export function openRegistry(dataDir) {
     CREATE TABLE IF NOT EXISTS events (
       id           TEXT PRIMARY KEY,
       owner_id     INTEGER NOT NULL REFERENCES users(id),
-      box_id       INTEGER REFERENCES boxes(id),
       name         TEXT NOT NULL,
       event_date   DATE,
       status       TEXT NOT NULL DEFAULT 'draft'
@@ -73,7 +75,6 @@ export function openRegistry(dataDir) {
     CREATE TABLE IF NOT EXISTS sync_log (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       event_id   TEXT,
-      box_id     INTEGER,
       action     TEXT NOT NULL,
       detail     TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -171,7 +172,7 @@ export function insertEvent(db, { id, owner_id, name, event_date = null }) {
 }
 
 export function updateEvent(db, id, fields) {
-  const allowed = ['name', 'event_date', 'box_id', 'status',
+  const allowed = ['name', 'event_date', 'status',
     'pulled_at', 'pushed_at', 'processed_at', 'purged_at'];
   const updates = Object.keys(fields)
     .filter((k) => allowed.includes(k))
@@ -186,32 +187,48 @@ export function deleteEvent(db, id) {
   return db.prepare('DELETE FROM events WHERE id = ?').run(id);
 }
 
-// ── boxes ────────────────────────────────────────────────────────────────────
+// ── box_tokens ────────────────────────────────────────────────────────────────
 
-export function listBoxes(db) {
-  return db.prepare('SELECT * FROM boxes ORDER BY created_at DESC').all();
+export function insertBoxToken(db, { event_id, token_hash, label = null, location = null, is_preview = 0 }) {
+  return db
+    .prepare('INSERT INTO box_tokens (event_id, token_hash, label, location, is_preview) VALUES (?, ?, ?, ?, ?)')
+    .run(event_id, token_hash, label, location, is_preview ? 1 : 0);
 }
 
-export function insertBox(db, { name, token_hash }) {
-  return db.prepare('INSERT INTO boxes (name, token_hash) VALUES (?, ?)').run(name, token_hash);
+export function listBoxTokensByEvent(db, event_id) {
+  return db
+    .prepare('SELECT id, event_id, label, location, is_preview, last_seen_at, created_at FROM box_tokens WHERE event_id = ? ORDER BY created_at DESC')
+    .all(event_id);
 }
 
-export function getBoxByTokenHash(db, token_hash) {
-  return db.prepare('SELECT * FROM boxes WHERE token_hash = ?').get(token_hash);
+export function getBoxTokenById(db, id) {
+  return db.prepare('SELECT * FROM box_tokens WHERE id = ?').get(id);
 }
 
-export function updateBoxSeen(db, id) {
-  return db.prepare('UPDATE boxes SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+export function getBoxTokenByHash(db, token_hash) {
+  return db.prepare('SELECT * FROM box_tokens WHERE token_hash = ?').get(token_hash);
 }
 
-export function deleteBox(db, id) {
-  return db.prepare('DELETE FROM boxes WHERE id = ?').run(id);
+export function deleteBoxToken(db, id) {
+  return db.prepare('DELETE FROM box_tokens WHERE id = ?').run(id);
+}
+
+export function updateBoxToken(db, id, fields) {
+  const allowed = ['label', 'location'];
+  const keys = Object.keys(fields).filter((k) => allowed.includes(k));
+  if (keys.length === 0) return;
+  db.prepare(`UPDATE box_tokens SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
+    .run(...keys.map((k) => fields[k]), id);
+}
+
+export function updateBoxTokenSeen(db, id) {
+  return db.prepare('UPDATE box_tokens SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
 }
 
 // ── sync_log ─────────────────────────────────────────────────────────────────
 
-export function insertSyncLog(db, { event_id = null, box_id = null, action, detail = null }) {
+export function insertSyncLog(db, { event_id = null, action, detail = null }) {
   return db
-    .prepare('INSERT INTO sync_log (event_id, box_id, action, detail) VALUES (?, ?, ?, ?)')
-    .run(event_id, box_id, action, detail ? JSON.stringify(detail) : null);
+    .prepare('INSERT INTO sync_log (event_id, action, detail) VALUES (?, ?, ?)')
+    .run(event_id, action, detail ? JSON.stringify(detail) : null);
 }
