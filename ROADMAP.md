@@ -152,7 +152,7 @@ committé en `phase 6X.Y: …`.
 - [x] 6A.4 `AdminLayout` paramétré par rôle (jeu d'onglets), bandeau « espace technicien » sur `/admin/tech` ; CSS des deux zones (réutilise l'existant)
 
 ### 6B — Hub : comptes clients
-- [ ] 6B.1 Schéma `users` : `active INTEGER DEFAULT 1`, `password_hash` nullable ; table `registration_tokens` (token_hash, user_id, expires_at, used_at) + helpers registry
+- [x] 6B.1 Schéma `users` : `active INTEGER DEFAULT 1`, `password_hash` nullable ; table `registration_tokens` (token_hash, user_id, expires_at, used_at) + helpers registry
 - [ ] 6B.2 `routes/admin.js` : `POST /api/admin/users` (compte sans mdp + token d'inscription +7 j, retourne `registration_url`), `GET /api/admin/users`, `PUT /api/admin/users/:id` (active/rename), `POST /api/admin/users/:id/registration-link` + tests (email dupliqué 409, désactivation)
 - [ ] 6B.3 `routes/auth.js` : `POST /api/auth/set-password` `{ token, password }` (token non expiré/non utilisé → pose hash argon2, marque utilisé) ; login refuse `active=0` et `password_hash` NULL **sans appeler `argon2.verify(null,…)`** (invariant §11.22) + tests (token expiré 410, réutilisé 409, mdp court 400, login compte désactivé 401)
 - [ ] 6B.4 Front : `RegisterPage` (`/register?token=`, pose le mot de passe) ; section « Clients » de l'admin Hub (créer, copier le lien, activer/désactiver)

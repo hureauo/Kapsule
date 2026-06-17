@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   openRegistry, closeRegistry,
-  insertUser, getUserByEmail, getUserById,
+  insertUser, getUserByEmail, getUserById, listUsers, updateUser,
+  createRegistrationToken, getRegistrationToken, markRegistrationTokenUsed,
   insertEvent, getEvent, listEvents, updateEvent, deleteEvent,
   insertBox, listBoxes, getBoxByTokenHash, updateBoxSeen, deleteBox,
   insertSyncLog,
@@ -30,13 +31,14 @@ describe('openRegistry', () => {
     assert.strictEqual(db, db2);
   });
 
-  it('crée les tables users, boxes, events, jobs, sync_log', () => {
+  it('crée les tables users, boxes, events, jobs, sync_log, registration_tokens', () => {
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
     assert.ok(tables.includes('users'));
     assert.ok(tables.includes('boxes'));
     assert.ok(tables.includes('events'));
     assert.ok(tables.includes('jobs'));
     assert.ok(tables.includes('sync_log'));
+    assert.ok(tables.includes('registration_tokens'));
   });
 });
 
@@ -67,6 +69,72 @@ describe('users', () => {
     assert.throws(() =>
       insertUser(db, { email: 'bad@example.com', password_hash: 'h', role: 'superuser' })
     );
+  });
+
+  it('accepte password_hash NULL (compte sans mot de passe)', () => {
+    insertUser(db, { email: 'nopwd@example.com' });
+    const user = getUserByEmail(db, 'nopwd@example.com');
+    assert.strictEqual(user.password_hash, null);
+    assert.strictEqual(user.active, 1);
+  });
+
+  it('listUsers retourne la liste sans password_hash', () => {
+    const users = listUsers(db);
+    assert.ok(users.length >= 2);
+    assert.ok(!('password_hash' in users[0]));
+  });
+
+  it('updateUser modifie active et name', () => {
+    const user = getUserByEmail(db, 'alice@example.com');
+    updateUser(db, user.id, { active: 0, name: 'Alice Désactivée' });
+    const updated = getUserById(db, user.id);
+    assert.strictEqual(updated.active, 0);
+    assert.strictEqual(updated.name, 'Alice Désactivée');
+    updateUser(db, user.id, { active: 1 });
+  });
+
+  it('updateUser ignore les champs non autorisés', () => {
+    const user = getUserByEmail(db, 'alice@example.com');
+    updateUser(db, user.id, { role: 'admin', injected: 'DROP TABLE users' });
+    const unchanged = getUserById(db, user.id);
+    assert.strictEqual(unchanged.role, 'admin');
+  });
+});
+
+describe('registration_tokens', () => {
+  let userId;
+
+  before(() => {
+    userId = getUserByEmail(db, 'nopwd@example.com').id;
+  });
+
+  it('createRegistrationToken retourne token clair + hash stocké en DB', () => {
+    const { token, token_hash } = createRegistrationToken(db, { user_id: userId });
+    assert.ok(token.length === 64);
+    assert.ok(token_hash.length === 64);
+    const row = getRegistrationToken(db, token_hash);
+    assert.strictEqual(row.user_id, userId);
+    assert.strictEqual(row.used_at, null);
+    assert.ok(new Date(row.expires_at) > new Date());
+  });
+
+  it('markRegistrationTokenUsed pose used_at', () => {
+    const { token_hash } = createRegistrationToken(db, { user_id: userId });
+    markRegistrationTokenUsed(db, token_hash);
+    const row = getRegistrationToken(db, token_hash);
+    assert.ok(row.used_at !== null);
+  });
+
+  it('getRegistrationToken retourne undefined pour un hash inconnu', () => {
+    assert.strictEqual(getRegistrationToken(db, 'nonexistent'), undefined);
+  });
+
+  it('ON DELETE CASCADE supprime les tokens si le user est supprimé', () => {
+    insertUser(db, { email: 'temp@example.com' });
+    const temp = getUserByEmail(db, 'temp@example.com');
+    const { token_hash } = createRegistrationToken(db, { user_id: temp.id });
+    db.prepare('DELETE FROM users WHERE id = ?').run(temp.id);
+    assert.strictEqual(getRegistrationToken(db, token_hash), undefined);
   });
 });
 

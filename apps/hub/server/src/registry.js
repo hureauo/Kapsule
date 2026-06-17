@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -15,11 +16,20 @@ export function openRegistry(dataDir) {
     CREATE TABLE IF NOT EXISTS users (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       email         TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
+      password_hash TEXT,
       name          TEXT,
       role          TEXT NOT NULL DEFAULT 'client'
                     CHECK(role IN ('admin','client')),
+      active        INTEGER NOT NULL DEFAULT 1,
       created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS registration_tokens (
+      token_hash  TEXT PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at  DATETIME NOT NULL,
+      used_at     DATETIME,
+      created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS boxes (
@@ -70,6 +80,12 @@ export function openRegistry(dataDir) {
     );
   `);
 
+  // Migration: add 'active' to users if the table predates 6B.1
+  const userCols = db.pragma('table_info(users)').map((c) => c.name);
+  if (!userCols.includes('active')) {
+    db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+  }
+
   _db = db;
   return db;
 }
@@ -88,10 +104,10 @@ export function closeRegistry() {
 
 // ── users ────────────────────────────────────────────────────────────────────
 
-export function insertUser(db, { email, password_hash, name = null, role = 'client' }) {
+export function insertUser(db, { email, password_hash = null, name = null, role = 'client', active = 1 }) {
   return db
-    .prepare('INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)')
-    .run(email, password_hash, name, role);
+    .prepare('INSERT INTO users (email, password_hash, name, role, active) VALUES (?, ?, ?, ?, ?)')
+    .run(email, password_hash, name, role, active);
 }
 
 export function getUserByEmail(db, email) {
@@ -100,6 +116,41 @@ export function getUserByEmail(db, email) {
 
 export function getUserById(db, id) {
   return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+}
+
+export function listUsers(db) {
+  return db
+    .prepare('SELECT id, email, name, role, active, created_at FROM users ORDER BY created_at DESC')
+    .all();
+}
+
+export function updateUser(db, id, fields) {
+  const allowed = ['active', 'name', 'password_hash'];
+  const keys = Object.keys(fields).filter((k) => allowed.includes(k));
+  if (keys.length === 0) return;
+  const sql = `UPDATE users SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`;
+  db.prepare(sql).run(...keys.map((k) => fields[k]), id);
+}
+
+// ── registration_tokens ───────────────────────────────────────────────────────
+
+export function createRegistrationToken(db, { user_id, expires_in_ms = 7 * 24 * 60 * 60 * 1000 }) {
+  const token = randomBytes(32).toString('hex');
+  const token_hash = createHash('sha256').update(token).digest('hex');
+  const expires_at = new Date(Date.now() + expires_in_ms).toISOString();
+  db.prepare('INSERT INTO registration_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
+    .run(token_hash, user_id, expires_at);
+  return { token, token_hash };
+}
+
+export function getRegistrationToken(db, token_hash) {
+  return db.prepare('SELECT * FROM registration_tokens WHERE token_hash = ?').get(token_hash);
+}
+
+export function markRegistrationTokenUsed(db, token_hash) {
+  return db
+    .prepare('UPDATE registration_tokens SET used_at = CURRENT_TIMESTAMP WHERE token_hash = ?')
+    .run(token_hash);
 }
 
 // ── events ───────────────────────────────────────────────────────────────────
