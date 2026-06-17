@@ -10,7 +10,7 @@ const TECH_TABS = [
   { id: 'sync',      label: 'Synchro'  },
 ];
 
-export default function TechPage() {
+export default function TechPage({ isPreview = false }) {
   const [authed, setAuthed] = useState(isTechAuthenticated());
   const [activeTab, setActiveTab] = useState('preflight');
 
@@ -39,6 +39,7 @@ export default function TechPage() {
       tabs={TECH_TABS}
       clearTokenFn={clearTechToken}
       role="tech"
+      isPreview={isPreview}
     >
       {renderPanel()}
     </AdminLayout>

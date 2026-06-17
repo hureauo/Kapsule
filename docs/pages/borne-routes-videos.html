@@ -5,7 +5,8 @@
   Le cœur de la Borne : recevoir les vidéos enregistrées par les invités, les servir, les
   télécharger, les supprimer. Cette page concentre <strong>trois invariants critiques</strong> : le
   <code>fileFilter</code> tolérant pour Safari (§11.4), la transaction de remplacement avec
-  <code>unlink</code> après commit (§11.9), et le streaming Range-aware (§11.3).
+  <code>unlink</code> après commit (§11.9), et le streaming Range-aware (§11.3). S'y ajoute le
+  garde-quota de la borne d'essai (§11.21).
 </p>
 
 <h2>multer + le fileFilter Safari</h2>
@@ -60,8 +61,39 @@ function makeMulter(dataDir) {
   forcée en minuscules avec repli <code>.mp4</code>.
 </p>
 
+<h2>Le quota de la borne d'essai (§11.21)</h2>
+<pre><code class="js">function checkQuota(req, res, next) {
+  const maxBytes = cfg.maxDataBytes ?? config.maxDataBytes;
+  if (!maxBytes) return next();                       // 0 = pas de limite
+  const eventsDir = join(dataDir, 'events');
+  if (dirSize(eventsDir) &gt;= maxBytes) {
+    return res.status(507).json({ error: 'Espace de stockage insuffisant (quota MAX_DATA_BYTES atteint)' });
+  }
+  next();
+}
+
+// branché EN PREMIER, avant multer :
+router.post('/videos', checkQuota, upload.single('video'), async (req, res, next) =&gt; { /* … */ });</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant §11.21 : vérifier le quota AVANT que multer n'écrive le fichier</div>
+  <p>
+    Sur la <a href="#/borne-config">borne d'essai</a>, <code>MAX_DATA_BYTES</code> plafonne l'espace
+    occupé par les vidéos (1 Go par défaut). L'ordre des middlewares est volontaire :
+    <code>checkQuota</code> est placé <strong>avant</strong> <code>upload.single('video')</code>.
+    Pourquoi ? Parce que multer <strong>écrit le fichier sur le disque</strong> dès qu'il s'exécute :
+    si on plaçait le contrôle après, on aurait déjà dépassé le quota au moment de le refuser. En
+    contrôlant d'abord, on renvoie un <code>507 Insufficient Storage</code> sans rien écrire. Le
+    <code>if (!maxBytes) return next()</code> rend le garde transparent en production (quota à
+    <code>0</code> = illimité). <code>dirSize</code> additionne récursivement la taille de
+    <span class="path">events/</span> (best-effort : un dossier inaccessible est ignoré).
+  </p>
+</div>
+
+<a class="see-also" href="#/hub-routes-admin">→ notion JS : dirSize récursif, readdirSync withFileTypes (vue dans hub/routes/admin.js)</a>
+
 <h2>L'upload : ordre des gardes et nettoyage du fichier</h2>
-<pre><code class="js">router.post('/videos', upload.single('video'), async (req, res, next) =&gt; {
+<pre><code class="js">router.post('/videos', checkQuota, upload.single('video'), async (req, res, next) =&gt; {
   // multer a déjà stocké le fichier sur disque si on arrive ici
   const ctx = requireActiveDb(res);
   if (!ctx) {
@@ -187,7 +219,7 @@ if (oldFilename) {
 
 <table class="api-table">
   <tr><th>Endpoint</th><th>Auth</th><th>Rôle</th></tr>
-  <tr><td>POST /videos</td><td>public</td><td>Upload d'une vidéo invité (multer + checksum + transaction §11.9).</td></tr>
+  <tr><td>POST /videos</td><td>public</td><td>Upload d'une vidéo invité (checkQuota §11.21 + multer + checksum + transaction §11.9). <code>507</code> si quota borne d'essai atteint.</td></tr>
   <tr><td>GET /sessions/:sid/videos/:qid/file</td><td>public (capability)</td><td>L'invité revoit sa vidéo (Range).</td></tr>
   <tr><td>GET /videos</td><td>admin</td><td>Liste des vidéos (filtre optionnel par session).</td></tr>
   <tr><td>GET /videos/export/csv</td><td>admin</td><td>Export CSV (anti-injection). <strong>Avant /:id</strong> (§11.1).</td></tr>

@@ -7,7 +7,6 @@ import SyncStatus from '../components/SyncStatus.jsx';
 import VideoGallery from '../components/VideoGallery.jsx';
 
 const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
-const TABS = ['Questions', 'Synchro', 'Galerie'];
 
 function formatDate(d) {
   if (!d) return '—';
@@ -18,6 +17,7 @@ export default function EventDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [event, setEvent] = useState(null);
+  const [tokens, setTokens] = useState([]);
   const [tab, setTab] = useState('Questions');
   const [error, setError] = useState('');
 
@@ -29,8 +29,12 @@ export default function EventDetailPage() {
 
   async function loadEvent() {
     try {
-      const ev = await api.getEvent(id);
+      const [ev, syncInfo] = await Promise.all([
+        api.getEvent(id),
+        api.getSyncInfo(id).catch(() => ({ tokens: [] })),
+      ]);
       setEvent(ev);
+      setTokens(syncInfo.tokens ?? []);
     } catch (err) {
       if (err.status === 401) { clearToken(); navigate('/login', { replace: true }); }
       else setError(err.message);
@@ -79,6 +83,8 @@ export default function EventDetailPage() {
 
   const frozen = FROZEN_STATUSES.has(event.status);
   const notYetPulled = event.pulled_at && event.updated_at > event.pulled_at;
+  const previewTokens = tokens.filter(t => t.is_preview);
+  const TABS = ['Questions', 'Synchro', 'Galerie', ...(previewTokens.length > 0 ? ['Aperçu'] : [])];
 
   return (
     <div className="hub-page">
@@ -196,6 +202,40 @@ export default function EventDetailPage() {
             ) : (
               <VideoGallery eventId={id} eventName={event.name} />
             )}
+          </div>
+        )}
+
+        {tab === 'Aperçu' && (
+          <div className="tab-content">
+            <section className="panel-section">
+              <h3 className="panel-section__title">Borne d'essai</h3>
+              <p className="text--muted" style={{ marginBottom: '1rem' }}>
+                Cette borne est en mode aperçu. Les données enregistrées ne seront pas envoyées.
+              </p>
+              {previewTokens.map(t => (
+                <div key={t.id} className="preview-token-card">
+                  <div><strong>{t.label || 'Borne d\'essai'}</strong>
+                    {t.location && <span className="text--muted"> — {t.location}</span>}
+                  </div>
+                  {t.location && /^https?:\/\//.test(t.location) && (
+                    <a
+                      href={t.location}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn btn--primary"
+                      style={{ marginTop: '0.5rem', display: 'inline-block' }}
+                    >
+                      Ouvrir l'aperçu ↗
+                    </a>
+                  )}
+                  {!t.location && (
+                    <p className="text--muted" style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>
+                      Renseignez le champ « location » du token avec l'URL de la borne d'essai pour accéder à l'aperçu.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </section>
           </div>
         )}
       </main>

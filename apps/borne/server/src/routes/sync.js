@@ -1,12 +1,16 @@
 import { Router } from 'express';
-import { rmSync, existsSync } from 'node:fs';
+import { rmSync, existsSync, unlink } from 'node:fs';
 import { join } from 'node:path';
 import { config } from '../config.js';
-import { getRegistry, updateEventStatus } from '../registry.js';
-import { closeEventDb } from '../eventDb.js';
+import { getRegistry, getActiveEvent, updateEventStatus } from '../registry.js';
+import { closeEventDb, getActiveEventDb } from '../eventDb.js';
 import { getLastPull } from '../sync/autoPull.js';
 import { pushEvent, getPushState } from '../sync/push.js';
 import { pullMyEvent } from '../sync/pull.js';
+
+function isPreviewMode(cfg) {
+  return !!(cfg.previewMode ?? config.previewMode) || !!(getActiveEvent()?.is_preview);
+}
 
 export function makeSyncRouter(dataDir, cfg) {
   const router = Router();
@@ -33,13 +37,17 @@ export function makeSyncRouter(dataDir, cfg) {
   });
 
   // ── POST /api/sync/push/:eventId ─────────────────────────────────────────────
-  // Lance le push en tâche de fond. 409 si event pas closed ou push déjà en cours.
+  // Lance le push en tâche de fond. 409 si event pas closed, déjà en cours, ou mode démo.
   router.post('/sync/push/:eventId', auth, (req, res, next) => {
     const { eventId } = req.params;
     const db = getRegistry();
     const event = db.prepare('SELECT * FROM local_events WHERE id = ?').get(eventId);
 
     if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+
+    if (isPreviewMode(cfg)) {
+      return res.status(409).json({ error: 'Push interdit en mode démo (borne d\'essai)' });
+    }
 
     if (event.status !== 'closed') {
       return res.status(409).json({ error: 'Clôturez l\'événement avant le push' });
@@ -54,6 +62,36 @@ export function makeSyncRouter(dataDir, cfg) {
     pushEvent(eventId, dataDir).catch(() => {});
 
     res.json({ ok: true });
+  });
+
+  // ── POST /api/sync/reset-preview ─────────────────────────────────────────────
+  // Purge sessions + vidéos de l'événement actif sans toucher aux questions.
+  // Refusé hors mode démo (§11.21 / 6D.3).
+  router.post('/sync/reset-preview', auth, (req, res, next) => {
+    try {
+      if (!isPreviewMode(cfg)) {
+        return res.status(403).json({ error: 'Disponible uniquement en mode démo (borne d\'essai)' });
+      }
+
+      const active = getActiveEvent();
+      if (!active) return res.status(404).json({ error: 'Aucun événement actif' });
+
+      const db = getActiveEventDb(dataDir, active);
+      const videos = db.prepare('SELECT filename FROM videos').all();
+
+      db.transaction(() => {
+        db.prepare('DELETE FROM videos').run();
+        db.prepare('DELETE FROM sessions').run();
+      })();
+
+      for (const v of videos) {
+        unlink(join(dataDir, 'events', active.id, 'videos', v.filename), () => {});
+      }
+
+      res.json({ ok: true, deleted: videos.length });
+    } catch (err) {
+      next(err);
+    }
   });
 
   // ── POST /api/sync/purge/:eventId ────────────────────────────────────────────

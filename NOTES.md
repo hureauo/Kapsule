@@ -670,3 +670,39 @@ et `videos.id` viennent toujours de `uuidv4()` en production.
 **À ne pas corriger maintenant.** Écart assumé vs le correctif proposé. Si un jour un
 identifiant non-v4 devait légitimement transiter par ces routes (très improbable), il
 faudrait assouplir la regex — mais ce serait un changement de contrat à réévaluer.
+
+---
+
+## Phase 6D — Aperçu distant (revue kapsule-reviewer)
+
+### Garde `isPreviewMode` positionnelle dans la route plutôt que dans `pushEvent`
+
+**Fichier :** `apps/borne/server/src/routes/sync.js:48`, `apps/borne/server/src/sync/push.js`
+
+**Observation :** L'invariant §11.21 (push interdit en mode démo) est gardé uniquement dans
+la route `POST /api/sync/push/:eventId`, pas dans la fonction `pushEvent()` elle-même.
+Acceptable car `pushEvent` n'a qu'un seul appelant (la route) et `autoPull.js` ne déclenche
+jamais de push. Un futur appelant direct contournerait la protection.
+
+**À ne pas corriger maintenant.** Si un push automatique est ajouté plus tard (phase 7),
+déplacer la garde dans `pushEvent` ou vérifier `is_preview` en tête de cette fonction.
+
+### Chevauchement visuel `.guest-preview-banner` / bouton Accueil
+
+**Fichier :** `apps/borne/web/src/styles/app.css`, `apps/borne/web/src/pages/GuestPage.jsx`
+
+**Observation :** Le bandeau `position: fixed; top: 0` peut masquer visuellement le bouton 🏠
+sur petit écran iPad. `pointer-events: none` préserve la fonctionnalité mais pas la lisibilité.
+
+**À ne pas corriger maintenant.** Vérification visuelle 🧑 à faire sur iPad réel. Si masquage
+confirmé, décaler le bouton 🏠 vers `top: 1.8rem` lorsque `isPreview` est actif.
+
+### `dirSize()` synchrone sur l'event loop
+
+**Fichier :** `apps/borne/server/src/routes/videos.js:15`
+
+**Observation :** `dirSize()` utilise `readdirSync`/`statSync` — bloque l'event loop sur un
+gros dossier. Acceptable pour une borne d'essai (quota 1 Go, faible volume).
+
+**À ne pas corriger maintenant.** Si la borne de production adopte aussi un quota, migrer
+vers une approche incrémentale (compteur mis à jour à chaque upload/suppression).

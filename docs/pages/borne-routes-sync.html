@@ -23,12 +23,21 @@
 </div>
 
 <h2>Lancer un push en tâche de fond</h2>
-<pre><code class="js">router.post('/sync/push/:eventId', auth, (req, res, next) =&gt; {
+<pre><code class="js">function isPreviewMode(cfg) {
+  return !!(cfg.previewMode ?? config.previewMode) || !!(getActiveEvent()?.is_preview);
+}
+
+router.post('/sync/push/:eventId', auth, (req, res, next) =&gt; {
   const { eventId } = req.params;
   const db = getRegistry();
   const event = db.prepare('SELECT * FROM local_events WHERE id = ?').get(eventId);
 
   if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+
+  if (isPreviewMode(cfg)) {
+    return res.status(409).json({ error: 'Push interdit en mode démo (borne d\'essai)' });
+  }
+
   if (event.status !== 'closed') return res.status(409).json({ error: 'Clôturez l\'événement avant le push' });
 
   const state = getPushState();
@@ -39,6 +48,21 @@
 
   res.json({ ok: true });
 });</code></pre>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant §11.21 : push interdit en mode démo (borne d'essai)</div>
+  <p>
+    Le garde <code>isPreviewMode(cfg)</code> est testé <strong>en premier</strong> (juste après le
+    404) : une <a href="#/borne-config">borne d'essai</a> ne doit <em>jamais</em> envoyer ses données
+    au Hub — c'est tout l'intérêt du mode démo (le client teste sans polluer l'événement réel). Le
+    mode démo se déduit de deux sources : la config (<code>previewMode</code>, fixée par
+    <code>PREVIEW_MODE=true</code>) <strong>ou</strong> le flag <code>is_preview</code> de l'événement
+    actif (persisté au pull depuis le token Hub, §11.20). On répond <code>409</code> sans rien
+    transférer. La même fonction <code>isPreviewMode</code> garde aussi
+    <code>POST /sync/reset-preview</code> ci-dessous (à l'inverse : reset autorisé <em>seulement</em>
+    en mode démo).
+  </p>
+</div>
 
 <div class="js-note">
   <div class="js-note-head">
@@ -76,14 +100,76 @@
 </div>
 
 <h2>Les gardes avant push</h2>
-<p>Trois conditions avant de lancer :</p>
+<p>Quatre conditions avant de lancer :</p>
 <ul>
   <li>L'événement existe (<code>404</code> sinon).</li>
+  <li>La borne n'est <strong>pas</strong> en mode démo (<code>409</code> sinon, §11.21) — une borne
+      d'essai ne pousse jamais.</li>
   <li>Il est <code>closed</code> (<code>409</code> sinon) — on ne pousse qu'un événement clôturé.</li>
   <li>Aucun push déjà en cours (<code>getPushState().running</code> → <code>409</code> sinon) — un
       seul push à la fois, l'état partagé sert de verrou. Voir
       <a href="#/borne-sync-push">push.js</a>.</li>
 </ul>
+
+<h2>Le reset de la borne d'essai (§11.21)</h2>
+<pre><code class="js">router.post('/sync/reset-preview', auth, (req, res, next) =&gt; {
+  try {
+    if (!isPreviewMode(cfg)) {
+      return res.status(403).json({ error: 'Disponible uniquement en mode démo (borne d\'essai)' });
+    }
+
+    const active = getActiveEvent();
+    if (!active) return res.status(404).json({ error: 'Aucun événement actif' });
+
+    const db = getActiveEventDb(dataDir, active);
+    const videos = db.prepare('SELECT filename FROM videos').all();
+
+    db.transaction(() =&gt; {
+      db.prepare('DELETE FROM videos').run();
+      db.prepare('DELETE FROM sessions').run();
+    })();
+
+    for (const v of videos) {
+      unlink(join(dataDir, 'events', active.id, 'videos', v.filename), () =&gt; {});
+    }
+
+    res.json({ ok: true, deleted: videos.length });
+  } catch (err) { next(err); }
+});</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Reset = repartir d'une borne d'essai propre, sans perdre les questions</div>
+  <p>
+    Pendant une démo, le client enregistre des vidéos de test. <code>reset-preview</code> lui permet
+    de <strong>tout effacer</strong> (sessions + vidéos) pour repartir d'une borne vierge, <em>sans
+    toucher aux questions</em> ni à la configuration de l'événement — il n'a donc pas à re-pull
+    depuis le Hub. Logique :
+  </p>
+  <ol>
+    <li>On <strong>lit d'abord</strong> la liste des <code>filename</code> à supprimer (avant de
+        vider la table — sinon on perdrait les chemins des fichiers à <code>unlink</code>).</li>
+    <li><code>DELETE FROM videos</code> + <code>DELETE FROM sessions</code> dans une
+        <a href="#/core-eventdbschema">transaction</a> : les deux tables sont vidées atomiquement.
+        Les questions, elles, restent intactes.</li>
+    <li><code>unlink</code> best-effort de chaque fichier physique (callback vide, on ignore les
+        erreurs). Même esprit que <a href="#/borne-routes-videos">videos.js</a> : base d'abord,
+        fichiers ensuite.</li>
+  </ol>
+  <p>
+    Réponse : <code>{ ok: true, deleted: &lt;n&gt; }</code>.
+  </p>
+</div>
+
+<div class="callout danger">
+  <div class="callout-title">⛔ Invariant §11.21 : reset réservé au mode démo (<code>403</code> sinon)</div>
+  <p>
+    Symétrique du push : <code>reset-preview</code> est <strong>refusé hors mode démo</strong>
+    (<code>403</code>). Effacer toutes les sessions/vidéos d'un événement réel serait catastrophique
+    (souvenirs perdus). Le garde <code>isPreviewMode(cfg)</code> n'autorise l'opération que sur une
+    <a href="#/borne-config">borne d'essai</a>. Un événement réel renvoie donc <code>403</code> même
+    avec un jeton technicien valide.
+  </p>
+</div>
 
 <h2>La purge locale (§11.11)</h2>
 <pre><code class="js">router.post('/sync/purge/:eventId', auth, (req, res, next) =&gt; {
@@ -130,6 +216,7 @@
   <tr><th>Endpoint</th><th>Rôle</th></tr>
   <tr><td>GET /sync/status</td><td>État : en ligne ?, URL Hub, dernier pull, progression du push.</td></tr>
   <tr><td>POST /sync/pull</td><td>Déclenche un pull immédiat (tâche de fond).</td></tr>
-  <tr><td>POST /sync/push/:eventId</td><td>Lance le push (tâche de fond, gardes closed + pas déjà en cours).</td></tr>
+  <tr><td>POST /sync/push/:eventId</td><td>Lance le push (tâche de fond, gardes : pas mode démo §11.21, closed, pas déjà en cours).</td></tr>
+  <tr><td>POST /sync/reset-preview</td><td>Borne d'essai : vide sessions + vidéos de l'événement actif sans toucher aux questions. <code>403</code> hors mode démo (§11.21).</td></tr>
   <tr><td>POST /sync/purge/:eventId</td><td>Supprime les fichiers locaux après push (§11.11 + confirmation).</td></tr>
 </table>

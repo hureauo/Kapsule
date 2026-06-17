@@ -21,6 +21,7 @@ export function openRegistry(dataDir) {
       status     TEXT NOT NULL DEFAULT 'loaded'
                  CHECK(status IN ('loaded','live','closed','pushed','purged')),
       active     INTEGER NOT NULL DEFAULT 0,
+      is_preview INTEGER NOT NULL DEFAULT 0,
       pulled_at  DATETIME,
       pushed_at  DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -36,10 +37,11 @@ export function openRegistry(dataDir) {
     );
   `);
 
-  // Migration douce : ajoute pulled_at/pushed_at si absents (base créée avant phase 3.4)
+  // Migrations douces
   const cols = db.pragma('table_info(local_events)').map(c => c.name);
   if (!cols.includes('pulled_at')) db.exec('ALTER TABLE local_events ADD COLUMN pulled_at DATETIME');
   if (!cols.includes('pushed_at')) db.exec('ALTER TABLE local_events ADD COLUMN pushed_at DATETIME');
+  if (!cols.includes('is_preview')) db.exec('ALTER TABLE local_events ADD COLUMN is_preview INTEGER NOT NULL DEFAULT 0');
 
   _db = db;
   return _db;
@@ -68,10 +70,10 @@ export function listEvents() {
   return getRegistry().prepare('SELECT * FROM local_events ORDER BY created_at DESC').all();
 }
 
-export function insertEvent({ id, name, origin, status = 'loaded' }) {
+export function insertEvent({ id, name, origin, status = 'loaded', is_preview = 0 }) {
   getRegistry().prepare(
-    `INSERT INTO local_events (id, name, origin, status) VALUES (?, ?, ?, ?)`
-  ).run(id, name, origin, status);
+    `INSERT INTO local_events (id, name, origin, status, is_preview) VALUES (?, ?, ?, ?, ?)`
+  ).run(id, name, origin, status, is_preview ? 1 : 0);
 }
 
 export function setActiveEvent(id) {

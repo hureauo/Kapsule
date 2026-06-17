@@ -12,11 +12,10 @@
   <div class="callout-title">ℹ Périmètre de cette page</div>
   <p>
     Seuls les invariants <strong>déjà appliqués dans le code</strong> sont détaillés ici.
-    <span class="path">PROJET.md §11</span> liste aussi §11.21 (borne d'essai : push interdit +
-    quota) et §11.22 (login d'un compte client sans mot de passe) : ces gardes relèvent de Phases 6
-    encore <strong>non implémentées</strong> (cases ROADMAP non cochées) et seront documentées quand
-    le code arrivera. La table <code>box_tokens</code> porte déjà <code>is_preview</code>, mais le
-    refus de push (409) n'est pas encore codé.
+    <span class="path">PROJET.md §11</span> liste aussi §11.22 (login d'un compte client sans mot de
+    passe, côté Hub <code>routes/auth.js</code>) : ce garde est implémenté mais pas encore détaillé
+    sur cette page de synthèse — il le sera lors d'une prochaine passe. Le §11.21 (borne d'essai :
+    push interdit + quota) est désormais codé et documenté ci-dessous.
   </p>
 </div>
 
@@ -131,6 +130,16 @@ req.box.event_id</code>, et <code>GET /sync/event</code> (singulier) remplace l'
 événement. Code : <a href="#/hub-middleware-box">boxAuth</a>,
 <a href="#/hub-routes-sync">sync (GET /event + gardes 403)</a>, côté Borne
 <a href="#/borne-sync-pull">pullMyEvent</a>.</p>
+
+<label class="inv"><input type="checkbox"> <strong>§11.21 — borne d'essai : push interdit (409) + quota d'upload (507)</strong></label>
+<p>Une borne en mode démo (<code>is_preview</code> du token, persisté localement, ou
+<code>PREVIEW_MODE=true</code>) ne doit <strong>jamais</strong> pousser ses données (ce sont des
+tests jetables) et son upload invité est plafonné par <code>MAX_DATA_BYTES</code>, vérifié
+<em>avant</em> d'écrire le fichier (sinon un client peut saturer le disque du VPS via l'aperçu).
+Casse : données de démo envoyées dans l'événement réel, ou VPS saturé. Code :
+<a href="#/borne-routes-sync">sync.js (isPreviewMode → push 409, reset-preview 403)</a>,
+<a href="#/borne-routes-videos">videos.js (checkQuota 507)</a>, flag persisté par
+<a href="#/borne-sync-pull">pullMyEvent</a>, config <a href="#/borne-config">previewMode/maxDataBytes</a>.</p>
 
 <h2>Matériel &amp; déploiement (vérification humaine)</h2>
 

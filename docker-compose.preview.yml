@@ -1,0 +1,29 @@
+services:
+  borne-preview:
+    build:
+      context: .
+      dockerfile: apps/borne/server/Dockerfile
+    environment:
+      - BOX_TOKEN=${BOX_TOKEN_PREVIEW}
+      - MAX_DATA_BYTES=1073741824
+      - PREVIEW_MODE=true
+      - HUB_URL=${HUB_URL}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD_PREVIEW:-admin123}
+      - TECH_PASSWORD=${TECH_PASSWORD_PREVIEW:-tech123}
+      - JWT_SECRET=${JWT_SECRET:-change-me}
+      - DATA_DIR=/app/data
+      - PORT=3001
+    volumes:
+      - borne-preview-data:/app/data
+    expose:
+      - "3001"
+    networks:
+      - preview-internal
+    restart: unless-stopped
+
+volumes:
+  borne-preview-data:
+
+networks:
+  preview-internal:
+    driver: bridge

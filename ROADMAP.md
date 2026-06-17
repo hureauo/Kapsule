@@ -164,11 +164,11 @@ committé en `phase 6X.Y: …`.
 - [x] 6C.4 Front super-admin : onglets Vue d'ensemble (existant), Événements (créer + générer token réel/essai avec token affiché une fois + location), Clients (6B)
 
 ### 6D — Aperçu distant (borne d'essai) — dépend de 6C
-- [ ] 6D.1 Borne : `config.js` lit `MAX_DATA_BYTES` ; `routes/videos.js` refuse l'upload invité (507) si `dirSize(events/) ≥ MAX_DATA_BYTES` (vérif **avant** écriture, invariant §11.21) + test
-- [ ] 6D.2 Borne : mode démo déduit du token `is_preview` (ou `PREVIEW_MODE`) → push refusé (409) + bandeau « BORNE D'ESSAI » (kiosque + admin) + test
-- [ ] 6D.3 Borne : `POST /api/sync/reset-preview` (tech) — purge sessions/vidéos de l'événement actif sans toucher aux questions ; refusé hors mode démo + test
-- [ ] 6D.4 Hub front : onglet client « Aperçu de la borne » dans `EventDetailPage` (visible si l'événement a un token `is_preview`) → lien/iframe vers l'URL de preview (proxy interne)
-- [ ] 6D.5 `docker-compose.preview.yml` : service `borne-preview` (`BOX_TOKEN=<token-essai>`, `MAX_DATA_BYTES=1073741824`, port interne), documenté ; entrée dans CLAUDE.md §Commandes
+- [x] 6D.1 Borne : `config.js` lit `MAX_DATA_BYTES` ; `routes/videos.js` refuse l'upload invité (507) si `dirSize(events/) ≥ MAX_DATA_BYTES` (vérif **avant** écriture, invariant §11.21) + test
+- [x] 6D.2 Borne : mode démo déduit du token `is_preview` (ou `PREVIEW_MODE`) → push refusé (409) + bandeau « BORNE D'ESSAI » (kiosque + admin) + test
+- [x] 6D.3 Borne : `POST /api/sync/reset-preview` (tech) — purge sessions/vidéos de l'événement actif sans toucher aux questions ; refusé hors mode démo + test
+- [x] 6D.4 Hub front : onglet client « Aperçu de la borne » dans `EventDetailPage` (visible si l'événement a un token `is_preview`) → lien/iframe vers l'URL de preview (proxy interne)
+- [x] 6D.5 `docker-compose.preview.yml` : service `borne-preview` (`BOX_TOKEN=<token-essai>`, `MAX_DATA_BYTES=1073741824`, port interne), documenté ; entrée dans CLAUDE.md §Commandes
 - [ ] 🧑 6D.6 Vérif bout en bout : conteneur d'essai lancé avec un token → client valide la config à distance → reset → push bien refusé
 
 ### 6E — Documentation

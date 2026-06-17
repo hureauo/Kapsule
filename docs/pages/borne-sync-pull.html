@@ -117,6 +117,9 @@ export async function pullMyEvent(dataDir) {
   // Pull si : pas encore présent localement, ou encore en statut 'loaded' (re-pull autorisé)
   if (!existing || existing.status === 'loaded') {
     await pullEvent(eventInfo.id, dataDir);
+    // Persiste is_preview depuis la réponse Hub (§11.20)
+    db.prepare('UPDATE local_events SET is_preview = ? WHERE id = ?')
+      .run(eventInfo.is_preview ? 1 : 0, eventInfo.id);
     return 1;
   }
   return 0;
@@ -130,6 +133,14 @@ export async function pullMyEvent(dataDir) {
   récupérer des modifications de questions tant que l'événement n'a pas démarré). Un événement déjà
   <code>live</code>/<code>closed</code> est ignoré. C'est ce que le
   <a href="#/borne-sync-autopull">pull automatique</a> appelle en boucle.
+</p>
+<p>
+  Après le pull, <code>pullMyEvent</code> recopie le flag <code>is_preview</code> de la réponse Hub
+  dans <a href="#/borne-registry">local_events</a> : c'est ainsi que la Borne « apprend » qu'elle est
+  une <strong>borne d'essai</strong> (mode démo). Ce flag local pilote ensuite le refus de push, le
+  quota d'upload et le bandeau « BORNE D'ESSAI » (§11.21) — voir
+  <a href="#/borne-routes-sync">sync.js</a>. La normalisation <code>eventInfo.is_preview ? 1 : 0</code>
+  convertit le booléen JSON du Hub en l'entier 0/1 attendu par SQLite.
 </p>
 
 <div class="js-note">

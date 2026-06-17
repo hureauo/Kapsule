@@ -14,7 +14,7 @@ const CLIENT_TABS = [
   { id: 'design',    label: 'Design'   },
 ];
 
-export default function AdminPage() {
+export default function AdminPage({ isPreview = false }) {
   const [authed, setAuthed] = useState(isAuthenticated());
   const [activeTab, setActiveTab] = useState('event');
 
@@ -44,6 +44,7 @@ export default function AdminPage() {
       onLogout={() => setAuthed(false)}
       tabs={CLIENT_TABS}
       clearTokenFn={clearToken}
+      isPreview={isPreview}
     >
       {renderPanel()}
     </AdminLayout>

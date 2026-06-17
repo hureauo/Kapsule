@@ -90,6 +90,9 @@ export async function pullMyEvent(dataDir) {
 
   if (!existing || existing.status === 'loaded') {
     await pullEvent(eventInfo.id, dataDir);
+    // Persiste is_preview depuis la réponse Hub (§11.20)
+    db.prepare('UPDATE local_events SET is_preview = ? WHERE id = ?')
+      .run(eventInfo.is_preview ? 1 : 0, eventInfo.id);
     return 1;
   }
   return 0;

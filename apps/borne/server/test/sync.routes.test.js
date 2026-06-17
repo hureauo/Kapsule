@@ -345,3 +345,96 @@ describe('POST /api/sync/purge/:eventId', () => {
     assert.equal(res.status, 401);
   });
 });
+
+// ── POST /api/sync/push — garde mode démo (§11.21 / 6D.2) ────────────────────
+
+describe('POST /api/sync/push — mode démo', () => {
+  let dir, app, token;
+
+  before(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-sync-preview-push-'));
+    app = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: true });
+    const loginRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
+    token = loginRes.body.token;
+    makeClosedEvent(dir, 'ev-preview-push');
+  });
+
+  after(() => { closeEventDb(); closeRegistry(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('retourne 409 en mode démo même si l\'event est closed', async () => {
+    const res = await request(app)
+      .post('/api/sync/push/ev-preview-push')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /mode démo/);
+  });
+});
+
+// ── POST /api/sync/reset-preview (§11.21 / 6D.3) ─────────────────────────────
+
+describe('POST /api/sync/reset-preview', () => {
+  let dir, app, token;
+
+  async function setupPreviewApp() {
+    dir = mkdtempSync(join(tmpdir(), 'borne-sync-reset-'));
+    app = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: true });
+    const loginRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
+    token = loginRes.body.token;
+  }
+
+  afterEach(() => { closeEventDb(); closeRegistry(); rmSync(dir, { recursive: true, force: true }); });
+
+  it('retourne 403 hors mode démo', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-sync-reset-nopreview-'));
+    app = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: false });
+    const lr = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
+    token = lr.body.token;
+
+    const res = await request(app)
+      .post('/api/sync/reset-preview')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 403);
+  });
+
+  it('retourne 404 si aucun événement actif', async () => {
+    await setupPreviewApp();
+    const res = await request(app)
+      .post('/api/sync/reset-preview')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 404);
+  });
+
+  it('purge sessions et vidéos sans toucher aux questions', async () => {
+    await setupPreviewApp();
+
+    // Crée un événement actif avec sessions et vidéos
+    const eventId = 'ev-reset-preview';
+    const eventDir = join(dir, 'events', eventId);
+    mkdirSync(join(eventDir, 'videos'), { recursive: true });
+    const edb = createEventDb(join(eventDir, 'db.sqlite'));
+    edb.prepare("INSERT INTO sessions (id, guest_name, consent_at) VALUES ('s1','Alice',CURRENT_TIMESTAMP)").run();
+    edb.prepare("INSERT INTO videos (id,session_id,question_id,question_text,filename,mime_type,size,checksum) VALUES ('v1','s1',1,'Q1','f.mp4','video/mp4',100,'abc')").run();
+    // Crée un fichier vidéo fictif
+    writeFileSync(join(eventDir, 'videos', 'f.mp4'), 'fake');
+    edb.close();
+
+    insertEvent({ id: eventId, name: 'Evt Preview', origin: 'hub', status: 'loaded' });
+    const { setActiveEvent } = await import('../src/registry.js');
+    setActiveEvent(eventId);
+
+    const res = await request(app)
+      .post('/api/sync/reset-preview')
+      .set('Authorization', `Bearer ${token}`);
+
+    assert.equal(res.status, 200);
+    assert.equal(res.body.deleted, 1);
+
+    const { getActiveEventDb } = await import('../src/eventDb.js');
+    const { getActiveEvent } = await import('../src/registry.js');
+    const active = getActiveEvent();
+    const db2 = getActiveEventDb(dir, active);
+    assert.equal(db2.prepare('SELECT COUNT(*) AS n FROM sessions').get().n, 0);
+    assert.equal(db2.prepare('SELECT COUNT(*) AS n FROM videos').get().n, 0);
+    assert.ok(!existsSync(join(eventDir, 'videos', 'f.mp4')), 'fichier vidéo supprimé');
+  });
+});

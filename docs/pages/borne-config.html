@@ -19,6 +19,8 @@ export const config = {
   hubUrl: env.HUB_URL ?? '',
   boxToken: env.BOX_TOKEN ?? '',
   pullIntervalMs: parseInt(env.PULL_INTERVAL_MS ?? '300000', 10),
+  maxDataBytes: parseInt(env.MAX_DATA_BYTES || '0', 10),
+  previewMode: env.PREVIEW_MODE === 'true',
 };</code></pre>
 
 <a class="see-also" href="#/arch-docker">→ notion JS : process.env, ??, parseInt (vue dans arch-docker)</a>
@@ -31,8 +33,26 @@ export const config = {
   <tr><td>hubUrl</td><td>HUB_URL</td><td>'' (vide)</td><td>URL du Hub. <strong>Vide = mode autonome</strong> (pas de synchro).</td></tr>
   <tr><td>boxToken</td><td>BOX_TOKEN</td><td>'' (vide)</td><td>Jeton d'identification auprès du Hub (en-tête <code>X-Box-Token</code>).</td></tr>
   <tr><td>pullIntervalMs</td><td>PULL_INTERVAL_MS</td><td>300000 (5 min)</td><td>Période du pull automatique.</td></tr>
+  <tr><td>maxDataBytes</td><td>MAX_DATA_BYTES</td><td>0 (illimité)</td><td>Quota de stockage des vidéos. <code>0</code> = pas de limite ; sinon l'upload invité est refusé (<code>507</code>) dès que <span class="path">events/</span> dépasse ce seuil (§11.21). Mis à <code>1 Go</code> sur la borne d'essai.</td></tr>
+  <tr><td>previewMode</td><td>PREVIEW_MODE</td><td>false</td><td>Force le <strong>mode démo</strong> (« borne d'essai ») : push refusé, reset autorisé. Comparé à la chaîne <code>'true'</code> (les variables d'env sont toujours des chaînes). Le mode démo peut aussi venir du token (<code>is_preview</code>) — voir <a href="#/borne-routes-sync">sync.js</a>.</td></tr>
   <tr><td>port, jwtSecret, dataDir</td><td>(idem Hub)</td><td>—</td><td>Mêmes rôles que côté Hub.</td></tr>
 </table>
+
+<div class="callout info">
+  <div class="callout-title">ℹ La borne d'essai (mode démo) : <code>previewMode</code> + <code>maxDataBytes</code></div>
+  <p>
+    <span class="path">docker-compose.preview.yml</span> lance un conteneur Borne avec
+    <code>PREVIEW_MODE=true</code> et <code>MAX_DATA_BYTES=1073741824</code> (1 Go), sur port interne
+    uniquement. Objectif : permettre à un client de <strong>tester la borne à distance</strong> avant
+    l'événement réel, sans jamais envoyer les données enregistrées au Hub. Le mode démo se déduit de
+    <strong>deux signaux</strong> : la config (<code>previewMode</code>, fixée par l'opérateur) <em>ou</em>
+    le flag <code>is_preview</code> du token côté Hub (persisté dans
+    <a href="#/borne-registry">local_events</a> au pull, §11.20). Conséquences : push interdit
+    (<code>409</code>), quota d'upload (<code>507</code>), reset des sessions/vidéos autorisé, et un
+    bandeau « BORNE D'ESSAI » affiché sur le kiosque et l'admin. Voir
+    <a href="#/borne-routes-sync">sync.js</a> et <a href="#/borne-routes-videos">videos.js</a>.
+  </p>
+</div>
 
 <div class="callout info">
   <div class="callout-title">ℹ Différence clé avec le Hub : pas de table d'utilisateurs, deux mots de passe par rôle</div>

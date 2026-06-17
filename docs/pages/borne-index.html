@@ -82,17 +82,26 @@ app.use('/api', makeSessionsRouter(dataDir, routerCfg));
   raisons qu'au Hub (premier match gagne).
 </p>
 
-<h2>Le health check expose l'événement actif</h2>
+<h2>Le health check expose l'événement actif et le mode démo</h2>
 <pre><code class="js">app.get('/api/health', async (req, res, next) =&gt; {
   const stats = await statfs(dataDir);
   const activeEvent = getActiveEvent();
-  res.json({ ok: true, activeEvent: activeEvent?.id ?? null, disk: { free_bytes, total_bytes } });
+  const isPreview = !!(cfg.previewMode) || !!(activeEvent?.is_preview);
+  res.json({ ok: true, activeEvent: activeEvent?.id ?? null, isPreview, disk: { free_bytes, total_bytes } });
 });</code></pre>
 <p>
   Le health check de la Borne ajoute <code>activeEvent</code> : utile pour superviser « quel
   événement la borne sert actuellement ». L'<code>activeEvent?.id ?? null</code> combine optional
   chaining (si pas d'actif, <code>undefined</code>) et <code>?? null</code> (normalisé en
   <code>null</code>).
+</p>
+<p>
+  Il expose aussi <code>isPreview</code> : <strong>true</strong> si la borne est en
+  <a href="#/borne-config">mode démo</a> — soit via la config (<code>cfg.previewMode</code>), soit
+  parce que l'événement actif a été pullé avec un token <code>is_preview</code> (§11.20/11.21). Le
+  front interroge <code>/api/health</code> au démarrage pour décider d'afficher le bandeau « BORNE
+  D'ESSAI » sur le kiosque et l'admin (composants UI, hors périmètre de ces pages serveur). C'est la
+  même formule <code>isPreviewMode()</code> qui garde le push dans <a href="#/borne-routes-sync">sync.js</a>.
 </p>
 
 <h2>Démarrage (rappel) + le pull automatique</h2>

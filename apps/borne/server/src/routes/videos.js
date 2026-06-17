@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createReadStream, unlink } from 'node:fs';
+import { createReadStream, unlink, readdirSync, statSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
@@ -7,9 +7,22 @@ import multer from 'multer';
 import { sha256File } from '@kapsule/core/src/checksum.js';
 import { LIMITS } from '@kapsule/core';
 import { getActiveEvent } from '../registry.js';
+import { config } from '../config.js';
 import { getActiveEventDb } from '../eventDb.js';
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.avi', '.mkv']);
+
+function dirSize(dir) {
+  let total = 0;
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) total += dirSize(full);
+      else total += statSync(full).size;
+    }
+  } catch { /* dir inexistant ou inaccessible */ }
+  return total;
+}
 
 function makeMulter(dataDir) {
   const storage = multer.diskStorage({
@@ -78,6 +91,16 @@ export function makeVideosRouter(dataDir, cfg) {
   const auth = cfg.requireAdmin;
   const upload = makeMulter(dataDir);
 
+  function checkQuota(req, res, next) {
+    const maxBytes = cfg.maxDataBytes ?? config.maxDataBytes;
+    if (!maxBytes) return next();
+    const eventsDir = join(dataDir, 'events');
+    if (dirSize(eventsDir) >= maxBytes) {
+      return res.status(507).json({ error: 'Espace de stockage insuffisant (quota MAX_DATA_BYTES atteint)' });
+    }
+    next();
+  }
+
   function requireActiveDb(res) {
     const active = getActiveEvent();
     if (!active) {
@@ -89,7 +112,7 @@ export function makeVideosRouter(dataDir, cfg) {
 
   // ── Upload public ─────────────────────────────────────────────────────────
 
-  router.post('/videos', upload.single('video'), async (req, res, next) => {
+  router.post('/videos', checkQuota, upload.single('video'), async (req, res, next) => {
     // multer a déjà stocké le fichier sur disque si on arrive ici
     const ctx = requireActiveDb(res);
     if (!ctx) {

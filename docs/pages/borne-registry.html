@@ -17,6 +17,7 @@
     status     TEXT NOT NULL DEFAULT 'loaded'
                CHECK(status IN ('loaded','live','closed','pushed','purged')),
     active     INTEGER NOT NULL DEFAULT 0,
+    is_preview INTEGER NOT NULL DEFAULT 0,
     pulled_at  DATETIME, pushed_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -48,16 +49,22 @@
       soit a été créé localement sur la borne autonome.</li>
   <li><code>active</code> : un booléen (0/1) marquant <strong>l'unique</strong> événement actif —
       celui que le kiosque sert aux invités. Un seul à la fois (voir <code>setActiveEvent</code>).</li>
+  <li><code>is_preview</code> : un booléen (0/1) indiquant que l'événement vient d'un token
+      <strong>borne d'essai</strong> (mode démo). Persisté au pull depuis la réponse Hub
+      (<a href="#/borne-sync-pull">pullMyEvent</a>, §11.20) ; combiné à <code>previewMode</code> de la
+      <a href="#/borne-config">config</a>, il déclenche le refus de push, le quota d'upload et le
+      bandeau « BORNE D'ESSAI » (§11.21).</li>
   <li>Les statuts de la Borne (<code>loaded → live → closed → pushed → purged</code>) sont un
       sous-ensemble de ceux du Hub : la Borne ne connaît pas <code>draft</code>/<code>ready</code>
       (préparation côté Hub) ni <code>processed</code> (traitement côté Hub).</li>
 </ul>
 
 <h2>La migration douce</h2>
-<pre><code class="js">// Migration douce : ajoute pulled_at/pushed_at si absents (base créée avant phase 3.4)
+<pre><code class="js">// Migrations douces
 const cols = db.pragma('table_info(local_events)').map(c =&gt; c.name);
 if (!cols.includes('pulled_at')) db.exec('ALTER TABLE local_events ADD COLUMN pulled_at DATETIME');
-if (!cols.includes('pushed_at')) db.exec('ALTER TABLE local_events ADD COLUMN pushed_at DATETIME');</code></pre>
+if (!cols.includes('pushed_at')) db.exec('ALTER TABLE local_events ADD COLUMN pushed_at DATETIME');
+if (!cols.includes('is_preview')) db.exec('ALTER TABLE local_events ADD COLUMN is_preview INTEGER NOT NULL DEFAULT 0');</code></pre>
 
 <div class="js-note">
   <div class="js-note-head">
@@ -67,8 +74,9 @@ if (!cols.includes('pushed_at')) db.exec('ALTER TABLE local_events ADD COLUMN pu
   <p>
     <code>CREATE TABLE IF NOT EXISTS</code> ne modifie pas une table <em>existante</em> : si la
     table a été créée par une version antérieure du code (sans les colonnes <code>pulled_at</code>/
-    <code>pushed_at</code>), elle reste telle quelle. Pour ajouter ces colonnes sur une base
-    déjà en service, on fait une <strong>migration</strong> manuelle :
+    <code>pushed_at</code>, ou <code>is_preview</code> ajoutée en Phase 6D), elle reste telle quelle.
+    Pour ajouter ces colonnes sur une base déjà en service, on fait une <strong>migration</strong>
+    manuelle, une ligne par colonne attendue :
   </p>
   <ol>
     <li><code>db.pragma('table_info(local_events)')</code> renvoie la liste des colonnes actuelles
@@ -122,7 +130,7 @@ export function setActiveEvent(id) {
   <tr><td>openRegistry / getRegistry / closeRegistry</td><td>Cycle de vie du singleton (idem Hub).</td></tr>
   <tr><td>getActiveEvent()</td><td>L'événement actif (servi au kiosque), ou <code>null</code>.</td></tr>
   <tr><td>listEvents()</td><td>Tous les événements locaux.</td></tr>
-  <tr><td>insertEvent({id, name, origin, status})</td><td>Ajoute un événement local.</td></tr>
+  <tr><td>insertEvent({id, name, origin, status, is_preview})</td><td>Ajoute un événement local (<code>is_preview</code> par défaut <code>0</code>, normalisé en 0/1).</td></tr>
   <tr><td>setActiveEvent(id)</td><td>Rend un événement actif (désactive les autres, transaction).</td></tr>
   <tr><td>updateEventStatus(id, status)</td><td>Change le statut d'un événement.</td></tr>
 </table>

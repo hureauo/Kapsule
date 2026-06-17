@@ -96,7 +96,7 @@ const S = {
 // QUESTIONS exclu : rec/upload y vivent et ne doivent jamais être interrompus.
 const IDLE_SCREENS = new Set([S.NAME]);
 
-export default function GuestPage() {
+export default function GuestPage({ isPreview = false }) {
   const [screen, setScreen] = useState(S.LOADING);
   const [event, setEvent] = useState(null);
   const [questions, setQuestions] = useState([]);
@@ -293,6 +293,11 @@ export default function GuestPage() {
 
   return (
     <>
+      {isPreview && (
+        <div className="guest-preview-banner" role="status">
+          BORNE D'ESSAI
+        </div>
+      )}
       {/* Bouton Accueil 🏠 — coin haut gauche, sauf pendant le REC/upload (V2.7) */}
       {showHomeButton && (
         <button

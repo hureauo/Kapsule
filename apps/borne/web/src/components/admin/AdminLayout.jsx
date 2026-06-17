@@ -19,7 +19,8 @@ function DiskIndicator({ freeBytes }) {
 // tabs : [{ id, label }] — définit les onglets affichés
 // clearTokenFn : fonction de déconnexion (clearToken pour client, clearTechToken pour tech)
 // role : 'client' | 'tech' — affiche le bandeau « espace technicien » si 'tech'
-export default function AdminLayout({ activeTab, onTabChange, onLogout, children, tabs, clearTokenFn = clearToken, role = 'client' }) {
+// isPreview : true → bandeau « BORNE D'ESSAI »
+export default function AdminLayout({ activeTab, onTabChange, onLogout, children, tabs, clearTokenFn = clearToken, role = 'client', isPreview = false }) {
   const [freeBytes, setFreeBytes] = useState(null);
   const intervalRef = useRef(null);
 
@@ -43,6 +44,11 @@ export default function AdminLayout({ activeTab, onTabChange, onLogout, children
 
   return (
     <div className={`admin-layout${role === 'tech' ? ' admin-layout--tech' : ''}`}>
+      {isPreview && (
+        <div className="admin-banner admin-banner--preview" role="status">
+          BORNE D'ESSAI — données non envoyées
+        </div>
+      )}
       {role === 'tech' && (
         <div className="admin-banner admin-banner--tech" role="status">
           ⚙️ Espace technicien

@@ -142,6 +142,34 @@ Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.s
   par le pattern générique de tests-runner. RegisterPage.jsx : pas dans ce diff (déjà commité 6B).
 - Vérifs : manifeste/fichiers OK (51/51), liens internes OK (0 mort), `node --check pages.js` OK.
 
+## Sync incrémentale — Phase 6D (borne d'essai : preview / quota / reset)
+- Diff base : `git diff HEAD`. Périmètre code = **Borne** (mode démo `previewMode`/`is_preview`,
+  quota `MAX_DATA_BYTES`, route `reset-preview`, health `isPreview`) + Hub front (onglet Aperçu).
+  Cases ROADMAP 6D.1→6D.5 cochées (6D.6 = vérif humaine). §11.21 désormais implémenté.
+- borne-config : ajout `maxDataBytes`/`MAX_DATA_BYTES` + `previewMode`/`PREVIEW_MODE` (extrait + 2
+  lignes table env) ; nouveau callout « borne d'essai (mode démo) » (preview compose, deux signaux).
+- borne-index : health expose `isPreview` (extrait + formule `!!cfg.previewMode || !!active.is_preview`)
+  + paragraphe (front lit /health pour le bandeau).
+- borne-registry : colonne `is_preview` dans le schéma + bullet ; 3ᵉ ligne de migration douce (commentaire
+  « Migrations douces ») + js-note ajusté ; `insertEvent({…, is_preview})` dans la table d'API.
+- borne-routes-videos : intro (§11.21 ajouté) ; nouvelle section quota (`dirSize`/`checkQuota` extrait,
+  callout danger §11.21 « avant multer », see-also dirSize→hub-routes-admin) ; ligne API POST /videos (507).
+- borne-routes-sync : `isPreviewMode` + garde push 409 (extrait + callout danger §11.21) ; gardes avant
+  push passées à 4 ; nouvelle section `reset-preview` (extrait, callout info logique, callout danger 403) ;
+  table d'API (push mode démo, reset-preview).
+- borne-sync-pull : extrait `pullMyEvent` + ligne `UPDATE … is_preview` ; paragraphe persistance du flag.
+- invariants : callout périmètre révisé (§11.21 implémenté ; §11.22 implémenté mais pas encore détaillé) ;
+  nouvel item §11.21 dans Synchronisation.
+- arch-deux-apps : `local_events` mentionne `is_preview`.
+- pages.js : inchangé (aucune notion JS nouvelle ; `dirSize`/`withFileTypes` déjà indexés sur
+  hub-routes-admin et renvoyés en see-also ; les nouveaux termes sont métier, pas JS).
+- Hors scope doc (composants UI sans page — convention : seuls client.js/hooks documentés côté front) :
+  App.jsx (fetch /health + props isPreview), AdminLayout/AdminPage/TechPage/GuestPage.jsx (bandeaux),
+  hub EventDetailPage.jsx (onglet Aperçu + previewTokens), app.css ; CLAUDE.md/ROADMAP.md/NOTES.md
+  (pas docs/) ; docker-compose.preview.yml documenté via le callout borne-config + CLAUDE.md §Commandes ;
+  *.test.js couverts par le pattern générique de tests-runner.
+- Vérifs : manifeste/fichiers OK (51/51), liens internes OK (0 mort), `node --check pages.js` OK.
+
 ---
 
 ## Conventions du site (décidées avec l'utilisateur)

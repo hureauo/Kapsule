@@ -8,7 +8,7 @@ import { createApp } from '../src/index.js';
 import { closeRegistry } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 
-const TEST_CFG = { adminPassword: 'test', jwtSecret: 'secret-test', dataDir: '' };
+const TEST_CFG = { adminPassword: 'test', jwtSecret: 'secret-test', dataDir: '', maxDataBytes: 0 };
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-vid-'));
@@ -373,5 +373,51 @@ describe('DELETE /api/videos/:id', () => {
   test('retourne 401 sans token', async () => {
     const res = await request(ctx.app).delete('/api/videos/x');
     assert.equal(res.status, 401);
+  });
+});
+
+// ── Quota MAX_DATA_BYTES (§11.21 / 6D.1) ─────────────────────────────────────
+
+describe('POST /api/videos — quota 507', () => {
+  let ctx;
+
+  beforeEach(async () => {
+    // maxDataBytes = 1 → tout upload est refusé (quota atteint dès le 1er octet)
+    const dir = mkdtempSync(join(tmpdir(), 'borne-vid-quota-'));
+    const app = createApp(dir, { ...TEST_CFG, dataDir: dir, maxDataBytes: 1 });
+    const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
+    const token = loginRes.body.token;
+    const evtRes = await request(app)
+      .post('/api/events')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Evt Quota' });
+    await request(app)
+      .put(`/api/events/${evtRes.body.id}/activate`)
+      .set('Authorization', `Bearer ${token}`);
+    const sessRes = await request(app)
+      .post('/api/sessions')
+      .send({ guest_name: 'Bob', consent: true });
+    const questRes = await request(app).get('/api/questions');
+    ctx = {
+      dir, app, sessionId: sessRes.body.id,
+      questionId: questRes.body[0].id,
+      questionText: questRes.body[0].text,
+    };
+  });
+
+  afterEach(() => {
+    closeEventDb();
+    closeRegistry();
+    rmSync(ctx.dir, { recursive: true });
+  });
+
+  test('retourne 507 quand le quota est dépassé', async () => {
+    const res = await request(ctx.app)
+      .post('/api/videos')
+      .field('session_id', ctx.sessionId)
+      .field('question_id', String(ctx.questionId))
+      .field('question_text', ctx.questionText)
+      .attach('video', Buffer.from('fake'), { filename: 'rec.mp4', contentType: 'video/mp4' });
+    assert.equal(res.status, 507);
   });
 });
