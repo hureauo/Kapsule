@@ -9,15 +9,18 @@ import { closeRegistry, updateEventStatus } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 import { _setPushRunning } from '../src/sync/push.js';
 
-const TEST_CFG = { adminPassword: 'test', jwtSecret: 'secret-test', dataDir: '' };
+const TEST_CFG = { adminPassword: 'test', techPassword: 'tech-test', jwtSecret: 'secret-test', dataDir: '' };
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-ev-'));
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
-  // Obtenir un token admin
+  // token client (adminPassword) — pour les routes requireAdmin
   const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
   const token = loginRes.body.token;
-  return { dir, app, token };
+  // token tech (techPassword) — pour les routes requireTech (close, preflight, sync)
+  const techRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
+  const techToken = techRes.body.token;
+  return { dir, app, token, techToken };
 }
 
 function teardown(dir) {
@@ -143,7 +146,7 @@ describe('PUT /api/events/:id/close', () => {
   beforeEach(async () => { ctx = await setup(); });
   afterEach(() => teardown(ctx.dir));
 
-  test('clôture un événement live', async () => {
+  test('clôture un événement live (tech token)', async () => {
     const created = await request(ctx.app)
       .post('/api/events')
       .set('Authorization', `Bearer ${ctx.token}`)
@@ -151,9 +154,21 @@ describe('PUT /api/events/:id/close', () => {
     updateEventStatus(created.body.id, 'live');
     const res = await request(ctx.app)
       .put(`/api/events/${created.body.id}/close`)
-      .set('Authorization', `Bearer ${ctx.token}`);
+      .set('Authorization', `Bearer ${ctx.techToken}`);
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'closed');
+  });
+
+  test('retourne 403 avec un token client (§11.19)', async () => {
+    const created = await request(ctx.app)
+      .post('/api/events')
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ name: 'Evt 403' });
+    updateEventStatus(created.body.id, 'live');
+    const res = await request(ctx.app)
+      .put(`/api/events/${created.body.id}/close`)
+      .set('Authorization', `Bearer ${ctx.token}`);
+    assert.equal(res.status, 403);
   });
 
   test('retourne 409 si l\'événement n\'est pas live', async () => {
@@ -163,14 +178,14 @@ describe('PUT /api/events/:id/close', () => {
       .send({ name: 'Evt Loaded' });
     const res = await request(ctx.app)
       .put(`/api/events/${created.body.id}/close`)
-      .set('Authorization', `Bearer ${ctx.token}`);
+      .set('Authorization', `Bearer ${ctx.techToken}`);
     assert.equal(res.status, 409);
   });
 
   test('retourne 404 pour un id inexistant', async () => {
     const res = await request(ctx.app)
       .put('/api/events/inexistant/close')
-      .set('Authorization', `Bearer ${ctx.token}`);
+      .set('Authorization', `Bearer ${ctx.techToken}`);
     assert.equal(res.status, 404);
   });
 });
@@ -385,10 +400,10 @@ describe('GET /api/preflight', () => {
   beforeEach(async () => { ctx = await setup(); });
   afterEach(() => teardown(ctx.dir));
 
-  test('retourne la structure attendue sans événement actif', async () => {
+  test('retourne la structure attendue sans événement actif (tech token)', async () => {
     const res = await request(ctx.app)
       .get('/api/preflight')
-      .set('Authorization', `Bearer ${ctx.token}`);
+      .set('Authorization', `Bearer ${ctx.techToken}`);
     assert.equal(res.status, 200);
     assert.equal(res.body.event.loaded, false);
     assert.equal(res.body.questions_count, 0);
@@ -396,11 +411,18 @@ describe('GET /api/preflight', () => {
     assert.equal(res.body.clock_ok, null); // pas de ?client_time
   });
 
+  test('retourne 403 avec un token client (§11.19)', async () => {
+    const res = await request(ctx.app)
+      .get('/api/preflight')
+      .set('Authorization', `Bearer ${ctx.token}`);
+    assert.equal(res.status, 403);
+  });
+
   test('clock_ok=true si ?client_time proche de now', async () => {
     const clientTime = new Date().toISOString();
     const res = await request(ctx.app)
       .get(`/api/preflight?client_time=${encodeURIComponent(clientTime)}`)
-      .set('Authorization', `Bearer ${ctx.token}`);
+      .set('Authorization', `Bearer ${ctx.techToken}`);
     assert.equal(res.status, 200);
     assert.equal(res.body.clock_ok, true);
   });
@@ -409,7 +431,7 @@ describe('GET /api/preflight', () => {
     const past = new Date(Date.now() - 10 * 60 * 1000).toISOString();
     const res = await request(ctx.app)
       .get(`/api/preflight?client_time=${encodeURIComponent(past)}`)
-      .set('Authorization', `Bearer ${ctx.token}`);
+      .set('Authorization', `Bearer ${ctx.techToken}`);
     assert.equal(res.status, 200);
     assert.equal(res.body.clock_ok, false);
   });

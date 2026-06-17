@@ -10,7 +10,7 @@ import { pullAssigned } from '../sync/pull.js';
 
 export function makeSyncRouter(dataDir, cfg) {
   const router = Router();
-  const auth = cfg.requireAdmin;
+  const auth = cfg.requireTech;
 
   // ── GET /api/sync/status ─────────────────────────────────────────────────────
   // Retourne : { online, hubUrl, lastPull, push: { running, total, done, currentFile } }

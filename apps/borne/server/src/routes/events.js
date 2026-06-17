@@ -14,6 +14,7 @@ import { getPushState } from '../sync/push.js';
 export function makeEventsRouter(dataDir, cfg) {
   const router = Router();
   const auth = cfg.requireAdmin;
+  const authTech = cfg.requireTech;
 
   // ── Routes admin ─────────────────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ export function makeEventsRouter(dataDir, cfg) {
     }
   });
 
-  router.put('/events/:id/close', auth, (req, res, next) => {
+  router.put('/events/:id/close', authTech, (req, res, next) => {
     try {
       const { id } = req.params;
       const all = listEvents();
@@ -147,7 +148,7 @@ export function makeEventsRouter(dataDir, cfg) {
     }
   });
 
-  router.get('/preflight', auth, async (req, res, next) => {
+  router.get('/preflight', authTech, async (req, res, next) => {
     try {
       const activeEvent = getActiveEvent();
       const stats = await statfs(dataDir);

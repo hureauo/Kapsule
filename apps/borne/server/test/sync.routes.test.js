@@ -13,6 +13,7 @@ import { config } from '../src/config.js';
 
 const TEST_CFG = {
   adminPassword: 'test',
+  techPassword: 'tech-test',
   jwtSecret: 'secret-test',
   dataDir: '',
   hubUrl: 'https://hub.test',
@@ -22,9 +23,13 @@ const TEST_CFG = {
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-sync-routes-'));
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
-  const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
+  // Les routes sync requièrent requireTech → login avec techPassword
+  const loginRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
   const token = loginRes.body.token;
-  return { dir, app, token };
+  // Token client pour les tests d'accès refusé
+  const clientRes = await request(app).post('/api/admin/login').send({ password: 'test' });
+  const clientToken = clientRes.body.token;
+  return { dir, app, token, clientToken };
 }
 
 function teardown(dir) {
@@ -130,10 +135,10 @@ describe('POST /api/sync/pull', () => {
 // ── POST /api/sync/push/:eventId ─────────────────────────────────────────────
 
 describe('POST /api/sync/push/:eventId', () => {
-  let dir, app, token;
+  let dir, app, token, clientToken;
 
   beforeEach(async () => {
-    ({ dir, app, token } = await setup());
+    ({ dir, app, token, clientToken } = await setup());
     mockFetchSuccess();
   });
   afterEach(async () => {
@@ -213,6 +218,13 @@ describe('POST /api/sync/push/:eventId', () => {
     // Débloquer le push bloqué pour nettoyage propre
     if (resolveManifest) resolveManifest({ ok: true, status: 200, json: async () => ({ missing: [] }) });
     await new Promise(r => setTimeout(r, 80));
+  });
+
+  it('retourne 403 avec un token client (§11.19)', async () => {
+    const res = await request(app)
+      .post('/api/sync/push/ev-x')
+      .set('Authorization', `Bearer ${clientToken}`);
+    assert.equal(res.status, 403);
   });
 
   it('retourne 401 sans token', async () => {

@@ -8,7 +8,7 @@ import { createApp } from '../src/index.js';
 import { closeRegistry } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 
-const TEST_CFG = { adminPassword: 'test', jwtSecret: 'secret-test', dataDir: '' };
+const TEST_CFG = { adminPassword: 'test', techPassword: 'tech-test', jwtSecret: 'secret-test', dataDir: '' };
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-q-'));
@@ -67,6 +67,23 @@ describe('GET /api/questions', () => {
       // Réinitialiser le contexte principal pour les autres tests de la suite
       ctx.app = createApp(ctx.dir, { ...TEST_CFG, dataDir: ctx.dir });
     }
+  });
+});
+
+// ── Contrôle d'accès §11.19 ───────────────────────────────────────────────────
+
+describe('Accès aux questions par rôle', () => {
+  let ctx;
+  beforeEach(async () => { ctx = await setup(); });
+  afterEach(() => teardown(ctx.dir));
+
+  test('token client accepté sur POST /questions (requireAdmin, §11.19)', async () => {
+    // Le token issu d'adminPassword a le rôle 'client' — il doit pouvoir créer des questions
+    const res = await request(ctx.app)
+      .post('/api/questions')
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ text: 'Question accès client' });
+    assert.equal(res.status, 201);
   });
 });
 

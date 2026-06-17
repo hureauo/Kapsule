@@ -8,13 +8,15 @@ import { createApp } from '../src/index.js';
 import { closeRegistry, getActiveEvent } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 
-const TEST_CFG = { adminPassword: 'test', jwtSecret: 'secret-test', dataDir: '' };
+const TEST_CFG = { adminPassword: 'test', techPassword: 'tech-test', jwtSecret: 'secret-test', dataDir: '' };
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-sess-'));
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
   const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
   const token = loginRes.body.token;
+  const techRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
+  const techToken = techRes.body.token;
   const evtRes = await request(app)
     .post('/api/events')
     .set('Authorization', `Bearer ${token}`)
@@ -22,7 +24,7 @@ async function setup() {
   await request(app)
     .put(`/api/events/${evtRes.body.id}/activate`)
     .set('Authorization', `Bearer ${token}`);
-  return { dir, app, token, eventId: evtRes.body.id };
+  return { dir, app, token, techToken, eventId: evtRes.body.id };
 }
 
 function teardown(dir) {
@@ -92,11 +94,11 @@ describe('POST /api/sessions', () => {
   });
 
   test('retourne 409 si l\'événement est clôturé (closed)', async () => {
-    // Passage en live puis clôture
+    // Passage en live puis clôture (close requiert requireTech)
     await request(ctx.app).post('/api/sessions').send({ guest_name: 'Alice', consent: true });
     await request(ctx.app)
       .put(`/api/events/${ctx.eventId}/close`)
-      .set('Authorization', `Bearer ${ctx.token}`);
+      .set('Authorization', `Bearer ${ctx.techToken}`);
     const res = await request(ctx.app)
       .post('/api/sessions')
       .send({ guest_name: 'Bob', consent: true });
