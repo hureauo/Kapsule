@@ -53,6 +53,15 @@ export const api = {
   createBox: (name) => apiFetch('/admin/boxes', { method: 'POST', body: { name } }),
   deleteBox: (id) => apiFetch(`/admin/boxes/${id}`, { method: 'DELETE' }),
 
+  // Admin : gestion des comptes clients
+  listUsers: () => apiFetch('/admin/users'),
+  createUser: (email, name) => apiFetch('/admin/users', { method: 'POST', body: { email, name } }),
+  updateUser: (id, fields) => apiFetch(`/admin/users/${id}`, { method: 'PUT', body: fields }),
+  createRegistrationLink: (id) => apiFetch(`/admin/users/${id}/registration-link`, { method: 'POST' }),
+
+  // Auth : poser le mot de passe via lien d'enregistrement
+  setPassword: (token, password) => apiFetch('/auth/set-password', { method: 'POST', body: { token, password } }),
+
   // URL directe avec ?token= pour téléchargements (invariant §11.2)
   videoStreamUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/file?token=${getToken()}`,
   videoDownloadUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/download?token=${getToken()}`,

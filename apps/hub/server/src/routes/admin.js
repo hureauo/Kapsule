@@ -3,7 +3,12 @@ import { randomBytes, createHash } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { statfs } from 'node:fs/promises';
-import { getDb, listBoxes, insertBox, deleteBox, getBoxByTokenHash } from '../registry.js';
+import {
+  getDb,
+  listBoxes, insertBox, deleteBox, getBoxByTokenHash,
+  listUsers, insertUser, getUserById, updateUser,
+  createRegistrationToken,
+} from '../registry.js';
 import { requireUser } from '../middleware/auth.js';
 
 function requireAdmin(req, res, next) {
@@ -30,6 +35,73 @@ function dirSize(dirPath) {
 export function makeAdminRouter(dataDir) {
   const router = Router();
   router.use(requireUser, requireAdmin);
+
+  // ── Gestion des comptes clients ─────────────────────────────────────────────
+
+  // POST /api/admin/users — crée un compte client sans mot de passe + lien d'enregistrement
+  router.post('/users', async (req, res, next) => {
+    try {
+      const { email, name } = req.body;
+      if (!email || !email.trim()) return res.status(400).json({ error: 'email requis' });
+
+      const db = getDb();
+      let result;
+      try {
+        result = insertUser(db, { email: email.trim(), name: name?.trim() ?? null, role: 'client' });
+      } catch (e) {
+        if (e.message?.includes('UNIQUE')) return res.status(409).json({ error: 'Email déjà utilisé' });
+        throw e;
+      }
+
+      const userId = result.lastInsertRowid;
+      const { token } = createRegistrationToken(db, { user_id: userId });
+      const registration_url = `${req.protocol}://${req.get('host')}/register?token=${token}`;
+      const user = getUserById(db, userId);
+      const { password_hash: _, ...safeUser } = user;
+
+      res.status(201).json({ user: { ...safeUser, has_password: false }, registration_url });
+    } catch (err) { next(err); }
+  });
+
+  // GET /api/admin/users — liste des comptes clients
+  router.get('/users', (req, res) => {
+    const db = getDb();
+    const users = listUsers(db).map((u) => ({
+      ...u,
+      has_password: u.password_hash != null,
+    }));
+    res.json(users);
+  });
+
+  // PUT /api/admin/users/:id — désactiver/réactiver, renommer
+  router.put('/users/:id', (req, res) => {
+    const db = getDb();
+    const user = getUserById(db, req.params.id);
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
+    const { active, name } = req.body;
+    const fields = {};
+    if (active !== undefined) fields.active = active ? 1 : 0;
+    if (name !== undefined) fields.name = name?.trim() ?? null;
+
+    updateUser(db, req.params.id, fields);
+    const updated = getUserById(db, req.params.id);
+    const { password_hash: _, ...safe } = updated;
+    res.json({ ...safe, has_password: updated.password_hash != null });
+  });
+
+  // POST /api/admin/users/:id/registration-link — génère un nouveau lien
+  router.post('/users/:id/registration-link', async (req, res, next) => {
+    try {
+      const db = getDb();
+      const user = getUserById(db, req.params.id);
+      if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
+      const { token } = createRegistrationToken(db, { user_id: user.id });
+      const registration_url = `${req.protocol}://${req.get('host')}/register?token=${token}`;
+      res.json({ registration_url });
+    } catch (err) { next(err); }
+  });
 
   // POST /api/admin/boxes — crée une borne ; retourne le token en clair UNE SEULE FOIS
   router.post('/boxes', (req, res) => {

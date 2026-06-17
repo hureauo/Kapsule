@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import supertest from 'supertest';
 import argon2 from 'argon2';
 import { createApp } from '../src/index.js';
-import { getDb, closeRegistry, insertUser, getBoxByTokenHash } from '../src/registry.js';
+import { getDb, closeRegistry, insertUser, getUserByEmail, getBoxByTokenHash } from '../src/registry.js';
 import { createHash } from 'node:crypto';
 
 let dir, request, tokenAdmin, tokenClient;
@@ -31,6 +31,121 @@ before(async () => {
 after(() => {
   closeRegistry();
   rmSync(dir, { recursive: true, force: true });
+});
+
+// ── POST /api/admin/users ─────────────────────────────────────────────────────
+
+describe('POST /api/admin/users', () => {
+  it('crée un compte client sans mdp et retourne registration_url (201)', async () => {
+    const res = await request.post('/api/admin/users')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ email: 'newclient@test.com', name: 'Client Test' });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.user.email, 'newclient@test.com');
+    assert.equal(res.body.user.has_password, false);
+    assert.ok(res.body.registration_url?.includes('/register?token='));
+    assert.ok(!('password_hash' in res.body.user));
+  });
+
+  it('retourne 409 si email déjà utilisé', async () => {
+    const res = await request.post('/api/admin/users')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ email: 'newclient@test.com' });
+    assert.equal(res.status, 409);
+  });
+
+  it('retourne 400 si email manquant', async () => {
+    const res = await request.post('/api/admin/users')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Sans Email' });
+    assert.equal(res.status, 400);
+  });
+
+  it('retourne 403 pour un client', async () => {
+    const res = await request.post('/api/admin/users')
+      .set('Authorization', `Bearer ${tokenClient}`)
+      .send({ email: 'other@test.com' });
+    assert.equal(res.status, 403);
+  });
+});
+
+// ── GET /api/admin/users ──────────────────────────────────────────────────────
+
+describe('GET /api/admin/users', () => {
+  it('retourne la liste avec has_password (admin)', async () => {
+    const res = await request.get('/api/admin/users')
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body));
+    assert.ok(res.body.length >= 1);
+    assert.ok('has_password' in res.body[0]);
+    assert.ok(!('password_hash' in res.body[0]));
+  });
+
+  it('retourne 403 pour un client', async () => {
+    const res = await request.get('/api/admin/users')
+      .set('Authorization', `Bearer ${tokenClient}`);
+    assert.equal(res.status, 403);
+  });
+});
+
+// ── PUT /api/admin/users/:id ──────────────────────────────────────────────────
+
+describe('PUT /api/admin/users/:id', () => {
+  let targetId;
+
+  before(() => {
+    const db = getDb();
+    targetId = getUserByEmail(db, 'newclient@test.com').id;
+  });
+
+  it('désactive le compte (active=0)', async () => {
+    const res = await request.put(`/api/admin/users/${targetId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ active: false });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.active, 0);
+  });
+
+  it('réactive le compte (active=1)', async () => {
+    const res = await request.put(`/api/admin/users/${targetId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ active: true, name: 'Client Renommé' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.active, 1);
+    assert.equal(res.body.name, 'Client Renommé');
+  });
+
+  it('retourne 404 pour un id inconnu', async () => {
+    const res = await request.put('/api/admin/users/99999')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ active: false });
+    assert.equal(res.status, 404);
+  });
+});
+
+// ── POST /api/admin/users/:id/registration-link ───────────────────────────────
+
+describe('POST /api/admin/users/:id/registration-link', () => {
+  let targetId;
+
+  before(() => {
+    const db = getDb();
+    targetId = getUserByEmail(db, 'newclient@test.com').id;
+  });
+
+  it('génère un nouveau lien d\'enregistrement', async () => {
+    const res = await request.post(`/api/admin/users/${targetId}/registration-link`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.ok(res.body.registration_url?.includes('/register?token='));
+  });
+
+  it('retourne 404 pour un id inconnu', async () => {
+    const res = await request.post('/api/admin/users/99999/registration-link')
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 404);
+  });
 });
 
 // ── POST /api/admin/boxes ─────────────────────────────────────────────────────

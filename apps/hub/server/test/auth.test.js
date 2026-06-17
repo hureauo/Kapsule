@@ -7,7 +7,7 @@ import supertest from 'supertest';
 import argon2 from 'argon2';
 import { config } from '../src/config.js';
 import { createApp } from '../src/index.js';
-import { getDb, closeRegistry, insertUser, insertEvent } from '../src/registry.js';
+import { getDb, closeRegistry, insertUser, insertEvent, createRegistrationToken } from '../src/registry.js';
 
 let dir;
 let app;
@@ -103,6 +103,99 @@ describe('POST /api/auth/register', () => {
     const res = await request.post('/api/auth/register').send({ password: 'securepass1' });
     config.allowRegister = false;
     assert.equal(res.status, 400);
+  });
+});
+
+// ── POST /api/auth/set-password ───────────────────────────────────────────────
+
+describe('POST /api/auth/set-password', () => {
+  let validToken;
+
+  before(() => {
+    const db = getDb();
+    // Créer un compte sans mot de passe
+    const res = db.prepare("INSERT INTO users (email, role) VALUES ('pending@test.com', 'client')").run();
+    const { token } = createRegistrationToken(db, { user_id: res.lastInsertRowid });
+    validToken = token;
+  });
+
+  it('pose le mot de passe avec un token valide (200)', async () => {
+    const res = await request.post('/api/auth/set-password')
+      .send({ token: validToken, password: 'newpassword123' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+
+    // Le compte peut maintenant se connecter
+    const loginRes = await request.post('/api/auth/login')
+      .send({ email: 'pending@test.com', password: 'newpassword123' });
+    assert.equal(loginRes.status, 200);
+    assert.ok(loginRes.body.token);
+  });
+
+  it('retourne 409 si le token est déjà utilisé', async () => {
+    const res = await request.post('/api/auth/set-password')
+      .send({ token: validToken, password: 'anotherpassword' });
+    assert.equal(res.status, 409);
+  });
+
+  it('retourne 410 pour un token inexistant', async () => {
+    const res = await request.post('/api/auth/set-password')
+      .send({ token: 'a'.repeat(64), password: 'validpass123' });
+    assert.equal(res.status, 410);
+  });
+
+  it('retourne 410 pour un token expiré', async () => {
+    const db = getDb();
+    db.prepare("INSERT INTO users (email, role) VALUES ('expired@test.com', 'client')").run();
+    const expiredUser = db.prepare("SELECT id FROM users WHERE email = 'expired@test.com'").get();
+    // Créer un token déjà expiré (expires_at dans le passé)
+    const { createHash, randomBytes } = await import('node:crypto');
+    const tok = randomBytes(32).toString('hex');
+    const tok_hash = createHash('sha256').update(tok).digest('hex');
+    const past = new Date(Date.now() - 1000).toISOString();
+    db.prepare('INSERT INTO registration_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
+      .run(tok_hash, expiredUser.id, past);
+
+    const res = await request.post('/api/auth/set-password')
+      .send({ token: tok, password: 'validpass123' });
+    assert.equal(res.status, 410);
+  });
+
+  it('retourne 400 si le mot de passe est trop court', async () => {
+    const db = getDb();
+    db.prepare("INSERT INTO users (email, role) VALUES ('short@test.com', 'client')").run();
+    const u = db.prepare("SELECT id FROM users WHERE email = 'short@test.com'").get();
+    const { token: shortToken } = createRegistrationToken(db, { user_id: u.id });
+
+    const res = await request.post('/api/auth/set-password')
+      .send({ token: shortToken, password: '1234567' });
+    assert.equal(res.status, 400);
+  });
+});
+
+// ── Login : gardes invariant §11.22 ──────────────────────────────────────────
+
+describe('POST /api/auth/login — gardes §11.22', () => {
+  before(async () => {
+    const db = getDb();
+    // Compte sans mot de passe (password_hash NULL)
+    db.prepare("INSERT OR IGNORE INTO users (email, role) VALUES ('nopwd@test.com', 'client')").run();
+    // Compte désactivé
+    const hash = await argon2.hash('disabled-pass', { type: argon2.argon2id });
+    db.prepare("INSERT OR IGNORE INTO users (email, password_hash, role, active) VALUES ('disabled@test.com', ?, 'client', 0)")
+      .run(hash);
+  });
+
+  it('retourne 401 pour un compte sans mot de passe (ne lève pas d\'exception)', async () => {
+    const res = await request.post('/api/auth/login')
+      .send({ email: 'nopwd@test.com', password: 'whatever' });
+    assert.equal(res.status, 401);
+  });
+
+  it('retourne 401 pour un compte désactivé (active=0)', async () => {
+    const res = await request.post('/api/auth/login')
+      .send({ email: 'disabled@test.com', password: 'disabled-pass' });
+    assert.equal(res.status, 401);
   });
 });
 

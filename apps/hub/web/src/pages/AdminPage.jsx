@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, clearToken } from '../api/client.js';
 
@@ -88,6 +88,150 @@ function NewBoxModal({ onClose, onCreate }) {
   );
 }
 
+// ── Section Clients ───────────────────────────────────────────────────────────
+
+function ClientsSection() {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [email, setEmail] = useState('');
+  const [name, setName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [copiedLink, setCopiedLink] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      setUsers(await api.listUsers());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleCreate(e) {
+    e.preventDefault();
+    setCreating(true);
+    setCreateError('');
+    try {
+      const { user, registration_url } = await api.createUser(email.trim(), name.trim() || undefined);
+      void user;
+      await copyLink(registration_url);
+      await load();
+      setEmail('');
+      setName('');
+    } catch (err) {
+      setCreateError(err.message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function copyLink(url) {
+    try { await navigator.clipboard.writeText(url); } catch { /* ignore */ }
+    setCopiedLink(url);
+    setTimeout(() => setCopiedLink(''), 3000);
+  }
+
+  async function handleNewLink(userId) {
+    try {
+      const { registration_url } = await api.createRegistrationLink(userId);
+      await copyLink(registration_url);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function handleToggleActive(user) {
+    try {
+      await api.updateUser(user.id, { active: user.active ? 0 : 1 });
+      await load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  if (loading) return <p className="text--muted">Chargement…</p>;
+
+  return (
+    <section className="panel-section">
+      <h2 className="panel-section__title">Clients</h2>
+      {error && <p className="error-msg">{error}</p>}
+
+      <form onSubmit={handleCreate} className="inline-form" style={{ marginBottom: '1rem' }}>
+        <input
+          type="email"
+          className="hub-input"
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+        <input
+          type="text"
+          className="hub-input"
+          placeholder="Nom (optionnel)"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <button type="submit" className="btn btn--primary btn--sm" disabled={creating || !email.trim()}>
+          {creating ? 'Création…' : '+ Créer'}
+        </button>
+      </form>
+      {createError && <p className="error-msg">{createError}</p>}
+      {copiedLink && (
+        <p className="text--muted" style={{ fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+          Lien copié : <code style={{ wordBreak: 'break-all' }}>{copiedLink}</code>
+        </p>
+      )}
+
+      {users.length === 0 ? (
+        <p className="text--muted">Aucun client enregistré.</p>
+      ) : (
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Nom</th>
+              <th>Mot de passe</th>
+              <th>Actif</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.id} style={{ opacity: u.active ? 1 : 0.5 }}>
+                <td>{u.email}</td>
+                <td className="text--muted">{u.name ?? '—'}</td>
+                <td>{u.has_password ? '✓' : <span className="text--muted">Non défini</span>}</td>
+                <td>{u.active ? 'Oui' : 'Non'}</td>
+                <td style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button
+                    className="btn btn--ghost btn--sm"
+                    onClick={() => handleNewLink(u.id)}
+                    title="Générer un nouveau lien d'enregistrement"
+                  >
+                    Lien
+                  </button>
+                  <button
+                    className="btn btn--ghost btn--sm"
+                    onClick={() => handleToggleActive(u)}
+                  >
+                    {u.active ? 'Désactiver' : 'Réactiver'}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
 // ── AdminPage ─────────────────────────────────────────────────────────────────
 
 export default function AdminPage() {
@@ -154,6 +298,9 @@ export default function AdminPage() {
             {diskLow && <strong className="disk-warn"> — Espace disque faible !</strong>}
           </p>
         </section>
+
+        {/* ── Clients ─────────────────────────────────────────────────────── */}
+        <ClientsSection />
 
         {/* ── Bornes ──────────────────────────────────────────────────────── */}
         <section className="panel-section">
