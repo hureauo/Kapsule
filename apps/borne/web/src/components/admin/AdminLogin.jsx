@@ -4,6 +4,7 @@ import { api } from '../../api/client.js';
 // onSuccess(token) : le composant parent décide où stocker le token
 // (admin_token pour /admin, tech_token pour /admin/tech)
 export default function AdminLogin({ onSuccess, title = 'Administration' }) {
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -13,10 +14,10 @@ export default function AdminLogin({ onSuccess, title = 'Administration' }) {
     setLoading(true);
     setError('');
     try {
-      const data = await api.login(password);
+      const data = await api.login(email || undefined, password);
       onSuccess(data.token);
     } catch {
-      setError('Mot de passe incorrect.');
+      setError('Identifiants incorrects.');
     } finally {
       setLoading(false);
     }
@@ -28,8 +29,16 @@ export default function AdminLogin({ onSuccess, title = 'Administration' }) {
       <form onSubmit={handleSubmit} className="name-form">
         <input
           className="name-form__input"
-          type="password"
+          type="email"
           autoFocus
+          value={email}
+          onChange={(e) => { setEmail(e.target.value); setError(''); }}
+          placeholder="Email (vide en mode autonome)"
+          disabled={loading}
+        />
+        <input
+          className="name-form__input"
+          type="password"
           value={password}
           onChange={(e) => { setPassword(e.target.value); setError(''); }}
           placeholder="Mot de passe"

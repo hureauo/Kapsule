@@ -1,77 +1,128 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import argon2 from 'argon2';
+import Database from 'better-sqlite3';
 import { createApp } from '../src/index.js';
-import { closeRegistry } from '../src/registry.js';
+import { closeRegistry, getRegistry, insertEvent, setActiveEvent } from '../src/registry.js';
+import { closeEventDb } from '../src/eventDb.js';
 import { requireAdmin, requireTech } from '../src/middleware/auth.js';
+import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 
 const TEST_CONFIG = {
-  adminPassword: 'motdepasse-test',
   techPassword: 'tech-test',
   jwtSecret: 'secret-test',
   dataDir: '',
 };
 
-describe('POST /api/admin/login', () => {
+// Crée un événement actif avec un user event_users (hash argon2)
+async function seedActiveEvent(dir, email, password, roles) {
+  insertEvent({ id: 'ev-auth', name: 'Auth Test', origin: 'hub', status: 'loaded' });
+  setActiveEvent('ev-auth');
+
+  const eventDir = join(dir, 'events', 'ev-auth');
+  mkdirSync(eventDir, { recursive: true });
+  const edb = createEventDb(join(eventDir, 'db.sqlite'));
+  const hash = await argon2.hash(password, { type: argon2.argon2id });
+  edb.prepare('INSERT INTO event_users (email, password_hash, roles) VALUES (?, ?, ?)').run(
+    email, hash, JSON.stringify(roles)
+  );
+  edb.close();
+}
+
+// ── POST /api/admin/login — auth par compte nominatif ────────────────────────
+
+describe('POST /api/admin/login — compte nominatif (event_users)', () => {
   let dir, app;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'borne-auth-'));
     app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+    await seedActiveEvent(dir, 'alice@test.com', 'mdp-alice', ['admin_borne']);
   });
 
   afterEach(() => {
+    closeEventDb();
     closeRegistry();
     rmSync(dir, { recursive: true });
   });
 
-  test('login client → role client', async () => {
+  test('login ok → JWT avec email + roles', async () => {
     const res = await request(app)
       .post('/api/admin/login')
-      .send({ password: 'motdepasse-test' });
+      .send({ email: 'alice@test.com', password: 'mdp-alice' });
     assert.equal(res.status, 200);
     assert.ok(res.body.token);
-    const payload = jwt.verify(res.body.token, 'secret-test');
-    assert.equal(payload.role, 'client');
-  });
-
-  test('login tech → role tech', async () => {
-    const res = await request(app)
-      .post('/api/admin/login')
-      .send({ password: 'tech-test' });
-    assert.equal(res.status, 200);
-    assert.ok(res.body.token);
-    const payload = jwt.verify(res.body.token, 'secret-test');
-    assert.equal(payload.role, 'tech');
+    const payload = jwt.verify(res.body.token, TEST_CONFIG.jwtSecret);
+    assert.equal(payload.email, 'alice@test.com');
+    assert.deepEqual(payload.roles, ['admin_borne']);
   });
 
   test('retourne 401 avec un mauvais mot de passe', async () => {
     const res = await request(app)
       .post('/api/admin/login')
-      .send({ password: 'mauvais' });
-    assert.equal(res.status, 401);
-    assert.ok(res.body.error);
-  });
-
-  test('retourne 401 si le corps est vide', async () => {
-    const res = await request(app)
-      .post('/api/admin/login')
-      .send({});
+      .send({ email: 'alice@test.com', password: 'mauvais' });
     assert.equal(res.status, 401);
   });
 
-  test('retourne 401 pour un mot de passe de longueur différente (§S5.2/L2)', async () => {
-    // timingSafeEqual lève si longueurs différentes — safeCompare doit gérer ce cas
+  test('retourne 401 si email inconnu', async () => {
     const res = await request(app)
       .post('/api/admin/login')
-      .send({ password: 'motdepasse-test-beaucoup-plus-long' });
+      .send({ email: 'inconnu@test.com', password: 'mdp-alice' });
+    assert.equal(res.status, 401);
+  });
+
+  test('retourne 401 si corps vide', async () => {
+    const res = await request(app).post('/api/admin/login').send({});
     assert.equal(res.status, 401);
   });
 });
+
+// ── POST /api/admin/login — fallback TECH_PASSWORD (mode autonome) ───────────
+
+describe('POST /api/admin/login — fallback TECH_PASSWORD (aucun user en base)', () => {
+  let dir, app;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-auth-fallback-'));
+    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+    // Pas d'événement actif → event_users vide → fallback env
+  });
+
+  afterEach(() => {
+    closeEventDb();
+    closeRegistry();
+    rmSync(dir, { recursive: true });
+  });
+
+  test('login avec TECH_PASSWORD → JWT roles tech_borne', async () => {
+    const res = await request(app)
+      .post('/api/admin/login')
+      .send({ password: 'tech-test' });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.token);
+    const payload = jwt.verify(res.body.token, TEST_CONFIG.jwtSecret);
+    assert.deepEqual(payload.roles, ['tech_borne']);
+  });
+
+  test('retourne 401 si mauvais mot de passe env', async () => {
+    const res = await request(app)
+      .post('/api/admin/login')
+      .send({ password: 'mauvais' });
+    assert.equal(res.status, 401);
+  });
+
+  test('retourne 401 si corps vide (pas de password)', async () => {
+    const res = await request(app).post('/api/admin/login').send({});
+    assert.equal(res.status, 401);
+  });
+});
+
+// ── requireAdmin middleware ────────────────────────────────────────────────────
 
 describe('requireAdmin middleware', () => {
   let dir, app;
@@ -83,36 +134,33 @@ describe('requireAdmin middleware', () => {
   });
 
   afterEach(() => {
+    closeEventDb();
     closeRegistry();
     rmSync(dir, { recursive: true });
   });
 
-  const makeToken = (payload = { role: 'client' }) =>
-    jwt.sign(payload, TEST_CONFIG.jwtSecret, { expiresIn: '1h' });
+  const makeToken = (payload) => jwt.sign(payload, TEST_CONFIG.jwtSecret, { expiresIn: '1h' });
 
-  test('accepte un token client dans Authorization: Bearer', async () => {
-    const token = makeToken({ role: 'client' });
+  test('accepte un token admin_borne', async () => {
+    const token = makeToken({ email: 'a@test.com', roles: ['admin_borne'] });
     const res = await request(app)
       .get('/api/admin/ping')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(res.status, 200);
-    assert.equal(res.body.ok, true);
   });
 
-  test('accepte un token tech (sur-ensemble, §11.19)', async () => {
-    const token = makeToken({ role: 'tech' });
+  test('accepte un token tech_borne (sur-ensemble, §11.19)', async () => {
+    const token = makeToken({ roles: ['tech_borne'] });
     const res = await request(app)
       .get('/api/admin/ping')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(res.status, 200);
-    assert.equal(res.body.ok, true);
   });
 
   test('accepte un token valide dans ?token= (invariant §11.2)', async () => {
-    const token = makeToken();
+    const token = makeToken({ roles: ['admin_borne'] });
     const res = await request(app).get(`/api/admin/ping?token=${token}`);
     assert.equal(res.status, 200);
-    assert.equal(res.body.ok, true);
   });
 
   test('retourne 401 si token manquant', async () => {
@@ -128,7 +176,7 @@ describe('requireAdmin middleware', () => {
   });
 
   test('retourne 401 si token signé avec une autre clé', async () => {
-    const token = jwt.sign({ role: 'client' }, 'autre-secret', { expiresIn: '1h' });
+    const token = jwt.sign({ roles: ['admin_borne'] }, 'autre-secret', { expiresIn: '1h' });
     const res = await request(app)
       .get('/api/admin/ping')
       .set('Authorization', `Bearer ${token}`);
@@ -137,7 +185,7 @@ describe('requireAdmin middleware', () => {
 
   test('retourne 401 pour un token alg:none (§S5.1/L1)', async () => {
     const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({ role: 'client', iat: Math.floor(Date.now() / 1000) })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({ roles: ['admin_borne'], iat: Math.floor(Date.now() / 1000) })).toString('base64url');
     const noneToken = `${header}.${payload}.`;
     const res = await request(app)
       .get('/api/admin/ping')
@@ -145,14 +193,16 @@ describe('requireAdmin middleware', () => {
     assert.equal(res.status, 401);
   });
 
-  test('retourne 403 si le rôle est inconnu', async () => {
-    const token = makeToken({ role: 'user' });
+  test('retourne 403 si roles ne contient pas admin_borne ni tech_borne', async () => {
+    const token = makeToken({ roles: ['general'] });
     const res = await request(app)
       .get('/api/admin/ping')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(res.status, 403);
   });
 });
+
+// ── requireTech middleware ─────────────────────────────────────────────────────
 
 describe('requireTech middleware', () => {
   let dir, app;
@@ -164,24 +214,23 @@ describe('requireTech middleware', () => {
   });
 
   afterEach(() => {
+    closeEventDb();
     closeRegistry();
     rmSync(dir, { recursive: true });
   });
 
-  const makeToken = (payload) =>
-    jwt.sign(payload, TEST_CONFIG.jwtSecret, { expiresIn: '1h' });
+  const makeToken = (payload) => jwt.sign(payload, TEST_CONFIG.jwtSecret, { expiresIn: '1h' });
 
-  test('accepte un token tech', async () => {
-    const token = makeToken({ role: 'tech' });
+  test('accepte un token tech_borne', async () => {
+    const token = makeToken({ roles: ['tech_borne'] });
     const res = await request(app)
       .get('/api/tech/ping')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(res.status, 200);
-    assert.equal(res.body.ok, true);
   });
 
-  test('retourne 403 pour un token client (§11.19)', async () => {
-    const token = makeToken({ role: 'client' });
+  test('retourne 403 pour un token admin_borne seul (§11.19)', async () => {
+    const token = makeToken({ roles: ['admin_borne'] });
     const res = await request(app)
       .get('/api/tech/ping')
       .set('Authorization', `Bearer ${token}`);

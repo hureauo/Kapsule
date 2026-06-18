@@ -71,10 +71,10 @@ export const api = {
 
   // ── Auth ──────────────────────────────────────────────────────────────────
 
-  login: (password) =>
+  login: (email, password) =>
     apiFetch('/api/admin/login', {
       method: 'POST',
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ email, password }),
     }),
 
   // ── Routes client admin (requireAdmin = client OU tech) ───────────────────

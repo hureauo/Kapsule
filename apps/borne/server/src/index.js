@@ -18,7 +18,7 @@ export function createApp(dataDir, cfg = config) {
   app.use(express.json());
 
   const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg), requireTech: requireTech(cfg) };
-  app.post('/api/admin/login', makeAuthRouter(cfg));
+  app.post('/api/admin/login', makeAuthRouter(cfg, dataDir));
   app.use('/api', makeEventsRouter(dataDir, routerCfg));
   app.use('/api', makeQuestionsRouter(dataDir, routerCfg));
   app.use('/api', makeSessionsRouter(dataDir, routerCfg));

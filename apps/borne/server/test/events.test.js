@@ -10,16 +10,14 @@ import { closeEventDb } from '../src/eventDb.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { DEFAULTS } from '@kapsule/core';
 import { _setPushRunning } from '../src/sync/push.js';
-
-const TEST_CFG = { adminPassword: 'test', techPassword: 'tech-test', jwtSecret: 'secret-test', dataDir: '' };
+import { TEST_CFG, seedAuthUsers, loginAdmin, loginTech } from './helpers.js';
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-ev-'));
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
-  const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
-  const token = loginRes.body.token;
-  const techRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
-  const techToken = techRes.body.token;
+  await seedAuthUsers(dir);
+  const token = await loginAdmin(app, request);
+  const techToken = await loginTech(app, request);
   return { dir, app, token, techToken };
 }
 

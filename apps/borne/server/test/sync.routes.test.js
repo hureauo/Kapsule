@@ -10,9 +10,9 @@ import { closeRegistry, getRegistry, insertEvent, updateEventStatus } from '../s
 import { closeEventDb } from '../src/eventDb.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { config } from '../src/config.js';
+import { seedAuthUsers, loginAdmin, loginTech } from './helpers.js';
 
 const TEST_CFG = {
-  adminPassword: 'test',
   techPassword: 'tech-test',
   jwtSecret: 'secret-test',
   dataDir: '',
@@ -23,12 +23,11 @@ const TEST_CFG = {
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-sync-routes-'));
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
-  // Les routes sync requièrent requireTech → login avec techPassword
-  const loginRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
-  const token = loginRes.body.token;
-  // Token client pour les tests d'accès refusé
-  const clientRes = await request(app).post('/api/admin/login').send({ password: 'test' });
-  const clientToken = clientRes.body.token;
+  await seedAuthUsers(dir);
+  // Les routes sync requièrent requireTech → token tech_borne
+  const token = await loginTech(app, request);
+  // Token admin_borne pour les tests d'accès refusé (§11.19)
+  const clientToken = await loginAdmin(app, request);
   return { dir, app, token, clientToken };
 }
 

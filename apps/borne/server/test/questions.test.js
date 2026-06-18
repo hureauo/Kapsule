@@ -8,8 +8,8 @@ import { createApp } from '../src/index.js';
 import { closeRegistry, insertEvent, setActiveEvent } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
+import { TEST_CFG, seedAuthUsers, loginAdmin } from './helpers.js';
 
-const TEST_CFG = { adminPassword: 'test', techPassword: 'tech-test', jwtSecret: 'secret-test', dataDir: '' };
 const EVENT_ID = 'ev-questions-test';
 
 async function setup() {
@@ -20,8 +20,8 @@ async function setup() {
   const edb = createEventDb(join(eventDir, 'db.sqlite'));
   edb.close();
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
-  const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
-  const token = loginRes.body.token;
+  await seedAuthUsers(dir);
+  const token = await loginAdmin(app, request);
   insertEvent({ id: EVENT_ID, name: 'Evt Questions', origin: 'hub', status: 'loaded' });
   setActiveEvent(EVENT_ID);
   return { dir, app, token, eventId: EVENT_ID };
@@ -260,7 +260,7 @@ describe('GET /api/questions/all', () => {
     closeEventDb(); closeRegistry();
     try {
       const app2 = createApp(dir2, { ...TEST_CFG, dataDir: dir2 });
-      const loginRes2 = await request(app2).post('/api/admin/login').send({ password: 'test' });
+      const loginRes2 = await request(app2).post('/api/admin/login').send({ password: 'tech-test' });
       const res = await request(app2)
         .get('/api/questions/all')
         .set('Authorization', `Bearer ${loginRes2.body.token}`);

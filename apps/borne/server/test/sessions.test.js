@@ -8,8 +8,8 @@ import { createApp } from '../src/index.js';
 import { closeRegistry, getActiveEvent, insertEvent, setActiveEvent } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
+import { TEST_CFG, seedAuthUsers, loginAdmin, loginTech } from './helpers.js';
 
-const TEST_CFG = { adminPassword: 'test', techPassword: 'tech-test', jwtSecret: 'secret-test', dataDir: '' };
 const EVENT_ID = 'ev-sessions-test';
 
 async function setup() {
@@ -19,10 +19,9 @@ async function setup() {
   const edb = createEventDb(join(eventDir, 'db.sqlite'));
   edb.close();
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
-  const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
-  const token = loginRes.body.token;
-  const techRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
-  const techToken = techRes.body.token;
+  await seedAuthUsers(dir);
+  const token = await loginAdmin(app, request);
+  const techToken = await loginTech(app, request);
   insertEvent({ id: EVENT_ID, name: 'Evt Sessions', origin: 'hub', status: 'loaded' });
   setActiveEvent(EVENT_ID);
   return { dir, app, token, techToken, eventId: EVENT_ID };

@@ -8,8 +8,8 @@ import { createApp } from '../src/index.js';
 import { closeRegistry, insertEvent, setActiveEvent } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
+import { TEST_CFG, seedAuthUsers, loginAdmin } from './helpers.js';
 
-const TEST_CFG = { adminPassword: 'test', jwtSecret: 'secret-test', dataDir: '', maxDataBytes: 0 };
 const EVENT_ID = 'ev-videos-test';
 
 async function setup() {
@@ -21,8 +21,8 @@ async function setup() {
   edb.prepare("INSERT INTO questions (text, max_duration, countdown, order_index) VALUES ('Q1', 60, 3, 0)").run();
   edb.close();
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
-  const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
-  const token = loginRes.body.token;
+  await seedAuthUsers(dir);
+  const token = await loginAdmin(app, request);
   insertEvent({ id: EVENT_ID, name: 'Evt Videos', origin: 'hub', status: 'loaded' });
   setActiveEvent(EVENT_ID);
   const sessRes = await request(app)

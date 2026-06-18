@@ -197,15 +197,15 @@ committé en `phase 7X.Y: …`.
 
 ### 7B — Bundle pull : users dans le bundle
 
-- [ ] 7B.1 Hub `routes/sync.js` : `GET /api/sync/events/:id/bundle` inclut `users: [{ email, password_hash, roles }]` (uniquement les users assignés à cet event) + tests (bundle contient bien les users)
-- [ ] 7B.2 Borne `@kapsule/core` : table `event_users (email, password_hash, roles TEXT)` dans `eventDbSchema.js` (schema BD événement borne)
-- [ ] 7B.3 Borne `pull.js` : écrire `bundle.users` dans `event_users` (DELETE+INSERT au pull) + tests pull
+- [x] 7B.1 Hub `routes/sync.js` : `GET /api/sync/events/:id/bundle` inclut `users: [{ email, password_hash, roles }]` (uniquement les users assignés à cet event) + tests (bundle contient bien les users)
+- [x] 7B.2 Borne `@kapsule/core` : table `event_users (email, password_hash, roles TEXT)` dans `eventDbSchema.js` (schema BD événement borne)
+- [x] 7B.3 Borne `pull.js` : écrire `bundle.users` dans `event_users` (DELETE+INSERT au pull) + tests pull
 
 ### 7C — Auth borne : comptes pullés + fallback env
 
-- [ ] 7C.1 Borne `middleware/auth.js` : login par `{ email, password }` contre `event_users` (argon2.verify) ; génère JWT `{ email, roles }` 24h ; si table vide → fallback `TECH_PASSWORD` env (JWT `{ roles: ['tech_borne'] }`) + tests (login ok, mauvais mdp 401, fallback env)
-- [ ] 7C.2 Borne : `requireRole('admin_borne')` / `requireRole('tech_borne')` remplacent `requireAdmin`/`requireTech` ; re-tagger toutes les routes borne + tests (403 si rôle insuffisant)
-- [ ] 7C.3 Borne front : `AdminLogin` adapté (formulaire email + mdp au lieu de mdp seul) ; deux espaces conservés (`/admin` = `admin_borne`, `/admin/tech` = `tech_borne`)
+- [x] 7C.1 Borne `middleware/auth.js` : login par `{ email, password }` contre `event_users` (argon2.verify) ; génère JWT `{ email, roles }` 24h ; si table vide → fallback `TECH_PASSWORD` env (JWT `{ roles: ['tech_borne'] }`) + tests (login ok, mauvais mdp 401, fallback env)
+- [x] 7C.2 Borne : `requireRole('admin_borne')` / `requireRole('tech_borne')` remplacent `requireAdmin`/`requireTech` ; re-tagger toutes les routes borne + tests (403 si rôle insuffisant)
+- [x] 7C.3 Borne front : `AdminLogin` adapté (formulaire email + mdp au lieu de mdp seul) ; deux espaces conservés (`/admin` = `admin_borne`, `/admin/tech` = `tech_borne`)
 
 ### 7D — Preview protégée : rôle general
 
