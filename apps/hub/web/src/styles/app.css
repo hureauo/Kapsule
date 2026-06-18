@@ -279,7 +279,7 @@ button { cursor: pointer; font: inherit; }
 .token-display { background: #f0f0f0; padding: 8px 12px; border-radius: 4px; font-family: monospace; word-break: break-all; }
 
 /* ── Onglets admin */
-.admin-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 24px; overflow-x: auto; }
+.admin-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 24px; flex-wrap: wrap; }
 .admin-tab { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; color: var(--text-muted); white-space: nowrap; }
 .admin-tab:hover { color: var(--text); }
 .admin-tab--active { color: var(--accent); border-bottom-color: var(--accent); }
