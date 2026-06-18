@@ -186,14 +186,33 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const metaRows = edb.prepare('SELECT key, value FROM event_meta').all();
       const meta = Object.fromEntries(metaRows.map(r => [r.key, r.value]));
 
-      // Bundle users : uniquement ceux avec un hash (comptes enregistrés)
-      const usersWithHash = db.prepare(`
+      // Bundle users : users assignés à l'événement + tous les superusers actifs.
+      // Les superusers ont tous les rôles borne implicitement.
+      // L'auth borne rejette naturellement si password_hash est null.
+      const assignedUsers = db.prepare(`
         SELECT u.email, u.password_hash, eu.roles
         FROM event_users eu
         INNER JOIN users u ON u.id = eu.user_id
-        WHERE eu.event_id = ? AND u.password_hash IS NOT NULL
+        WHERE eu.event_id = ? AND u.active = 1 AND u.password_hash IS NOT NULL
         ORDER BY u.email
       `).all(event.id).map(u => ({ email: u.email, password_hash: u.password_hash, roles: JSON.parse(u.roles) }));
+
+      const superuserEmails = new Set(
+        db.prepare(`SELECT email FROM users WHERE role = 'superuser' AND active = 1`).all().map(u => u.email)
+      );
+
+      const superusers = db.prepare(`
+        SELECT email, password_hash FROM users
+        WHERE role = 'superuser' AND active = 1
+      `).all().map(u => ({ email: u.email, password_hash: u.password_hash, roles: ['admin_borne', 'tech_borne', 'general'] }));
+
+      // Fusionner : les superusers ont toujours tous les rôles borne, même s'ils
+      // sont dans event_users avec des rôles restreints (leurs rôles explicites sont ignorés).
+      const assignedNonSuperusers = assignedUsers.filter(u => !superuserEmails.has(u.email));
+      const usersWithHash = [
+        ...assignedNonSuperusers,
+        ...superusers,
+      ];
 
       const freshEvent = getEvent(db, event.id);
       syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  users=${usersWithHash.length}  status=${freshEvent.status}`);

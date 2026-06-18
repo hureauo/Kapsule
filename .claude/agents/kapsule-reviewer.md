@@ -44,6 +44,14 @@ Pour chaque axe, vérifie ce que le diff touche — et ses interactions avec l'e
 - RGPD (l'invariant le plus grave) : pour tout code écrivant dans `registry.sqlite`, vérifie qu'aucune donnée invité (nom, vidéo, session) n'y transite — schéma, `INSERT`/`UPDATE`, et logs inclus. Le moindre doute = ❌.
 - Protocole push/pull : `missing` recalculé côté Hub via le manifest (jamais confiance au seul `push_state` local) ; `status === 'loaded'` vérifié au moment d'APPLIQUER la réponse du pull, pas au lancement de la requête.
 
+**4. Rôles et auth (phase 7)**
+- Deux niveaux de rôles distincts : `users.role` (`superuser`|`client`) dans `registry.sqlite` Hub ; `event_users.roles` (JSON array `admin_borne`|`tech_borne`|`general`) dans chaque `events/<id>/db.sqlite` borne.
+- Bundle sync : les superusers ont toujours `['admin_borne','tech_borne','general']` dans le bundle, même s'ils sont dans `event_users` avec des rôles restreints — la requête superusers écrase les rôles explicites.
+- `requireAdmin` = `admin_borne` OU `tech_borne` (sur-ensemble) ; `requireTech` = `tech_borne` uniquement.
+- Sessions preview : accepte `general`, `admin_borne` et `tech_borne` (pas uniquement `general`).
+- Mode preview (`cfg.previewMode`) : routes `/videos/export/csv` et `/videos/:id/download` bloquées (403). UI : boutons Export CSV et Télécharger masqués, onglet Événement masqué.
+- Garde-fous rôle global Hub : impossible de se rétrograder soi-même (403) ou de dégrader le dernier superuser (409).
+
 **3. Vérifications humaines**
 Tout ce qui touche iPad Safari réel, Raspberry/arm64, module RTC ou certificat à approuver sur l'appareil ne peut PAS être validé ici. Si le diff en touche, exige que ce soit signalé « à vérifier par un humain » (cases 🧑) et jamais marqué comme testé.
 

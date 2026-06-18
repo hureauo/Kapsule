@@ -20,7 +20,7 @@ function DiskIndicator({ freeBytes }) {
 // clearTokenFn : fonction de déconnexion (clearToken pour client, clearTechToken pour tech)
 // role : 'client' | 'tech' — affiche le bandeau « espace technicien » si 'tech'
 // isPreview : true → bandeau « BORNE D'ESSAI »
-export default function AdminLayout({ activeTab, onTabChange, onLogout, children, tabs, clearTokenFn = clearToken, role = 'client', isPreview = false }) {
+export default function AdminLayout({ activeTab, onTabChange, onLogout, children, tabs, clearTokenFn = clearToken, role = 'client', isPreview = false, eventName = null, currentUser = null }) {
   const [freeBytes, setFreeBytes] = useState(null);
   const intervalRef = useRef(null);
 
@@ -55,8 +55,9 @@ export default function AdminLayout({ activeTab, onTabChange, onLogout, children
         </div>
       )}
       <header className="admin-header">
-        <span className="admin-header__title">Kapsule — Admin</span>
+        <span className="admin-header__title">Kapsule — Admin{eventName ? ` · ${eventName}` : ''}</span>
         <DiskIndicator freeBytes={freeBytes} />
+        {currentUser && <span className="admin-header__user">{currentUser}</span>}
         <button className="btn btn--secondary btn--small" onClick={handleLogout}>
           Déconnexion
         </button>

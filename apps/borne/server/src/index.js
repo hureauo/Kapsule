@@ -32,7 +32,7 @@ export function createApp(dataDir, cfg = config) {
       const total_bytes = stats.blocks * stats.bsize;
       const activeEvent = getActiveEvent();
       const isPreview = !!(cfg.previewMode) || !!(activeEvent?.is_preview);
-      res.json({ ok: true, activeEvent: activeEvent?.id ?? null, isPreview, disk: { free_bytes, total_bytes } });
+      res.json({ ok: true, activeEvent: activeEvent?.id ?? null, eventName: activeEvent?.name ?? null, isPreview, disk: { free_bytes, total_bytes } });
     } catch (err) {
       next(err);
     }

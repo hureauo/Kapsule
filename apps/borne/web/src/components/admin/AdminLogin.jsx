@@ -15,7 +15,8 @@ export default function AdminLogin({ onSuccess, title = 'Administration' }) {
     setError('');
     try {
       const data = await api.login(email || undefined, password);
-      onSuccess(data.token);
+      const accepted = onSuccess(data.token);
+      if (accepted === false) setError('Accès refusé : droits insuffisants.');
     } catch {
       setError('Identifiants incorrects.');
     } finally {

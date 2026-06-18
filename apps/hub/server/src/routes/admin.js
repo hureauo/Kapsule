@@ -9,6 +9,7 @@ import {
   createRegistrationToken,
   insertBoxToken, listBoxTokensByEvent, listAllBoxTokens, getBoxTokenById, deleteBoxToken, updateBoxToken,
   getEvent, listEventUsers, upsertEventUser, deleteEventUser,
+  countSuperusers,
 } from '../registry.js';
 import { requireUser } from '../middleware/auth.js';
 import { openEventDb } from '../eventStore.js';
@@ -78,23 +79,40 @@ export function makeAdminRouter(dataDir) {
   // GET /api/admin/users — liste des comptes clients
   router.get('/users', (req, res) => {
     const db = getDb();
-    const users = listUsers(db).map((u) => ({
+    const users = listUsers(db).map(({ password_hash, ...u }) => ({
       ...u,
-      has_password: u.password_hash != null,
+      has_password: password_hash != null,
     }));
     res.json(users);
   });
 
-  // PUT /api/admin/users/:id — désactiver/réactiver, renommer
+  // PUT /api/admin/users/:id — désactiver/réactiver, renommer, changer le rôle global
   router.put('/users/:id', (req, res) => {
     const db = getDb();
     const user = getUserById(db, req.params.id);
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
 
-    const { active, name } = req.body;
+    const { active, name, role } = req.body;
     const fields = {};
     if (active !== undefined) fields.active = active ? 1 : 0;
     if (name !== undefined) fields.name = name?.trim() ?? null;
+
+    if (role !== undefined) {
+      if (!['superuser', 'client'].includes(role)) {
+        return res.status(400).json({ error: 'Rôle invalide : superuser ou client attendu' });
+      }
+      // Garde-fou : interdire l'auto-modification de rôle
+      if (String(req.user.sub) === String(req.params.id)) {
+        return res.status(403).json({ error: 'Impossible de modifier son propre rôle' });
+      }
+      // Garde-fou : interdire de rétrograder le dernier superuser actif
+      if (role === 'client' && user.role === 'superuser') {
+        if (countSuperusers(db) <= 1) {
+          return res.status(409).json({ error: 'Impossible de rétrograder le dernier superuser' });
+        }
+      }
+      fields.role = role;
+    }
 
     updateUser(db, req.params.id, fields);
     const updated = getUserById(db, req.params.id);

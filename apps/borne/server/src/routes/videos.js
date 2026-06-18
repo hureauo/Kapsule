@@ -91,6 +91,11 @@ export function makeVideosRouter(dataDir, cfg) {
   const auth = cfg.requireAdmin;
   const upload = makeMulter(dataDir);
 
+  function blockInPreview(req, res, next) {
+    if (cfg.previewMode) return res.status(403).json({ error: 'Non disponible en mode preview' });
+    next();
+  }
+
   function checkQuota(req, res, next) {
     const maxBytes = cfg.maxDataBytes ?? config.maxDataBytes;
     if (!maxBytes) return next();
@@ -230,7 +235,7 @@ export function makeVideosRouter(dataDir, cfg) {
   });
 
   // export/csv AVANT /:id (invariant §11.1)
-  router.get('/videos/export/csv', auth, (req, res, next) => {
+  router.get('/videos/export/csv', auth, blockInPreview, (req, res, next) => {
     try {
       const ctx = requireActiveDb(res);
       if (!ctx) return;
@@ -280,7 +285,7 @@ export function makeVideosRouter(dataDir, cfg) {
     }
   });
 
-  router.get('/videos/:id/download', auth, async (req, res, next) => {
+  router.get('/videos/:id/download', auth, blockInPreview, async (req, res, next) => {
     try {
       const ctx = requireActiveDb(res);
       if (!ctx) return;

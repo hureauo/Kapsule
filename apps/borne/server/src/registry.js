@@ -89,3 +89,15 @@ export function updateEventStatus(id, status) {
     'UPDATE local_events SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
   ).run(status, id);
 }
+
+// Retourne les ids des événements preview à purger (tous sauf keepId)
+export function listStalePreviewEvents(keepId) {
+  return getRegistry()
+    .prepare('SELECT id FROM local_events WHERE is_preview = 1 AND id != ?')
+    .all(keepId)
+    .map(r => r.id);
+}
+
+export function deleteEvent(id) {
+  getRegistry().prepare('DELETE FROM local_events WHERE id = ?').run(id);
+}

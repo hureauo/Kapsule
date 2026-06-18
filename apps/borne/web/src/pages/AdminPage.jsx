@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { isAuthenticated, saveToken, clearToken } from '../api/client.js';
+import { isAuthenticated, saveToken, clearToken, getCurrentUserEmail, hasAdminRoleInToken } from '../api/client.js';
 import AdminLogin from '../components/admin/AdminLogin.jsx';
 import AdminLayout from '../components/admin/AdminLayout.jsx';
 import EventPanel from '../components/admin/EventPanel.jsx';
@@ -7,22 +7,27 @@ import QuestionManager from '../components/admin/QuestionManager.jsx';
 import VideoList from '../components/admin/VideoList.jsx';
 import DesignPanel from '../components/admin/DesignPanel.jsx';
 
-const CLIENT_TABS = [
-  { id: 'event',     label: 'Événement' },
+const ALL_TABS = [
+  { id: 'event',     label: 'Événement', hideInPreview: true },
   { id: 'questions', label: 'Questions' },
   { id: 'videos',    label: 'Vidéos'   },
   { id: 'design',    label: 'Design'   },
 ];
 
-export default function AdminPage({ isPreview = false }) {
+export default function AdminPage({ isPreview = false, eventName = null }) {
+  const tabs = ALL_TABS.filter(t => !isPreview || !t.hideInPreview);
   const [authed, setAuthed] = useState(isAuthenticated());
-  const [activeTab, setActiveTab] = useState('event');
+  const [activeTab, setActiveTab] = useState(isPreview ? 'questions' : 'event');
 
   if (!authed) {
     return (
       <AdminLogin
         title="Administration"
-        onSuccess={(token) => { saveToken(token); setAuthed(true); }}
+        onSuccess={(token) => {
+          if (!hasAdminRoleInToken(token)) return false;
+          saveToken(token);
+          setAuthed(true);
+        }}
       />
     );
   }
@@ -31,7 +36,7 @@ export default function AdminPage({ isPreview = false }) {
     switch (activeTab) {
       case 'event':     return <EventPanel />;
       case 'questions': return <QuestionManager />;
-      case 'videos':    return <VideoList />;
+      case 'videos':    return <VideoList isPreview={isPreview} />;
       case 'design':    return <DesignPanel />;
       default:          return null;
     }
@@ -42,9 +47,11 @@ export default function AdminPage({ isPreview = false }) {
       activeTab={activeTab}
       onTabChange={setActiveTab}
       onLogout={() => setAuthed(false)}
-      tabs={CLIENT_TABS}
+      tabs={tabs}
       clearTokenFn={clearToken}
       isPreview={isPreview}
+      eventName={eventName}
+      currentUser={getCurrentUserEmail()}
     >
       {renderPanel()}
     </AdminLayout>

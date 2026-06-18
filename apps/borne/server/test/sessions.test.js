@@ -258,8 +258,9 @@ describe('POST /api/sessions — preview requiresLogin', () => {
     assert.equal(res.status, 401);
   });
 
-  test('retourne 403 avec token sans rôle general', async () => {
-    const token = jwt.sign({ roles: ['admin_borne'] }, TEST_CFG.jwtSecret, { expiresIn: '1h' });
+  test('retourne 403 avec token sans rôle borne autorisé', async () => {
+    // Aucun des rôles autorisés (general, admin_borne, tech_borne) n'est présent
+    const token = jwt.sign({ roles: ['other_role'] }, TEST_CFG.jwtSecret, { expiresIn: '1h' });
     const res = await request(app)
       .post('/api/sessions')
       .set('Authorization', `Bearer ${token}`)
@@ -275,5 +276,58 @@ describe('POST /api/sessions — preview requiresLogin', () => {
       .send({ guest_name: 'Alice', consent: true });
     assert.equal(res.status, 201);
     assert.ok(res.body.id);
+  });
+});
+
+// ── Token general → accès refusé aux routes admin ─────────────────────────────
+// Un user général peut créer une session (preview) mais ne peut PAS accéder
+// aux routes admin (videos, sessions list…). Le frontend doit aussi refuser
+// de considérer ce token comme une auth admin valide.
+
+describe('token general — accès refusé aux routes admin', () => {
+  let dir, app, generalToken;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-general-admin-'));
+    const eventDir = join(dir, 'events', 'ev-general');
+    mkdirSync(join(eventDir, 'videos'), { recursive: true });
+    const edb = createEventDb(join(eventDir, 'db.sqlite'));
+    const hash = await argon2.hash('pwd', { type: argon2.argon2id });
+    edb.prepare('INSERT INTO event_users (email, password_hash, roles) VALUES (?, ?, ?)').run(
+      'guest@general.test', hash, JSON.stringify(['general'])
+    );
+    edb.close();
+    app = createApp(dir, { ...TEST_CFG, dataDir: dir });
+    insertEvent({ id: 'ev-general', name: 'General Test', origin: 'hub', status: 'loaded' });
+    setActiveEvent('ev-general');
+    // Login avec le compte general
+    const res = await request(app).post('/api/admin/login').send({ email: 'guest@general.test', password: 'pwd' });
+    generalToken = res.body.token;
+  });
+
+  afterEach(() => {
+    closeEventDb();
+    closeRegistry();
+    rmSync(dir, { recursive: true });
+  });
+
+  test('login retourne un token avec rôle general uniquement', async () => {
+    assert.ok(generalToken, 'le login doit réussir');
+    const payload = JSON.parse(Buffer.from(generalToken.split('.')[1], 'base64').toString());
+    assert.deepEqual(payload.roles, ['general']);
+  });
+
+  test('GET /api/videos retourne 403 avec token general', async () => {
+    const res = await request(app)
+      .get('/api/videos')
+      .set('Authorization', `Bearer ${generalToken}`);
+    assert.equal(res.status, 403);
+  });
+
+  test('GET /api/sessions retourne 403 avec token general', async () => {
+    const res = await request(app)
+      .get('/api/sessions')
+      .set('Authorization', `Bearer ${generalToken}`);
+    assert.equal(res.status, 403);
   });
 });

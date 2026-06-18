@@ -12,7 +12,7 @@ function formatDate(dt) {
   return new Date(dt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
-export default function VideoList() {
+export default function VideoList({ isPreview = false }) {
   const [sessions, setSessions]     = useState([]);
   const [videos, setVideos]         = useState([]);
   const [loading, setLoading]       = useState(true);
@@ -73,13 +73,15 @@ export default function VideoList() {
           ))}
         </select>
 
-        <a
-          className="btn btn--small btn--secondary"
-          href={csvExportUrl()}
-          download="export.csv"
-        >
-          ↓ Export CSV
-        </a>
+        {!isPreview && (
+          <a
+            className="btn btn--small btn--secondary"
+            href={csvExportUrl()}
+            download="export.csv"
+          >
+            ↓ Export CSV
+          </a>
+        )}
 
         <button className="btn btn--small btn--secondary" onClick={loadVideos}>
           ↺ Rafraîchir
@@ -109,13 +111,15 @@ export default function VideoList() {
                 >
                   ▶ Lire
                 </button>
-                <a
-                  className="btn btn--small btn--secondary"
-                  href={videoDownloadUrl(v.id)}
-                  download
-                >
-                  ↓ Télécharger
-                </a>
+                {!isPreview && (
+                  <a
+                    className="btn btn--small btn--secondary"
+                    href={videoDownloadUrl(v.id)}
+                    download
+                  >
+                    ↓ Télécharger
+                  </a>
+                )}
                 <button
                   className="btn btn--small btn--danger"
                   onClick={() => setDeletingId(v.id)}

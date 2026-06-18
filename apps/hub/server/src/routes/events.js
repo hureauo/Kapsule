@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { THEMES, TEXT_FIELDS } from '@kapsule/core';
 import {
   getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog, upsertEventUser,
-  getUserByEmail, insertUser, createRegistrationToken,
+  getUserByEmail, insertUser, createRegistrationToken, listUsers,
 } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { requireUser, requireOwner } from '../middleware/auth.js';
@@ -63,7 +63,15 @@ export function makeEventsRouter(dataDir) {
 
       const db = getDb();
       insertEvent(db, { id, name: name.trim(), event_date: event_date ?? null });
+
+      // Assigne le créateur avec admin_borne
       upsertEventUser(db, { event_id: id, user_id: req.user.sub, roles: ['admin_borne'] });
+
+      // Assigne tous les superusers actifs avec tous les rôles borne
+      const superusers = listUsers(db).filter(u => u.role === 'superuser' && u.active && u.id !== req.user.sub);
+      for (const su of superusers) {
+        upsertEventUser(db, { event_id: id, user_id: su.id, roles: ['admin_borne', 'tech_borne', 'general'] });
+      }
 
       // Initialise db.sqlite avec le schéma + 4 questions par défaut
       openEventDb(id, dataDir);

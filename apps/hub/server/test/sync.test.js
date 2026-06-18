@@ -185,7 +185,7 @@ describe('GET /api/sync/events/:id/bundle', () => {
     assert.equal(res.status, 409);
   });
 
-  it('inclut users dans le bundle (avec hash uniquement)', async () => {
+  it('inclut users dans le bundle — superusers avec tous les rôles, clients sans hash exclus', async () => {
     const db = getDb();
 
     // Créer un événement dédié avec token
@@ -199,11 +199,7 @@ describe('GET /api/sync/events/:id/bundle', () => {
     const hashU = createHash('sha256').update(rawU).digest('hex');
     insertBoxToken(db, { event_id: evU.body.id, token_hash: hashU, token_clear: rawU, label: 'Borne U' });
 
-    // Assigner l'admin (qui a un hash) à cet événement avec rôle admin_borne
-    const adminRow = db.prepare("SELECT id FROM users WHERE email = 'admin@sync.test'").get();
-    upsertEventUser(db, { event_id: evU.body.id, user_id: adminRow.id, roles: ['admin_borne'] });
-
-    // Ajouter un user sans hash → ne doit PAS apparaître dans le bundle
+    // Ajouter un client sans hash → ne doit PAS apparaître dans le bundle
     const noHashId = insertUser(db, { email: 'nohash@sync.test', role: 'client' });
     upsertEventUser(db, { event_id: evU.body.id, user_id: noHashId.lastInsertRowid, roles: ['general'] });
 
@@ -213,19 +209,21 @@ describe('GET /api/sync/events/:id/bundle', () => {
     assert.ok(Array.isArray(res.body.users), 'users doit être un tableau');
 
     const emails = res.body.users.map(u => u.email);
-    assert.ok(emails.includes('admin@sync.test'), 'admin avec hash doit être dans le bundle');
-    assert.ok(!emails.includes('nohash@sync.test'), 'user sans hash ne doit pas être dans le bundle');
+    // admin@sync.test est superuser → toujours dans le bundle avec tous les rôles borne
+    assert.ok(emails.includes('admin@sync.test'), 'superuser doit être dans le bundle');
+    assert.ok(!emails.includes('nohash@sync.test'), 'client sans hash ne doit pas être dans le bundle');
 
     const adminUser = res.body.users.find(u => u.email === 'admin@sync.test');
     assert.ok(adminUser.password_hash, 'password_hash doit être présent');
-    assert.deepEqual(adminUser.roles, ['admin_borne']);
+    // Les superusers ont toujours les 3 rôles borne, peu importe event_users
+    assert.deepEqual(adminUser.roles, ['admin_borne', 'tech_borne', 'general']);
   });
 
-  it('bundle.users est un tableau vide si aucun user assigné avec hash', async () => {
+  it('bundle.users contient toujours les superusers actifs, même sans event_users', async () => {
     const db = getDb();
     const evEmpty = await request.post('/api/events')
       .set('Authorization', `Bearer ${tokenAdmin}`)
-      .send({ name: 'Événement sans users' });
+      .send({ name: 'Événement sans users client' });
     await request.put(`/api/events/${evEmpty.body.id}/status`)
       .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ status: 'ready' });
@@ -233,18 +231,21 @@ describe('GET /api/sync/events/:id/bundle', () => {
     const hashEmp = createHash('sha256').update(rawEmp).digest('hex');
     insertBoxToken(db, { event_id: evEmpty.body.id, token_hash: hashEmp, token_clear: rawEmp, label: 'Borne Empty' });
 
-    // Retirer l'admin auto-assigné (POST /api/events l'assigne avec hash)
+    // Retirer tous les event_users (y compris l'admin auto-assigné)
     const adminRow = db.prepare("SELECT id FROM users WHERE email = 'admin@sync.test'").get();
     deleteEventUser(db, { event_id: evEmpty.body.id, user_id: adminRow.id });
 
-    // Assigner uniquement un user sans hash
+    // Assigner uniquement un client sans hash
     const noHash2 = insertUser(db, { email: 'nohash2@sync.test', role: 'client' });
     upsertEventUser(db, { event_id: evEmpty.body.id, user_id: noHash2.lastInsertRowid, roles: ['general'] });
 
     const res = await request.get(`/api/sync/events/${evEmpty.body.id}/bundle`)
       .set('X-Box-Token', rawEmp);
     assert.equal(res.status, 200);
-    assert.deepEqual(res.body.users, []);
+    // Le superuser (admin@sync.test) est toujours inclus même retiré d'event_users
+    const emails = res.body.users.map(u => u.email);
+    assert.ok(emails.includes('admin@sync.test'), 'superuser toujours présent dans le bundle');
+    assert.ok(!emails.includes('nohash2@sync.test'), 'client sans hash absent du bundle');
   });
 });
 

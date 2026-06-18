@@ -104,11 +104,12 @@ export function openRegistry(dataDir) {
   // Migration 7A.1: renommer role 'admin' → 'superuser' + relâcher owner_id
   // SQLite ne supporte pas ALTER COLUMN ni DROP COLUMN de façon portable.
   // On reconstruit les deux tables concernées si elles portent encore l'ancien schéma.
-  const usersCheck = db.pragma('table_info(users)').find(c => c.name === 'role')?.dflt_value;
   const needsUsersMigration = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n > 0;
   if (needsUsersMigration) {
+    db.exec('PRAGMA foreign_keys = OFF');
     db.exec(`
-      CREATE TABLE IF NOT EXISTS users_new (
+      DROP TABLE IF EXISTS users_new;
+      CREATE TABLE users_new (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         email         TEXT UNIQUE NOT NULL,
         password_hash TEXT,
@@ -126,13 +127,15 @@ export function openRegistry(dataDir) {
       DROP TABLE users;
       ALTER TABLE users_new RENAME TO users;
     `);
+    db.exec('PRAGMA foreign_keys = ON');
   }
 
   // Migration 7A.1: owner_id nullable sur events (reconstruit si NOT NULL)
   const ownerCol = db.pragma('table_info(events)').find(c => c.name === 'owner_id');
   if (ownerCol && ownerCol.notnull === 1) {
     db.exec(`
-      CREATE TABLE IF NOT EXISTS events_new (
+      DROP TABLE IF EXISTS events_new;
+      CREATE TABLE events_new (
         id           TEXT PRIMARY KEY,
         owner_id     INTEGER REFERENCES users(id),
         name         TEXT NOT NULL,
@@ -186,12 +189,16 @@ export function getUserById(db, id) {
 
 export function listUsers(db) {
   return db
-    .prepare('SELECT id, email, name, role, active, created_at FROM users ORDER BY created_at DESC')
+    .prepare('SELECT id, email, name, role, active, created_at, password_hash FROM users ORDER BY created_at DESC')
     .all();
 }
 
+export function countSuperusers(db) {
+  return db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'superuser' AND active = 1").get().n;
+}
+
 export function updateUser(db, id, fields) {
-  const allowed = ['active', 'name', 'password_hash'];
+  const allowed = ['active', 'name', 'password_hash', 'role'];
   const keys = Object.keys(fields).filter((k) => allowed.includes(k));
   if (keys.length === 0) return;
   const sql = `UPDATE users SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`;

@@ -132,11 +132,12 @@ cp .env.example .env
 
 ```ini
 JWT_SECRET=une-longue-chaine-aleatoire
-ADMIN_PASSWORD=mot-de-passe-client        # espace /admin (questions, textes, design)
-TECH_PASSWORD=mot-de-passe-technicien     # espace /admin/tech (préflight, synchro, clôture)
+TECH_PASSWORD=mot-de-passe-technicien     # fallback mode autonome (sans Hub) uniquement
 HUB_URL=https://votre-domaine.com
 BOX_TOKEN=                                # rempli après génération côté Hub (étape 4)
 ```
+
+> **Auth en mode appairé (avec Hub)** : les comptes sont définis côté Hub (onglet Utilisateurs de chaque événement) et pullés dans le bundle. L'admin et le technicien se connectent par email + mot de passe. `TECH_PASSWORD` n'est utilisé qu'en **mode autonome** (sans `HUB_URL`), où il est le seul moyen d'accéder à l'admin Borne.
 
 ### Étape 3 — Construire et démarrer
 
@@ -169,7 +170,7 @@ Safari n'autorise la caméra qu'en HTTPS. Le certificat auto-signé doit être a
 
 ### Étape 6 — Préflight
 
-Sur `https://<ip-de-la-borne>/admin/tech` (mot de passe `TECH_PASSWORD`), onglet **Préflight** : vérifiez que tout est au vert (config, caméra, disque, horloge).
+Sur `https://<ip-de-la-borne>/admin/tech`, connectez-vous en tant que **technicien** (email + mot de passe si la borne est appairée au Hub, sinon `TECH_PASSWORD`), onglet **Préflight** : vérifiez que tout est au vert (config, caméra, disque, horloge).
 
 ### Après l'événement
 
@@ -263,8 +264,7 @@ Toutes dans `.env` à la racine (copié depuis `.env.example`). `${VAR:-defaut}`
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `JWT_SECRET` | `change-me` | Secret JWT — **à changer en prod** |
-| `ADMIN_PASSWORD` | `admin123` | Admin client (`/admin`) : questions, textes, design |
-| `TECH_PASSWORD` | `tech123` | Admin technicien (`/admin/tech`) : préflight, synchro, clôture |
+| `TECH_PASSWORD` | `tech123` | Fallback technicien **mode autonome seulement** (sans Hub). En mode appairé, les comptes sont pullés depuis le Hub. |
 | `HUB_URL` | _(vide)_ | URL du Hub. **Vide = mode autonome** (pas de synchro) |
 | `BOX_TOKEN` | _(vide)_ | Token de borne généré depuis le Hub |
 | `PULL_INTERVAL_MS` | `300000` | Période du pull automatique (ms) |

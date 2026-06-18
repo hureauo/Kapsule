@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, clearToken } from '../api/client.js';
+import { api, clearToken, getRole } from '../api/client.js';
 
 // ── Utilitaires ───────────────────────────────────────────────────────────────
 
@@ -160,18 +160,26 @@ function CreateEventForm({ onCreated }) {
 
 // ── Panneau d'un événement (inline) ──────────────────────────────────────────
 
+const BORNE_ROLES = ['admin_borne', 'tech_borne', 'general'];
+const BORNE_ROLE_LABELS = { admin_borne: 'Admin borne', tech_borne: 'Technicien', general: 'Général' };
+
 function EventPanel({ event, onRefresh }) {
   const [tokens, setTokens] = useState(null);
   const [hubConfigHash, setHubConfigHash] = useState(null);
-  const [ownerEmail, setOwnerEmail] = useState('');
-  const [ownerResult, setOwnerResult] = useState(null);
-  const [ownerErr, setOwnerErr] = useState('');
   const [revoking, setRevoking] = useState(null);
   const [tokenForm, setTokenForm] = useState(false);
   const [tokenLabel, setTokenLabel] = useState('');
   const [tokenLocation, setTokenLocation] = useState('');
   const [isPreview, setIsPreview] = useState(false);
   const [tokenErr, setTokenErr] = useState('');
+
+  // event_users
+  const [eventUsers, setEventUsers] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [selectedRoles, setSelectedRoles] = useState([]);
+  const [usersMsg, setUsersMsg] = useState('');
+  const [usersErr, setUsersErr] = useState('');
 
   const loadTokens = useCallback(async () => {
     try {
@@ -181,20 +189,39 @@ function EventPanel({ event, onRefresh }) {
     } catch { /* ignore */ }
   }, [event.id]);
 
-  useEffect(() => { loadTokens(); }, [loadTokens]);
-
-  async function handleAssignOwner(e) {
-    e.preventDefault();
-    setOwnerErr('');
-    setOwnerResult(null);
+  const loadUsers = useCallback(async () => {
     try {
-      const res = await api.assignEventOwner(event.id, ownerEmail.trim());
-      setOwnerResult(res);
-      setOwnerEmail('');
-      onRefresh();
-    } catch (err) {
-      setOwnerErr(err.message);
-    }
+      const [eu, all] = await Promise.all([api.listEventUsers(event.id), api.listUsers()]);
+      setEventUsers(eu);
+      setAllUsers(all);
+    } catch { /* ignore */ }
+  }, [event.id]);
+
+  useEffect(() => { loadTokens(); loadUsers(); }, [loadTokens, loadUsers]);
+
+  function toggleRole(role) {
+    setSelectedRoles(prev => prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role]);
+  }
+
+  async function handleAddUser(e) {
+    e.preventDefault();
+    if (!selectedUserId || selectedRoles.length === 0) return;
+    setUsersMsg(''); setUsersErr('');
+    try {
+      await api.addEventUser(event.id, Number(selectedUserId), selectedRoles);
+      setSelectedUserId(''); setSelectedRoles([]);
+      setUsersMsg('Utilisateur ajouté.');
+      loadUsers();
+    } catch (err) { setUsersErr(err.message); }
+  }
+
+  async function handleRemoveUser(userId) {
+    setUsersMsg(''); setUsersErr('');
+    try {
+      await api.removeEventUser(event.id, userId);
+      setUsersMsg('Retiré.');
+      loadUsers();
+    } catch (err) { setUsersErr(err.message); }
   }
 
   async function handleGenerateToken(e) {
@@ -231,35 +258,58 @@ function EventPanel({ event, onRefresh }) {
     return `${varName}=${t.token_clear} HUB_URL=${hubUrl}${tlsFlag} docker compose -f ${file} up --build`;
   }
 
+  const assignedIds = new Set(eventUsers.map(u => String(u.user_id)));
+  const available = allUsers.filter(u => !assignedIds.has(String(u.id)) && u.active);
+
   return (
     <div className="event-panel">
-      {/* Bloc owner */}
+      {/* Bloc utilisateurs assignés */}
       <div className="event-panel__section">
-        <p className="event-panel__label">Client assigné</p>
-        {event.owner_email
-          ? <p className="event-panel__owner">{event.owner_email}</p>
-          : <p className="text--muted" style={{ fontSize: '13px' }}>Aucun client assigné</p>
+        <p className="event-panel__label">Utilisateurs assignés</p>
+        {eventUsers.length === 0
+          ? <p className="text--muted" style={{ fontSize: '13px' }}>Aucun utilisateur assigné.</p>
+          : eventUsers.map(u => (
+            <div key={u.user_id} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', fontSize: '13px' }}>
+              <span style={{ flex: 1 }}>
+                <strong>{u.email}</strong>
+                <span className="text--muted" style={{ marginLeft: '6px' }}>
+                  {u.roles.map(r => BORNE_ROLE_LABELS[r] ?? r).join(', ')}
+                </span>
+              </span>
+              <button className="btn btn--ghost btn--sm" onClick={() => handleRemoveUser(u.user_id)}>Retirer</button>
+            </div>
+          ))
         }
-        <form onSubmit={handleAssignOwner} className="owner-form">
-          <input
-            className="hub-input hub-input--sm"
-            type="email"
-            placeholder="email@client.fr"
-            value={ownerEmail}
-            onChange={(e) => setOwnerEmail(e.target.value)}
-          />
-          <button type="submit" className="btn btn--ghost btn--sm" disabled={!ownerEmail.trim()}>
-            Assigner
-          </button>
-        </form>
-        {ownerErr && <p className="error-msg">{ownerErr}</p>}
-        {ownerResult?.created && ownerResult.registration_url && (
-          <div className="reg-link-box">
-            <span className="text--muted" style={{ fontSize: '12px' }}>Nouveau compte — lien d'enregistrement :</span>
-            <code className="reg-link-code">{ownerResult.registration_url}</code>
-            <CopyButton text={ownerResult.registration_url} label="Copier le lien" labelDone="✓ Copié" />
-          </div>
+
+        {available.length > 0 && (
+          <form onSubmit={handleAddUser} style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <select className="hub-input hub-input--sm" value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)} required>
+                <option value="">— ajouter un utilisateur —</option>
+                {available.map(u => (
+                  <option key={u.id} value={u.id}>{u.email}{u.name ? ` (${u.name})` : ''}</option>
+                ))}
+              </select>
+            </div>
+            {selectedUserId && (
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                {BORNE_ROLES.map(role => (
+                  <label key={role} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={selectedRoles.includes(role)} onChange={() => toggleRole(role)} />
+                    {BORNE_ROLE_LABELS[role]}
+                  </label>
+                ))}
+              </div>
+            )}
+            {selectedUserId && (
+              <button type="submit" className="btn btn--ghost btn--sm" disabled={selectedRoles.length === 0}>
+                Assigner
+              </button>
+            )}
+          </form>
         )}
+        {usersMsg && <p className="text--muted" style={{ fontSize: '12px', marginTop: '4px' }}>{usersMsg}</p>}
+        {usersErr && <p className="error-msg" style={{ fontSize: '12px', marginTop: '4px' }}>{usersErr}</p>}
       </div>
 
       {/* Bloc tokens */}
@@ -339,18 +389,10 @@ function EventsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState(null);
-  // Enrichir les événements avec l'email du owner depuis la vue d'ensemble
-  const [ownersMap, setOwnersMap] = useState({});
 
   const load = useCallback(async () => {
     try {
-      const [evList, overview] = await Promise.all([api.listEvents(), api.getOverview()]);
-      setEvents(evList);
-      const map = {};
-      for (const ev of overview.events) {
-        map[ev.id] = ev.owner_email;
-      }
-      setOwnersMap(map);
+      setEvents(await api.listEvents());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -396,9 +438,6 @@ function EventsTab() {
                       {new Date(ev.event_date).toLocaleDateString('fr-FR')}
                     </span>
                   )}
-                  {ownersMap[ev.id] && (
-                    <span className="text--muted" style={{ fontSize: '12px' }}>· {ownersMap[ev.id]}</span>
-                  )}
                 </div>
                 <span className="text--muted ev-row__toggle">
                   {expanded === ev.id ? '▲' : '▼'}
@@ -406,7 +445,7 @@ function EventsTab() {
               </div>
               {expanded === ev.id && (
                 <EventPanel
-                  event={{ ...ev, owner_email: ownersMap[ev.id] }}
+                  event={ev}
                   onRefresh={load}
                 />
               )}
@@ -546,6 +585,7 @@ function UsersTab() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
   const [copiedLink, setCopiedLink] = useState('');
+  const myRole = getRole();
 
   const load = useCallback(async () => {
     try {
@@ -597,11 +637,24 @@ function UsersTab() {
     }
   }
 
+  async function handleToggleRole(user) {
+    const newRole = user.role === 'superuser' ? 'client' : 'superuser';
+    try {
+      await api.updateUser(user.id, { role: newRole });
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  // Nombre de superusers actifs (pour désactiver le bouton rétrograder sur le dernier)
+  const superuserCount = users.filter(u => u.role === 'superuser' && u.active).length;
+
   if (loading) return <p className="text--muted">Chargement…</p>;
 
   return (
     <section className="panel-section">
-      <h2 className="panel-section__title">Comptes clients</h2>
+      <h2 className="panel-section__title">Comptes utilisateurs</h2>
       {error && <p className="error-msg">{error}</p>}
 
       <form onSubmit={handleCreate} className="create-user-form">
@@ -623,29 +676,49 @@ function UsersTab() {
       )}
 
       {users.length === 0 ? (
-        <p className="text--muted" style={{ marginTop: '12px' }}>Aucun client enregistré.</p>
+        <p className="text--muted" style={{ marginTop: '12px' }}>Aucun utilisateur enregistré.</p>
       ) : (
         <table className="admin-table" style={{ marginTop: '16px' }}>
           <thead>
-            <tr><th>Email</th><th>Nom</th><th>Mot de passe</th><th>Actif</th><th>Actions</th></tr>
+            <tr><th>Email</th><th>Nom</th><th>Rôle</th><th>Mot de passe</th><th>Actif</th><th>Actions</th></tr>
           </thead>
           <tbody>
-            {users.map((u) => (
-              <tr key={u.id} style={{ opacity: u.active ? 1 : 0.5 }}>
-                <td>{u.email}</td>
-                <td className="text--muted">{u.name ?? '—'}</td>
-                <td>{u.has_password ? '✓' : <span className="text--muted">Non défini</span>}</td>
-                <td>{u.active ? 'Oui' : 'Non'}</td>
-                <td style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  <button className="btn btn--ghost btn--sm" onClick={() => handleNewLink(u.id)}>
-                    Lien
-                  </button>
-                  <button className="btn btn--ghost btn--sm" onClick={() => handleToggleActive(u)}>
-                    {u.active ? 'Désactiver' : 'Réactiver'}
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {users.map((u) => {
+              const isSelf = myRole === 'superuser' && u.role === 'superuser';
+              // Désactiver la rétrogradation si dernier superuser OU sur soi-même (le backend le bloque aussi)
+              const canDemote = u.role === 'superuser' && superuserCount > 1;
+              const canPromote = u.role === 'client';
+              return (
+                <tr key={u.id} style={{ opacity: u.active ? 1 : 0.5 }}>
+                  <td>{u.email}</td>
+                  <td className="text--muted">{u.name ?? '—'}</td>
+                  <td>
+                    <span className={`status-badge ${u.role === 'superuser' ? 'status-badge--live' : 'status-badge--ready'}`}>
+                      {u.role === 'superuser' ? 'Superuser' : 'Client'}
+                    </span>
+                  </td>
+                  <td>{u.has_password ? '✓' : <span className="text--muted">Non défini</span>}</td>
+                  <td>{u.active ? 'Oui' : 'Non'}</td>
+                  <td style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    <button className="btn btn--ghost btn--sm" onClick={() => handleNewLink(u.id)}>
+                      Lien
+                    </button>
+                    <button className="btn btn--ghost btn--sm" onClick={() => handleToggleActive(u)}>
+                      {u.active ? 'Désactiver' : 'Réactiver'}
+                    </button>
+                    {(canPromote || canDemote) && (
+                      <button
+                        className="btn btn--ghost btn--sm"
+                        onClick={() => handleToggleRole(u)}
+                        title={canDemote ? 'Rétrograder en client' : 'Promouvoir en superuser'}
+                      >
+                        {u.role === 'superuser' ? '↓ Client' : '↑ Superuser'}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

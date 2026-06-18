@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { isTechAuthenticated, saveTechToken, clearTechToken } from '../api/client.js';
+import { isTechAuthenticated, saveTechToken, clearTechToken, getCurrentTechEmail, hasTechRoleInToken } from '../api/client.js';
 import AdminLogin from '../components/admin/AdminLogin.jsx';
 import AdminLayout from '../components/admin/AdminLayout.jsx';
 import PreflightPanel from '../components/admin/PreflightPanel.jsx';
@@ -10,7 +10,7 @@ const TECH_TABS = [
   { id: 'sync',      label: 'Synchro'  },
 ];
 
-export default function TechPage({ isPreview = false }) {
+export default function TechPage({ isPreview = false, eventName = null }) {
   const [authed, setAuthed] = useState(isTechAuthenticated());
   const [activeTab, setActiveTab] = useState('preflight');
 
@@ -18,7 +18,11 @@ export default function TechPage({ isPreview = false }) {
     return (
       <AdminLogin
         title="Espace technicien"
-        onSuccess={(token) => { saveTechToken(token); setAuthed(true); }}
+        onSuccess={(token) => {
+          if (!hasTechRoleInToken(token)) return false;
+          saveTechToken(token);
+          setAuthed(true);
+        }}
       />
     );
   }
@@ -40,6 +44,8 @@ export default function TechPage({ isPreview = false }) {
       clearTokenFn={clearTechToken}
       role="tech"
       isPreview={isPreview}
+      eventName={eventName}
+      currentUser={getCurrentTechEmail()}
     >
       {renderPanel()}
     </AdminLayout>

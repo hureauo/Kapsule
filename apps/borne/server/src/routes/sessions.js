@@ -39,7 +39,8 @@ export function makeSessionsRouter(dataDir, cfg) {
           try {
             const payload = jwt.verify(token, cfg.jwtSecret, { algorithms: ['HS256'] });
             const roles = Array.isArray(payload.roles) ? payload.roles : [];
-            if (!roles.includes('general')) return res.status(403).json({ error: 'Accès refusé' });
+            const allowed = ['general', 'admin_borne', 'tech_borne'];
+            if (!roles.some(r => allowed.includes(r))) return res.status(403).json({ error: 'Accès refusé' });
           } catch {
             return res.status(401).json({ error: 'Token invalide ou expiré' });
           }

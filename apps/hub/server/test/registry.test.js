@@ -79,10 +79,10 @@ describe('users', () => {
     assert.strictEqual(user.active, 1);
   });
 
-  it('listUsers retourne la liste sans password_hash', () => {
+  it('listUsers retourne la liste avec password_hash (pour le bundle sync)', () => {
     const users = listUsers(db);
     assert.ok(users.length >= 2);
-    assert.ok(!('password_hash' in users[0]));
+    assert.ok('password_hash' in users[0]);
   });
 
   it('updateUser modifie active et name', () => {
@@ -94,11 +94,14 @@ describe('users', () => {
     updateUser(db, user.id, { active: 1 });
   });
 
-  it('updateUser ignore les champs non autorisés', () => {
+  it('updateUser applique role et ignore les champs non autorisés', () => {
     const user = getUserByEmail(db, 'alice@example.com');
+    // role est autorisé depuis phase 7F
     updateUser(db, user.id, { role: 'client', injected: 'DROP TABLE users' });
-    const unchanged = getUserById(db, user.id);
-    assert.strictEqual(unchanged.role, 'superuser');
+    const updated = getUserById(db, user.id);
+    assert.strictEqual(updated.role, 'client', 'role doit être mis à jour');
+    // Remettre en superuser pour ne pas casser les autres tests
+    updateUser(db, user.id, { role: 'superuser' });
   });
 });
 

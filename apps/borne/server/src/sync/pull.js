@@ -1,7 +1,7 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
-import { getRegistry, insertEvent } from '../registry.js';
+import { getRegistry, insertEvent, setActiveEvent, listStalePreviewEvents, deleteEvent } from '../registry.js';
 import { hubFetchJson } from './hubClient.js';
 import { config } from '../config.js';
 
@@ -38,6 +38,7 @@ export async function pullEvent(hubEventId, dataDir) {
   if (!existing) {
     insertEvent({ id: hubEventId, name: bundle.event.name, origin: 'hub', status: 'loaded' });
   }
+  setActiveEvent(hubEventId);
 
   // 4. Met à jour pulled_at dans le registre
   db.prepare(
@@ -111,6 +112,14 @@ export async function pullMyEvent(dataDir) {
   // Sur borne physique, refuser si l'événement est live/closed (§11.10).
   const canPull = !existing || existing.status === 'loaded' || config.previewMode;
   if (canPull) {
+    // En mode preview, purger les anciens événements preview avant d'appliquer le nouveau
+    if (config.previewMode) {
+      for (const staleId of listStalePreviewEvents(eventInfo.id)) {
+        rmSync(join(dataDir, 'events', staleId), { recursive: true, force: true });
+        deleteEvent(staleId);
+      }
+    }
+
     await pullEvent(eventInfo.id, dataDir);
     db.prepare('UPDATE local_events SET is_preview = ? WHERE id = ?')
       .run(eventInfo.is_preview ? 1 : 0, eventInfo.id);

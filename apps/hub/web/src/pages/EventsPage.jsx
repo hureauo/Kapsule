@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, clearToken } from '../api/client.js';
+import { api, clearToken, getRole } from '../api/client.js';
 
 const STATUS_LABEL = {
   draft: 'Brouillon', ready: 'Prêt', loaded: 'Chargé',
@@ -22,6 +22,7 @@ export default function EventsPage() {
   const [newDate, setNewDate] = useState('');
   const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
+  const isSuperuser = getRole() === 'superuser';
 
   async function load() {
     try {
@@ -64,14 +65,16 @@ export default function EventsPage() {
       <main className="hub-main">
         <div className="section-header">
           <h2 className="section-title">Événements</h2>
-          <button className="btn btn--primary" onClick={() => setShowCreate(true)}>
-            + Nouvel événement
-          </button>
+          {isSuperuser && (
+            <button className="btn btn--primary" onClick={() => setShowCreate(true)}>
+              + Nouvel événement
+            </button>
+          )}
         </div>
 
         {error && <p className="error-msg">{error}</p>}
 
-        {showCreate && (
+        {isSuperuser && showCreate && (
           <form className="create-form" onSubmit={handleCreate}>
             <h3 className="form-title">Nouvel événement</h3>
             <label className="field-label">
@@ -107,7 +110,9 @@ export default function EventsPage() {
         {loading ? (
           <p className="text--muted">Chargement…</p>
         ) : events.length === 0 ? (
-          <p className="text--muted">Aucun événement. Créez-en un !</p>
+          <p className="text--muted">
+            {isSuperuser ? 'Aucun événement. Créez-en un !' : 'Aucun événement ne vous a encore été assigné.'}
+          </p>
         ) : (
           <table className="hub-table">
             <thead>

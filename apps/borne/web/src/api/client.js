@@ -11,8 +11,18 @@ export function saveToken(token) { localStorage.setItem(TOKEN_KEY, token); }
 export function saveTechToken(token) { localStorage.setItem(TECH_TOKEN_KEY, token); }
 export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
 export function clearTechToken() { localStorage.removeItem(TECH_TOKEN_KEY); }
-export function isAuthenticated() { return Boolean(getToken()); }
-export function isTechAuthenticated() { return Boolean(getTechToken()); }
+
+import { hasAdminRole, hasTechRole, getTokenEmail } from './roles.js';
+
+export function hasAdminRoleInToken(token) { return hasAdminRole(token); }
+export function hasTechRoleInToken(token) { return hasTechRole(token); }
+
+export function getCurrentUserEmail() { return getTokenEmail(getToken()); }
+export function getCurrentTechEmail() { return getTokenEmail(getTechToken()); }
+
+// Vérifie présence du token ET rôle suffisant
+export function isAuthenticated() { return Boolean(getToken()) && hasAdminRole(getToken()); }
+export function isTechAuthenticated() { return Boolean(getTechToken()) && hasTechRole(getTechToken()); }
 
 // general_token : sessionStorage (durée d'onglet, pas de persistance) — preview seulement
 export function getGeneralToken() { return sessionStorage.getItem(GENERAL_TOKEN_KEY); }

@@ -313,7 +313,7 @@ function UtilisateursTab({ eventId }) {
   useEffect(() => { load(); }, [load]);
 
   const assignedIds = new Set(eventUsers.map(u => String(u.user_id)));
-  const available = allUsers.filter(u => !assignedIds.has(String(u.id)) && u.has_password && u.active);
+  const available = allUsers.filter(u => !assignedIds.has(String(u.id)) && u.active);
 
   function toggleRole(role) {
     setSelectedRoles(prev =>
@@ -376,7 +376,7 @@ function UtilisateursTab({ eventId }) {
       <section className="panel-section">
         <h3 className="panel-section__title">Ajouter un utilisateur</h3>
         {available.length === 0 ? (
-          <p className="text--muted">Tous les comptes actifs avec mot de passe sont déjà assignés.</p>
+          <p className="text--muted">Tous les comptes actifs sont déjà assignés.</p>
         ) : (
           <form onSubmit={handleAdd} style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '480px' }}>
             <label className="field-label">

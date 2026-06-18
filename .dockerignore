@@ -1,0 +1,4 @@
+apps/borne/web/dist
+apps/hub/web/dist
+node_modules
+*/node_modules

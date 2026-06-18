@@ -422,3 +422,45 @@ describe('POST /api/videos — quota 507', () => {
     assert.equal(res.status, 507);
   });
 });
+
+// ── Mode preview — download et CSV bloqués (§preview) ────────────────────────
+
+describe('preview — routes bloquées', () => {
+  let ctx;
+
+  beforeEach(async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-vid-preview-'));
+    const previewEventId = 'ev-preview-test';
+    const eventDir = join(dir, 'events', previewEventId);
+    mkdirSync(join(eventDir, 'videos'), { recursive: true });
+    const edb = createEventDb(join(eventDir, 'db.sqlite'));
+    edb.prepare("INSERT INTO questions (text, max_duration, countdown, order_index) VALUES ('Q preview', 60, 3, 0)").run();
+    edb.close();
+    const app = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: true });
+    await seedAuthUsers(dir);
+    const token = await loginAdmin(app, request);
+    insertEvent({ id: previewEventId, name: 'Evt Preview', origin: 'hub', status: 'loaded' });
+    setActiveEvent(previewEventId);
+    ctx = { dir, app, token };
+  });
+
+  afterEach(() => {
+    closeEventDb();
+    closeRegistry();
+    rmSync(ctx.dir, { recursive: true });
+  });
+
+  test('GET /videos/export/csv retourne 403 en mode preview', async () => {
+    const res = await request(ctx.app)
+      .get('/api/videos/export/csv')
+      .set('Authorization', `Bearer ${ctx.token}`);
+    assert.equal(res.status, 403);
+  });
+
+  test('GET /videos/:id/download retourne 403 en mode preview', async () => {
+    const res = await request(ctx.app)
+      .get('/api/videos/some-id/download')
+      .set('Authorization', `Bearer ${ctx.token}`);
+    assert.equal(res.status, 403);
+  });
+});
