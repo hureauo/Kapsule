@@ -13,10 +13,16 @@ services:
       - ALLOW_REGISTER=${ALLOW_REGISTER:-false}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-}
       - ADMIN_PASSWORD_HUB=${ADMIN_PASSWORD_HUB:-}
+      - EDGE_DOMAIN=${EDGE_DOMAIN:-kapsule.hureau.com}
+      - PREVIEW_IMAGE=${PREVIEW_IMAGE:-kapsule-borne-preview-frontend}
     ports:
       - "3001:3001"
     volumes:
       - hub_data:/app/data
+      # Monté pour l'auto-provisioning des containers preview (Partie C).
+      # Donne au backend un accès Docker équivalent root sur l'hôte —
+      # acceptable ici car le Hub est de confiance (périmètre contrôlé).
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - hub_net
     restart: unless-stopped
@@ -41,15 +47,28 @@ services:
     build:
       context: .
       dockerfile: apps/hub/web/Dockerfile
+    # Nom fixe résolu par le DNS Docker : l'edge nginx fait proxy_pass http://hub-frontend
+    container_name: hub-frontend
+    # Plus de ports exposés ni de TLS : le service edge prend en charge 80/443.
+    depends_on:
+      - backend
+    networks:
+      - hub_net
+    restart: unless-stopped
+
+  edge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.edge
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      - EDGE_DOMAIN=${EDGE_DOMAIN:-kapsule.hureau.com}
     volumes:
-      # Prod : monter les certificats Let's Encrypt depuis l'hôte.
-      # Dev local : si fullchain.pem est absent, l'entrypoint génère un cert auto-signé.
       - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
-      - backend
+      - frontend
     networks:
       - hub_net
     restart: unless-stopped

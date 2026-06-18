@@ -148,6 +148,37 @@ function ApercuTab({ event, previewTokens, onConfigImported }) {
   const [applying, setApplying] = useState(false);
   const [applyMsg, setApplyMsg] = useState('');
 
+  // Preview auto-provisionnée
+  const [previewStatus, setPreviewStatus] = useState(null); // null | { up, preview_url }
+  const [generatedLink, setGeneratedLink] = useState('');
+  const [linkExpiry, setLinkExpiry] = useState('7d');
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  useEffect(() => {
+    api.previewStatus(event.id)
+      .then(s => setPreviewStatus(s))
+      .catch(() => setPreviewStatus({ up: false, preview_url: null }));
+  }, [event.id]);
+
+  async function handleGenerateLink() {
+    setLinkLoading(true);
+    setGeneratedLink('');
+    setLinkCopied(false);
+    try {
+      const { preview_url } = await api.generatePreviewToken(event.id, linkExpiry);
+      setGeneratedLink(preview_url);
+    } finally {
+      setLinkLoading(false);
+    }
+  }
+
+  function copyLink() {
+    navigator.clipboard.writeText(generatedLink);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  }
+
   // Borne preview avec une URL de location valide (point d'entrée pour lire la config)
   const previewBorne = previewTokens.find(t => t.location && /^https?:\/\//.test(t.location)) ?? null;
 
@@ -200,9 +231,49 @@ function ApercuTab({ event, previewTokens, onConfigImported }) {
   return (
     <div className="tab-content">
       <section className="panel-section">
-        <h3 className="panel-section__title">Bornes d'essai</h3>
+        <h3 className="panel-section__title">Borne d'essai</h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+          {previewStatus === null && <span className="text--muted">Vérification…</span>}
+          {previewStatus !== null && (
+            <>
+              <span style={{
+                display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
+                background: previewStatus.up ? '#22c55e' : '#ef4444',
+              }} />
+              <span className="text--muted">{previewStatus.up ? 'En ligne' : 'Hors ligne'}</span>
+              {previewStatus.preview_url && (
+                <a href={previewStatus.preview_url} target="_blank" rel="noopener noreferrer" className="btn btn--ghost" style={{ padding: '2px 10px', fontSize: '0.85rem' }}>
+                  Ouvrir ↗
+                </a>
+              )}
+            </>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <label className="text--muted" style={{ fontSize: '0.85rem' }}>Lien valide</label>
+          <select value={linkExpiry} onChange={e => setLinkExpiry(e.target.value)} style={{ fontSize: '0.85rem', padding: '2px 6px' }}>
+            <option value="1d">1 jour</option>
+            <option value="7d">7 jours</option>
+            <option value="30d">30 jours</option>
+          </select>
+          <button className="btn btn--primary" onClick={handleGenerateLink} disabled={linkLoading} style={{ padding: '4px 12px', fontSize: '0.85rem' }}>
+            {linkLoading ? 'Génération…' : 'Générer un lien d\'accès'}
+          </button>
+        </div>
+        {generatedLink && (
+          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <input readOnly value={generatedLink} style={{ flex: 1, minWidth: 200, fontSize: '0.8rem', padding: '4px 8px', border: '1px solid #ccc', borderRadius: 4 }} />
+            <button className="btn btn--ghost" onClick={copyLink} style={{ padding: '4px 10px', fontSize: '0.85rem' }}>
+              {linkCopied ? 'Copié ✓' : 'Copier'}
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section className="panel-section">
+        <h3 className="panel-section__title">Tokens manuels</h3>
         {previewTokens.length === 0 && (
-          <p className="text--muted">Aucune borne d'essai pour cet événement.</p>
+          <p className="text--muted">Aucun token d'essai pour cet événement.</p>
         )}
         {previewTokens.map(t => (
           <div key={t.id} className="preview-token-card">

@@ -41,6 +41,10 @@ export function makeSessionsRouter(dataDir, cfg) {
             const roles = Array.isArray(payload.roles) ? payload.roles : [];
             const allowed = ['general', 'admin_borne', 'tech_borne'];
             if (!roles.some(r => allowed.includes(r))) return res.status(403).json({ error: 'Accès refusé' });
+            // Cloisonnement cross-preview : rejeter un JWT scopé à un autre événement
+            if (payload.event_id && payload.event_id !== active.id) {
+              return res.status(403).json({ error: 'Token non valide pour cet événement' });
+            }
           } catch {
             return res.status(401).json({ error: 'Token invalide ou expiré' });
           }

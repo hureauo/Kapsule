@@ -277,6 +277,24 @@ describe('POST /api/sessions — preview requiresLogin', () => {
     assert.equal(res.status, 201);
     assert.ok(res.body.id);
   });
+
+  test('retourne 201 avec token general scopé à cet événement', async () => {
+    const token = jwt.sign({ roles: ['general'], event_id: 'ev-preview-login' }, TEST_CFG.jwtSecret, { expiresIn: '1h' });
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ guest_name: 'Bob', consent: true });
+    assert.equal(res.status, 201);
+  });
+
+  test('retourne 403 avec token general scopé à un autre événement (cloisonnement cross-preview)', async () => {
+    const token = jwt.sign({ roles: ['general'], event_id: 'ev-autre-event' }, TEST_CFG.jwtSecret, { expiresIn: '1h' });
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ guest_name: 'Mallory', consent: true });
+    assert.equal(res.status, 403);
+  });
 });
 
 // ── Token general → accès refusé aux routes admin ─────────────────────────────

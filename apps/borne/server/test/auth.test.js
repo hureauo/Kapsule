@@ -242,3 +242,48 @@ describe('requireTech middleware', () => {
     assert.equal(res.status, 401);
   });
 });
+
+// ── Cloisonnement event_id dans requireAdmin ───────────────────────────────────
+// Un JWT scopé à un événement précis (émis par le Hub pour la preview) doit
+// être rejeté si la borne sert un autre événement.
+
+describe('requireAdmin — cloisonnement event_id', () => {
+  let dir, app;
+  const ACTIVE_EVENT_ID = 'ev-cloison-active';
+  const OTHER_EVENT_ID  = 'ev-cloison-other';
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-cloison-'));
+    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+    app.get('/api/admin/ping', requireAdmin(TEST_CONFIG), (req, res) => res.json({ ok: true }));
+    // Simule un événement actif sur cette borne
+    insertEvent({ id: ACTIVE_EVENT_ID, name: 'Actif', origin: 'hub', status: 'loaded' });
+    setActiveEvent(ACTIVE_EVENT_ID);
+  });
+
+  afterEach(() => {
+    closeEventDb();
+    closeRegistry();
+    rmSync(dir, { recursive: true });
+  });
+
+  const makeToken = (payload) => jwt.sign(payload, TEST_CONFIG.jwtSecret, { expiresIn: '1h' });
+
+  test('accepte un JWT admin_borne scopé à l\'événement actif', async () => {
+    const token = makeToken({ roles: ['admin_borne'], event_id: ACTIVE_EVENT_ID });
+    const res = await request(app).get('/api/admin/ping').set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 200);
+  });
+
+  test('rejette un JWT scopé à un autre événement (403)', async () => {
+    const token = makeToken({ roles: ['admin_borne'], event_id: OTHER_EVENT_ID });
+    const res = await request(app).get('/api/admin/ping').set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 403);
+  });
+
+  test('accepte un JWT sans event_id (tokens non scopés)', async () => {
+    const token = makeToken({ roles: ['admin_borne'] });
+    const res = await request(app).get('/api/admin/ping').set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 200);
+  });
+});

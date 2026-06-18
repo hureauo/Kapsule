@@ -1,7 +1,7 @@
 FROM node:20-alpine
 
-# Outils de compilation pour better-sqlite3 + ffmpeg pour le worker de traitement vidéo
-RUN apk add --no-cache python3 make g++ ffmpeg
+# Outils de compilation pour better-sqlite3 + ffmpeg pour le worker + docker CLI pour l'auto-provisioning preview
+RUN apk add --no-cache python3 make g++ ffmpeg docker-cli
 
 WORKDIR /app
 

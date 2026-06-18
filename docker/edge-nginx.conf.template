@@ -1,0 +1,61 @@
+# Edge reverse proxy — termine TLS, route par Host vers hub-frontend ou preview-<slug>.
+#
+# Pourquoi un upstream variabilisé + resolver : avec proxy_pass statique, nginx résout
+# le nom AU DÉMARRAGE et refuse de booter si le container cible n'existe pas encore.
+# Avec une variable + resolver, la résolution est paresseuse (à chaque requête) — idéal
+# pour les containers preview qui apparaissent/disparaissent sans redémarrer l'edge.
+
+resolver 127.0.0.11 valid=10s;  # DNS interne Docker
+
+# ── Redirect HTTP → HTTPS ─────────────────────────────────────────────────────
+server {
+    listen 80;
+    server_name _;
+    return 301 https://$host$request_uri;
+}
+
+# ── Hub principal ─────────────────────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    server_name ${EDGE_DOMAIN} www.${EDGE_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/kapsule/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/kapsule/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    client_max_body_size 600M;
+
+    location / {
+        set $up hub-frontend;
+        proxy_pass         http://$up;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+}
+
+# ── Bornes preview (essai-<slug>.<domaine>) ───────────────────────────────────
+server {
+    listen 443 ssl;
+    server_name ~^essai-(?<slug>[a-z0-9-]+)\.${EDGE_DOMAIN_ESCAPED}$;
+
+    ssl_certificate     /etc/letsencrypt/live/kapsule/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/kapsule/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    client_max_body_size 600M;
+
+    location / {
+        set $up "preview-$slug";
+        proxy_pass         http://$up:80;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+}

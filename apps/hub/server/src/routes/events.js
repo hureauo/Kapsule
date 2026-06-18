@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
+import jwt from 'jsonwebtoken';
 import { THEMES, TEXT_FIELDS } from '@kapsule/core';
 import {
   getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog, upsertEventUser,
@@ -9,6 +10,7 @@ import {
 } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { requireUser, requireOwner } from '../middleware/auth.js';
+import { provisionPreview, deprovisionPreview, slugFor, dockerCli } from '../preview/provisioner.js';
 
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'superuser') return res.status(403).json({ error: 'Réservé aux admins' });
@@ -51,7 +53,7 @@ export function makeEventsRouter(dataDir) {
   });
 
   // ── POST /api/events ───────────────────────────────────────────────────────
-  router.post('/', requireUser, requireAdmin, (req, res, next) => {
+  router.post('/', requireUser, requireAdmin, async (req, res, next) => {
     try {
       const { name, event_date } = req.body;
       if (!name || typeof name !== 'string' || !name.trim()) {
@@ -76,7 +78,15 @@ export function makeEventsRouter(dataDir) {
       // Initialise db.sqlite avec le schéma + 4 questions par défaut
       openEventDb(id, dataDir);
 
-      res.status(201).json(getEvent(db, id));
+      // Auto-provisioning preview (best-effort : un échec Docker ne bloque pas la création)
+      let preview_url = null;
+      try {
+        preview_url = await provisionPreview(id);
+      } catch (err) {
+        console.error('[provisioner] échec provision preview pour', id, err.message);
+      }
+
+      res.status(201).json({ ...getEvent(db, id), preview_url });
     } catch (err) {
       next(err);
     }
@@ -278,13 +288,53 @@ export function makeEventsRouter(dataDir) {
     } catch (err) { next(err); }
   });
 
+  // ── POST /api/events/:eventId/preview/token ──────────────────────────────
+  // Génère un JWT scopé à cet événement avec le rôle `general`.
+  // Accessible au propriétaire (client) et aux superusers — pas uniquement superuser.
+  // body optionnel : { expires_in: '7d' }
+  router.post('/:eventId/preview/token', requireUser, requireOwner, (req, res) => {
+    const jwtSecret = process.env.JWT_SECRET ?? 'change-me';
+    const expiresIn = req.body?.expires_in ?? '7d';
+    const token = jwt.sign(
+      { roles: ['general'], event_id: req.event.id },
+      jwtSecret,
+      { expiresIn }
+    );
+
+    const slug = slugFor(req.event.id);
+    const domain = process.env.EDGE_DOMAIN ?? 'kapsule.hureau.com';
+    const preview_url = `https://essai-${slug}.${domain}?token=${token}`;
+
+    res.json({ token, preview_url, expires_in: expiresIn });
+  });
+
+  // ── GET /api/events/:eventId/preview/status ───────────────────────────────
+  // Retourne l'état du container preview (up/down) via docker inspect.
+  // Accessible au propriétaire (client) et aux superusers.
+  router.get('/:eventId/preview/status', requireUser, requireOwner, async (req, res, next) => {
+    try {
+      const slug = slugFor(req.event.id);
+      const domain = process.env.EDGE_DOMAIN ?? 'kapsule.hureau.com';
+      const preview_url = `https://essai-${slug}.${domain}`;
+      const up = await dockerCli.exists(`preview-${slug}`);
+      res.json({ up, preview_url, slug });
+    } catch (err) { next(err); }
+  });
+
   // ── DELETE /api/events/:eventId — purge RGPD ──────────────────────────────
-  router.delete('/:eventId', requireUser, requireOwner, (req, res, next) => {
+  router.delete('/:eventId', requireUser, requireOwner, async (req, res, next) => {
     try {
       const event = req.event;
       const { confirm } = req.body;
       if (!confirm || confirm.trim() !== event.name.trim()) {
         return res.status(400).json({ error: 'Confirmation invalide : fournir { confirm: "<nom exact>" }' });
+      }
+
+      // Arrêter le container preview avant de supprimer le dossier (best-effort)
+      try {
+        await deprovisionPreview(event.id);
+      } catch (err) {
+        console.error('[provisioner] échec deprovision pour', event.id, err.message);
       }
 
       // §11.11 : fermer le handle avant rm -rf

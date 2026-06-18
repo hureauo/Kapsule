@@ -76,6 +76,16 @@ export function requireRole(requiredRole) {
             ? roles.includes('admin_borne') || roles.includes('tech_borne')
             : roles.includes(requiredRole);
         if (!hasRole) return res.status(403).json({ error: 'Accès refusé' });
+
+        // Si le JWT est scopé à un événement précis (émis par le Hub pour la preview),
+        // vérifier que la borne sert bien cet événement — cloisonnement cross-preview.
+        if (payload.event_id) {
+          const active = getActiveEvent();
+          if (!active || active.id !== payload.event_id) {
+            return res.status(403).json({ error: 'Token non valide pour cet événement' });
+          }
+        }
+
         req.admin = payload;
         next();
       } catch {
