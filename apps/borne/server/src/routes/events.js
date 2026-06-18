@@ -164,6 +164,12 @@ export function makeEventsRouter(dataDir, cfg) {
       const consent = getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT;
       const textOrDefault = (key) => getMeta(key) ?? TEXT_FIELDS[key];
 
+      const users = db.prepare('SELECT roles FROM event_users').all();
+      const hasGeneral = users.some(u => {
+        try { return JSON.parse(u.roles).includes('general'); } catch { return false; }
+      });
+      const requiresLogin = !!(activeEvent.is_preview) && hasGeneral;
+
       res.json({
         id: activeEvent.id,
         name: activeEvent.name,
@@ -176,6 +182,7 @@ export function makeEventsRouter(dataDir, cfg) {
         name_prompt: textOrDefault('name_prompt'),
         consent_details: textOrDefault('consent_details'),
         thanks_text: textOrDefault('thanks_text'),
+        requiresLogin,
       });
     } catch (err) {
       next(err);

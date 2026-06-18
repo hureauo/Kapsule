@@ -2,7 +2,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import argon2 from 'argon2';
-import { insertEvent, setActiveEvent } from '../src/registry.js';
+import { insertEvent, setActiveEvent, getRegistry } from '../src/registry.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 
 export const TEST_CFG = {
@@ -31,6 +31,12 @@ export async function seedAuthUsers(dir) {
     'tech@borne.test', hashTech, JSON.stringify(['tech_borne'])
   );
   edb.close();
+}
+
+// Supprime ev-seed de la registry pour ne pas polluer les tests qui testent "aucun event".
+// À appeler après loginAdmin/loginTech — le token JWT reste valide sans l'event en DB.
+export function clearSeedEvent() {
+  getRegistry().prepare("DELETE FROM local_events WHERE id = 'ev-seed'").run();
 }
 
 // Connecte l'utilisateur admin_borne et retourne le token.

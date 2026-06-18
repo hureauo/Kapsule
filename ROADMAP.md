@@ -209,9 +209,9 @@ committé en `phase 7X.Y: …`.
 
 ### 7D — Preview protégée : rôle general
 
-- [ ] 7D.1 Borne `routes/sync.js` : `GET /api/sync/status` expose `isPreview` + `requiresLogin` (true si preview ET au moins un user `general` en base)
-- [ ] 7D.2 Borne front : si `isPreview && requiresLogin`, afficher un login (email + mdp) devant `/` avant le parcours invité ; JWT stocké en `sessionStorage` (pas `localStorage` — durée de session) ; route publique uniquement `/api/event` (pour savoir si login requis)
-- [ ] 7D.3 Borne `routes/sessions.js` : `POST /api/sessions` vérifie le JWT `general` si `requiresLogin` (401 sinon) + tests
+- [x] 7D.1 Borne `routes/sync.js` : `GET /api/sync/status` expose `isPreview` + `requiresLogin` (true si preview ET au moins un user `general` en base)
+- [x] 7D.2 Borne front : si `isPreview && requiresLogin`, afficher un login (email + mdp) devant `/` avant le parcours invité ; JWT stocké en `sessionStorage` (pas `localStorage` — durée de session) ; route publique uniquement `/api/event` (pour savoir si login requis)
+- [x] 7D.3 Borne `routes/sessions.js` : `POST /api/sessions` vérifie le JWT `general` si `requiresLogin` (401 sinon) + tests
 
 ### 7E — Nettoyage env + Hub front
 

@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
 import { createApp } from '../src/index.js';
-import { closeRegistry, getActiveEvent, insertEvent, setActiveEvent } from '../src/registry.js';
+import { closeRegistry, getActiveEvent, insertEvent, setActiveEvent, getRegistry } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { TEST_CFG, seedAuthUsers, loginAdmin, loginTech } from './helpers.js';
+import argon2 from 'argon2';
+import jwt from 'jsonwebtoken';
 
 const EVENT_ID = 'ev-sessions-test';
 
@@ -208,5 +210,70 @@ describe('GET /api/sessions', () => {
   test('retourne 401 sans token', async () => {
     const res = await request(ctx.app).get('/api/sessions');
     assert.equal(res.status, 401);
+  });
+});
+
+// ── POST /api/sessions — preview protégée (§7D.3) ────────────────────────────
+
+describe('POST /api/sessions — preview requiresLogin', () => {
+  let dir, app;
+
+  beforeEach(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-sess-preview-'));
+    const eventDir = join(dir, 'events', 'ev-preview-login');
+    mkdirSync(join(eventDir, 'videos'), { recursive: true });
+    const edb = createEventDb(join(eventDir, 'db.sqlite'));
+
+    // Seeder un user general avec hash argon2
+    const hash = await argon2.hash('guest-pass', { type: argon2.argon2id });
+    edb.prepare("INSERT INTO event_users (email, password_hash, roles) VALUES (?, ?, ?)").run(
+      'guest@test.com', hash, JSON.stringify(['general'])
+    );
+    edb.close();
+
+    app = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: true });
+    // Enregistrer l'event comme preview
+    insertEvent({ id: 'ev-preview-login', name: 'Preview Login', origin: 'hub', status: 'loaded', is_preview: 1 });
+    setActiveEvent('ev-preview-login');
+  });
+
+  afterEach(() => {
+    closeEventDb();
+    closeRegistry();
+    rmSync(dir, { recursive: true });
+  });
+
+  test('retourne 401 sans token quand requiresLogin', async () => {
+    const res = await request(app)
+      .post('/api/sessions')
+      .send({ guest_name: 'Alice', consent: true });
+    assert.equal(res.status, 401);
+  });
+
+  test('retourne 401 avec token invalide', async () => {
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', 'Bearer token-bidon')
+      .send({ guest_name: 'Alice', consent: true });
+    assert.equal(res.status, 401);
+  });
+
+  test('retourne 403 avec token sans rôle general', async () => {
+    const token = jwt.sign({ roles: ['admin_borne'] }, TEST_CFG.jwtSecret, { expiresIn: '1h' });
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ guest_name: 'Alice', consent: true });
+    assert.equal(res.status, 403);
+  });
+
+  test('retourne 201 avec token general valide', async () => {
+    const token = jwt.sign({ email: 'guest@test.com', roles: ['general'] }, TEST_CFG.jwtSecret, { expiresIn: '1h' });
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ guest_name: 'Alice', consent: true });
+    assert.equal(res.status, 201);
+    assert.ok(res.body.id);
   });
 });

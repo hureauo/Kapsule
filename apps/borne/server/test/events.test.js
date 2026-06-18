@@ -10,7 +10,7 @@ import { closeEventDb } from '../src/eventDb.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { DEFAULTS } from '@kapsule/core';
 import { _setPushRunning } from '../src/sync/push.js';
-import { TEST_CFG, seedAuthUsers, loginAdmin, loginTech } from './helpers.js';
+import { TEST_CFG, seedAuthUsers, loginAdmin, loginTech, clearSeedEvent } from './helpers.js';
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-ev-'));
@@ -18,6 +18,7 @@ async function setup() {
   await seedAuthUsers(dir);
   const token = await loginAdmin(app, request);
   const techToken = await loginTech(app, request);
+  clearSeedEvent(); // retire ev-seed pour ne pas polluer les tests "aucun event"
   return { dir, app, token, techToken };
 }
 
@@ -192,6 +193,37 @@ describe('GET /api/event', () => {
     makeActiveEvent(ctx.dir, 'ev-public2', 'Evt Public 2');
     const res = await request(ctx.app).get('/api/event');
     assert.equal(res.status, 200);
+  });
+
+  test('requiresLogin = false si event non-preview', async () => {
+    makeActiveEvent(ctx.dir, 'ev-no-preview', 'Evt No Preview');
+    const res = await request(ctx.app).get('/api/event');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.requiresLogin, false);
+  });
+
+  test('requiresLogin = true si preview + user general en event_users', async () => {
+    const eventDir = join(ctx.dir, 'events', 'ev-preview-req');
+    mkdirSync(join(eventDir, 'videos'), { recursive: true });
+    const edb = createEventDb(join(eventDir, 'db.sqlite'));
+    edb.prepare("INSERT INTO event_users (email, password_hash, roles) VALUES ('g@test.com', 'x', ?)").run(JSON.stringify(['general']));
+    edb.close();
+    insertEvent({ id: 'ev-preview-req', name: 'Evt Preview Req', origin: 'hub', status: 'loaded', is_preview: 1 });
+    setActiveEvent('ev-preview-req');
+
+    const res = await request(ctx.app).get('/api/event');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.requiresLogin, true);
+  });
+
+  test('requiresLogin = false si preview mais aucun user general', async () => {
+    makeActiveEvent(ctx.dir, 'ev-preview-no-general', 'Evt Preview No General');
+    // Marquer comme preview sans user general
+    const reg = (await import('../src/registry.js')).getRegistry();
+    reg.prepare("UPDATE local_events SET is_preview = 1 WHERE id = 'ev-preview-no-general'").run();
+    const res = await request(ctx.app).get('/api/event');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.requiresLogin, false);
   });
 });
 

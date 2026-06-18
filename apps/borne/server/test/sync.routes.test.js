@@ -10,7 +10,7 @@ import { closeRegistry, getRegistry, insertEvent, updateEventStatus } from '../s
 import { closeEventDb } from '../src/eventDb.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { config } from '../src/config.js';
-import { seedAuthUsers, loginAdmin, loginTech } from './helpers.js';
+import { seedAuthUsers, loginAdmin, loginTech, clearSeedEvent } from './helpers.js';
 
 const TEST_CFG = {
   techPassword: 'tech-test',
@@ -28,6 +28,7 @@ async function setup() {
   const token = await loginTech(app, request);
   // Token admin_borne pour les tests d'accès refusé (§11.19)
   const clientToken = await loginAdmin(app, request);
+  clearSeedEvent(); // retire ev-seed pour ne pas polluer les tests "aucun event actif"
   return { dir, app, token, clientToken };
 }
 

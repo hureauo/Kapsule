@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../api/client.js';
+import { api, getGeneralToken, saveGeneralToken } from '../api/client.js';
 import { DEFAULTS } from '@kapsule/core';
 import StartScreen from '../components/guest/StartScreen.jsx';
 import NameInput from '../components/guest/NameInput.jsx';
@@ -80,11 +80,64 @@ function ResumeScreen({ guestName, onResume, onRestart }) {
   );
 }
 
+// ── Écran de login preview (role general) ────────────────────────────────────
+function PreviewLoginScreen({ onSuccess }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const data = await api.login(email, password);
+      saveGeneralToken(data.token);
+      onSuccess();
+    } catch {
+      setError('Identifiants incorrects.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="admin-login screen screen--center">
+      <h2 className="screen__title">Accès invité</h2>
+      <form onSubmit={handleSubmit} className="name-form">
+        <input
+          className="name-form__input"
+          type="email"
+          autoFocus
+          value={email}
+          onChange={e => { setEmail(e.target.value); setError(''); }}
+          placeholder="Email"
+          disabled={loading}
+        />
+        <input
+          className="name-form__input"
+          type="password"
+          value={password}
+          onChange={e => { setPassword(e.target.value); setError(''); }}
+          placeholder="Mot de passe"
+          disabled={loading}
+        />
+        {error && <p className="text--error" role="alert">{error}</p>}
+        <button className="btn btn--primary btn--large" type="submit" disabled={loading}>
+          {loading ? 'Connexion…' : 'Accéder'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 // ── Machine à états principale ────────────────────────────────────────────────
-// États : loading | error | closed | resume | start | name | questions | recap | thanks
+// États : loading | error | closed | login | resume | start | name | questions | recap | thanks
 
 const S = {
   LOADING: 'loading', ERROR: 'error', CLOSED: 'closed',
+  LOGIN: 'login',
   RESUME: 'resume',
   START: 'start', NAME: 'name', QUESTIONS: 'questions',
   RECAP: 'recap', THANKS: 'thanks',
@@ -135,6 +188,12 @@ export default function GuestPage({ isPreview = false }) {
 
       if (evtData.status === 'closed') {
         setScreen(S.CLOSED);
+        return;
+      }
+
+      // Preview protégée : vérifier si un token general est déjà présent
+      if (evtData.requiresLogin && !getGeneralToken()) {
+        setScreen(S.LOGIN);
         return;
       }
 
@@ -290,6 +349,7 @@ export default function GuestPage({ isPreview = false }) {
   if (screen === S.LOADING) return <LoadingScreen />;
   if (screen === S.ERROR)   return <ErrorScreen message={errorMsg} onRetry={loadEvent} />;
   if (screen === S.CLOSED)  return <ClosedScreen />;
+  if (screen === S.LOGIN)   return <PreviewLoginScreen onSuccess={loadEvent} />;
 
   return (
     <>

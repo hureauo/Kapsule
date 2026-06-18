@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
+import jwt from 'jsonwebtoken';
 import { validateGuestName } from '@kapsule/core';
 import { getActiveEvent, updateEventStatus } from '../registry.js';
 import { getActiveEventDb } from '../eventDb.js';
@@ -24,6 +25,26 @@ export function makeSessionsRouter(dataDir, cfg) {
       const ctx = requireActiveDb(res);
       if (!ctx) return;
       const { active, db } = ctx;
+
+      // Preview avec users general : vérifier JWT general avant de créer la session
+      if (active.is_preview) {
+        const users = db.prepare('SELECT roles FROM event_users').all();
+        const hasGeneral = users.some(u => {
+          try { return JSON.parse(u.roles).includes('general'); } catch { return false; }
+        });
+        if (hasGeneral) {
+          const authHeader = req.headers['authorization'];
+          const token = (authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null) ?? req.query.token ?? null;
+          if (!token) return res.status(401).json({ error: 'Login requis pour accéder à cet événement' });
+          try {
+            const payload = jwt.verify(token, cfg.jwtSecret, { algorithms: ['HS256'] });
+            const roles = Array.isArray(payload.roles) ? payload.roles : [];
+            if (!roles.includes('general')) return res.status(403).json({ error: 'Accès refusé' });
+          } catch {
+            return res.status(401).json({ error: 'Token invalide ou expiré' });
+          }
+        }
+      }
 
       const { guest_name, consent } = req.body;
 

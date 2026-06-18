@@ -1,5 +1,6 @@
 const TOKEN_KEY = 'admin_token';
 const TECH_TOKEN_KEY = 'tech_token';
+const GENERAL_TOKEN_KEY = 'kapsule_general_token';
 
 // ── Gestion des tokens ────────────────────────────────────────────────────────
 
@@ -12,6 +13,11 @@ export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
 export function clearTechToken() { localStorage.removeItem(TECH_TOKEN_KEY); }
 export function isAuthenticated() { return Boolean(getToken()); }
 export function isTechAuthenticated() { return Boolean(getTechToken()); }
+
+// general_token : sessionStorage (durée d'onglet, pas de persistance) — preview seulement
+export function getGeneralToken() { return sessionStorage.getItem(GENERAL_TOKEN_KEY); }
+export function saveGeneralToken(token) { sessionStorage.setItem(GENERAL_TOKEN_KEY, token); }
+export function clearGeneralToken() { sessionStorage.removeItem(GENERAL_TOKEN_KEY); }
 
 // ── Wrappers fetch ────────────────────────────────────────────────────────────
 
@@ -60,11 +66,23 @@ export const api = {
   getEvent: () => apiFetch('/api/event'),
   getQuestions: () => apiFetch('/api/questions'),
 
-  createSession: (guest_name) =>
-    apiFetch('/api/sessions', {
-      method: 'POST',
-      body: JSON.stringify({ guest_name, consent: true }),
-    }),
+  createSession: (guest_name) => {
+    const generalToken = getGeneralToken();
+    const opts = { method: 'POST', body: JSON.stringify({ guest_name, consent: true }) };
+    if (generalToken) opts.headers = { Authorization: `Bearer ${generalToken}` };
+    return fetch('/api/sessions', {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
+    }).then(async res => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const err = new Error(body.error ?? `HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    });
+  },
   getAnswers: (sessionId) => apiFetch(`/api/sessions/${sessionId}/answers`),
   completeSession: (sessionId) =>
     apiFetch(`/api/sessions/${sessionId}/complete`, { method: 'PUT' }),
