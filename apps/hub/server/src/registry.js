@@ -36,6 +36,7 @@ export function openRegistry(dataDir) {
       id           INTEGER PRIMARY KEY AUTOINCREMENT,
       event_id     TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
       token_hash   TEXT UNIQUE NOT NULL,
+      token_clear  TEXT UNIQUE NOT NULL DEFAULT '',
       label        TEXT,
       location     TEXT,
       is_preview   INTEGER NOT NULL DEFAULT 0,
@@ -85,6 +86,12 @@ export function openRegistry(dataDir) {
   const userCols = db.pragma('table_info(users)').map((c) => c.name);
   if (!userCols.includes('active')) {
     db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+  }
+
+  // Migration: add 'token_clear' to box_tokens if the table predates this change
+  const boxCols = db.pragma('table_info(box_tokens)').map((c) => c.name);
+  if (!boxCols.includes('token_clear')) {
+    db.exec("ALTER TABLE box_tokens ADD COLUMN token_clear TEXT NOT NULL DEFAULT ''");
   }
 
   _db = db;
@@ -189,16 +196,27 @@ export function deleteEvent(db, id) {
 
 // ── box_tokens ────────────────────────────────────────────────────────────────
 
-export function insertBoxToken(db, { event_id, token_hash, label = null, location = null, is_preview = 0 }) {
+export function insertBoxToken(db, { event_id, token_hash, token_clear, label = null, location = null, is_preview = 0 }) {
   return db
-    .prepare('INSERT INTO box_tokens (event_id, token_hash, label, location, is_preview) VALUES (?, ?, ?, ?, ?)')
-    .run(event_id, token_hash, label, location, is_preview ? 1 : 0);
+    .prepare('INSERT INTO box_tokens (event_id, token_hash, token_clear, label, location, is_preview) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(event_id, token_hash, token_clear, label, location, is_preview ? 1 : 0);
 }
 
 export function listBoxTokensByEvent(db, event_id) {
   return db
-    .prepare('SELECT id, event_id, label, location, is_preview, last_seen_at, created_at FROM box_tokens WHERE event_id = ? ORDER BY created_at DESC')
+    .prepare('SELECT id, event_id, token_clear, label, location, is_preview, last_seen_at, created_at FROM box_tokens WHERE event_id = ? ORDER BY created_at DESC')
     .all(event_id);
+}
+
+export function listAllBoxTokens(db) {
+  return db.prepare(`
+    SELECT bt.id, bt.event_id, bt.token_clear, bt.label, bt.location,
+           bt.is_preview, bt.last_seen_at, bt.created_at,
+           e.name AS event_name
+    FROM box_tokens bt
+    LEFT JOIN events e ON e.id = bt.event_id
+    ORDER BY bt.created_at DESC
+  `).all();
 }
 
 export function getBoxTokenById(db, id) {

@@ -1,5 +1,23 @@
+# Borne d'essai (aperçu distant client, §6D).
+#
+# Usage :
+#   BOX_TOKEN_PREVIEW=<token> PREVIEW_PORT=8081 \
+#   docker compose -f docker-compose.preview.yml -p preview-monnom up -d
+#
+# PREVIEW_PORT  : port hôte sur lequel la borne est joignable (obligatoire).
+# BOX_TOKEN_PREVIEW : token d'essai généré depuis le Hub (is_preview=1).
+# HUB_URL       : URL interne ou publique du Hub.
+#                 → En interne (même serveur) : http://hub-backend:3001
+#                   La borne rejoint le réseau hub_net du Hub pour parler
+#                   directement au backend sans passer par internet/nginx.
+#                 → En externe : https://hub.tondomaine.com
+#
+# Plusieurs bornes preview peuvent tourner simultanément sur des ports différents :
+#   PREVIEW_PORT=8081 ... -p preview-mariage up -d
+#   PREVIEW_PORT=8082 ... -p preview-gala    up -d
+
 services:
-  borne-preview:
+  borne-preview-backend:
     build:
       context: .
       dockerfile: apps/borne/server/Dockerfile
@@ -7,23 +25,42 @@ services:
       - BOX_TOKEN=${BOX_TOKEN_PREVIEW}
       - MAX_DATA_BYTES=1073741824
       - PREVIEW_MODE=true
-      - HUB_URL=${HUB_URL}
+      - HUB_URL=${HUB_URL:-http://hub-backend:3001}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD_PREVIEW:-admin123}
       - TECH_PASSWORD=${TECH_PASSWORD_PREVIEW:-tech123}
       - JWT_SECRET=${JWT_SECRET:-change-me}
       - DATA_DIR=/app/data
       - PORT=3001
+      - HOST_PORT=${PREVIEW_PORT}
     volumes:
       - borne-preview-data:/app/data
-    expose:
-      - "3001"
     networks:
-      - preview-internal
+      - preview_internal
+      - hub_net
+    restart: unless-stopped
+
+  borne-preview-frontend:
+    build:
+      context: .
+      dockerfile: apps/borne/web/Dockerfile.preview
+    ports:
+      # PREVIEW_PORT : port hôte → 80 dans le container (HTTP, pas de TLS)
+      - "${PREVIEW_PORT:-8081}:80"
+    depends_on:
+      - borne-preview-backend
+    networks:
+      - preview_internal
     restart: unless-stopped
 
 volumes:
   borne-preview-data:
 
 networks:
-  preview-internal:
+  preview_internal:
     driver: bridge
+
+  # Réseau créé par le Hub — on s'y attache sans le recréer.
+  # Nom fixe défini dans docker-compose.hub.yml (indépendant du projet Docker).
+  hub_net:
+    external: true
+    name: kapsule_hub_net

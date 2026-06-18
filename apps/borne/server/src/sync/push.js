@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import { sha256File } from '@kapsule/core/src/checksum.js';
 import { config } from '../config.js';
 import { getRegistry, updateEventStatus } from '../registry.js';
+import { getActiveEventDb } from '../eventDb.js';
 import { hubFetchJson } from './hubClient.js';
 
 const MAX_ATTEMPTS = 5;
@@ -16,6 +17,34 @@ export function getPushState() { return { ..._state }; }
 
 /** Test-only : force le flag running (pour vérifier les gardes qui en dépendent). */
 export function _setPushRunning(v) { _state.running = v; }
+
+/**
+ * Pousse la config locale (questions + event_meta) vers le Hub.
+ * La borne gagne toujours (mode overwrite).
+ * Autorisé en mode preview — c'est l'usage principal (client ajuste et remonte).
+ *
+ * @param {string} eventId
+ * @param {string} dataDir
+ */
+export async function pushConfig(eventId, dataDir) {
+  const registry = getRegistry();
+  const event = registry.prepare('SELECT * FROM local_events WHERE id = ?').get(eventId);
+  if (!event) throw Object.assign(new Error(`Événement ${eventId} inconnu`), { status: 404 });
+
+  const db = getActiveEventDb(dataDir, event);
+
+  const questions = db.prepare(
+    'SELECT text, max_duration, countdown, order_index, enabled FROM questions ORDER BY order_index, id'
+  ).all();
+
+  const metaRows = db.prepare('SELECT key, value FROM event_meta').all();
+  const meta = Object.fromEntries(metaRows.map(r => [r.key, r.value]));
+
+  return hubFetchJson(`/api/sync/events/${eventId}/config`, {
+    method: 'POST',
+    body: JSON.stringify({ mode: 'overwrite', questions, meta }),
+  });
+}
 
 /**
  * Checkpoint WAL + retourne le sha256 du db.sqlite.

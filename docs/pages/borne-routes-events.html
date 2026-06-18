@@ -2,11 +2,21 @@
 <h1>borne/routes/events.js</h1>
 
 <p>
-  La gestion des événements côté Borne : création locale, activation, clôture, et deux routes
-  particulières — <code>preflight</code> (vérifications avant ouverture du kiosque) et
-  <code>/event</code> (l'événement actif servi au kiosque public). Le routeur mélange routes admin
-  (protégées) et publiques.
+  La gestion des événements côté Borne : activation, clôture, réglages, et deux routes particulières —
+  <code>preflight</code> (vérifications avant ouverture du kiosque) et <code>/event</code> (l'événement
+  actif servi au kiosque public). Le routeur mélange routes admin (protégées) et publiques.
 </p>
+
+<div class="callout info">
+  <div class="callout-title">ℹ La Borne ne crée plus d'événements localement</div>
+  <p>
+    L'ancienne route <code>POST /events</code> (création d'un événement d'origine <code>'local'</code>)
+    a été <strong>supprimée</strong> avec le modèle « token = événement » (§11.20) : tout événement
+    arrive désormais du Hub par <a href="#/borne-sync-pull">pull</a> (origine <code>'hub'</code>). La
+    Borne ne fait que <em>servir</em> et <em>synchroniser</em> l'événement de son token, jamais en
+    créer un de zéro.
+  </p>
+</div>
 
 <h2>Le pattern d'authentification injectée — trois niveaux</h2>
 <pre><code class="js">export function makeEventsRouter(dataDir, cfg) {
@@ -25,41 +35,6 @@
   route choisit sa garde en 2ᵉ argument ; les routes publiques (kiosque) n'en ont aucune. C'est la
   distinction client/tech/public, lisible route par route. <strong>La clôture et le préflight sont
   des actions technicien</strong> (§11.19) : un jeton client y reçoit 403.
-</p>
-
-<h2>Création d'un événement local</h2>
-<pre><code class="js">router.post('/events', auth, (req, res, next) =&gt; {
-  try {
-    const { name, event_date } = req.body;
-    if (!name || typeof name !== 'string' || name.trim().length === 0) {
-      return res.status(400).json({ error: 'Le nom de l\'événement est requis' });
-    }
-    const id = uuidv4();
-    const eventDir = join(dataDir, 'events', id);
-    mkdirSync(join(eventDir, 'videos'), { recursive: true });
-
-    const db = createEventDb(join(eventDir, 'db.sqlite'));
-    db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('event_id', id);
-    db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('name', name.trim());
-    db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('origin', 'local');
-    db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('theme', DEFAULTS.THEME);
-    if (event_date) db.prepare(`INSERT OR IGNORE INTO event_meta ...`).run('event_date', event_date);
-    db.close();
-
-    insertEvent({ id, name: name.trim(), origin: 'local' });
-    const event = listEvents().find(e =&gt; e.id === id);
-    res.status(201).json(event);
-  } catch (err) { next(err); }
-});</code></pre>
-<p>
-  Un événement créé sur la Borne a l'origine <code>'local'</code> (vs <code>'hub'</code> pour un
-  pullé). On crée le dossier + le <code>db.sqlite</code> (via <a href="#/core-eventdbschema">createEventDb</a>,
-  qui seede les questions par défaut), on remplit <code>event_meta</code> (dont le
-  <a href="#/core-constants">thème par défaut</a> <code>DEFAULTS.THEME</code>), puis on l'enregistre
-  dans le registre local. <code>INSERT OR IGNORE</code> évite une erreur si la clé existe déjà
-  (idempotence). Noter le <code>db.close()</code> <strong>explicite</strong> : ici on ouvre une base
-  hors du cache <a href="#/borne-eventdb">eventDb</a> (juste pour l'initialiser), donc on la ferme
-  manuellement.
 </p>
 
 <h2>Régler thème + textes : <code>PUT /events/:id/settings</code></h2>
@@ -253,7 +228,6 @@ router.put('/events/:id/settings', auth, (req, res, next) =&gt; {
 <table class="api-table">
   <tr><th>Endpoint</th><th>Auth</th><th>Rôle</th></tr>
   <tr><td>GET /events</td><td>client</td><td>Liste les événements locaux.</td></tr>
-  <tr><td>POST /events</td><td>client</td><td>Crée un événement local (origine 'local').</td></tr>
   <tr><td>PUT /events/:id/activate</td><td>client</td><td>Rend un événement actif (refusé si push en cours).</td></tr>
   <tr><td>PUT /events/:id/close</td><td><strong>tech</strong></td><td>Clôture un événement live (§11.19 : 403 sur jeton client).</td></tr>
   <tr><td>PUT /events/:id/settings</td><td>client</td><td>Règle le thème + les textes du parcours invité (event actif seulement). 400 thème/texte invalide, 404 id inconnu, 409 si pas l'actif.</td></tr>

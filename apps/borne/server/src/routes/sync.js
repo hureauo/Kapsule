@@ -1,39 +1,123 @@
 import { Router } from 'express';
 import { rmSync, existsSync, unlink } from 'node:fs';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { config } from '../config.js';
 import { getRegistry, getActiveEvent, updateEventStatus } from '../registry.js';
 import { closeEventDb, getActiveEventDb } from '../eventDb.js';
-import { getLastPull } from '../sync/autoPull.js';
-import { pushEvent, getPushState } from '../sync/push.js';
-import { pullMyEvent } from '../sync/pull.js';
+import { getLastPull, pullMyEvent } from '../sync/pull.js';
+import { pushEvent, pushConfig, getPushState } from '../sync/push.js';
+import { hubFetchJson } from '../sync/hubClient.js';
+
+const META_HASH_KEYS = ['theme', 'idle_timeout', 'welcome_title', 'welcome_subtitle', 'name_prompt', 'consent_text', 'consent_details', 'thanks_text'];
+
+function configHash(questions, meta) {
+  const q = questions.map(({ text, max_duration, countdown, order_index, enabled }) =>
+    ({ text, max_duration, countdown, order_index, enabled })
+  );
+  const m = Object.fromEntries(META_HASH_KEYS.filter(k => meta[k] !== undefined).map(k => [k, meta[k]]));
+  return createHash('sha256').update(JSON.stringify({ questions: q, meta: m })).digest('hex').slice(0, 8);
+}
 
 function isPreviewMode(cfg) {
   return !!(cfg.previewMode ?? config.previewMode) || !!(getActiveEvent()?.is_preview);
+}
+
+function getLocalConfig(dataDir) {
+  const active = getActiveEvent();
+  if (!active) return null;
+  try {
+    const db = getActiveEventDb(dataDir, active);
+    const questions = db.prepare(
+      'SELECT id, text, max_duration, countdown, order_index, enabled FROM questions ORDER BY order_index, id'
+    ).all();
+    const metaRows = db.prepare('SELECT key, value FROM event_meta').all();
+    const meta = Object.fromEntries(metaRows.map(r => [r.key, r.value]));
+    return { questions, meta, hash: configHash(questions, meta) };
+  } catch {
+    return null;
+  }
 }
 
 export function makeSyncRouter(dataDir, cfg) {
   const router = Router();
   const auth = cfg.requireTech;
 
-  // ── GET /api/sync/status ─────────────────────────────────────────────────────
-  // Retourne : { online, hubUrl, lastPull, push: { running, total, done, currentFile } }
+  // ── GET /api/sync/status ──────────────────────────────────────────────────────
+  // Retourne connexion Hub, token masqué, config locale, état du push en cours.
   router.get('/sync/status', auth, (req, res) => {
-    const online = !!(cfg.hubUrl || config.hubUrl);
     const hubUrl = cfg.hubUrl || config.hubUrl || null;
+    const boxToken = cfg.boxToken || config.boxToken || null;
     res.json({
-      online,
+      online: !!hubUrl,
       hubUrl,
+      token: boxToken ? `${boxToken.slice(0, 8)}…` : null,
+      isPreview: isPreviewMode(cfg),
       lastPull: getLastPull(),
+      localConfig: getLocalConfig(dataDir),
       push: getPushState(),
     });
   });
 
-  // ── POST /api/sync/pull ──────────────────────────────────────────────────────
-  // Pull manuel immédiat (best-effort, sans attendre la fin)
-  router.post('/sync/pull', auth, (req, res) => {
-    pullMyEvent(dataDir).catch(() => {}); // silencieux
-    res.json({ ok: true });
+  // ── GET /api/sync/hub-config ──────────────────────────────────────────────────
+  // Récupère la config actuelle du Hub (bundle) pour comparaison avec le local.
+  router.get('/sync/hub-config', auth, async (req, res, next) => {
+    try {
+      const active = getActiveEvent();
+      if (!active) return res.status(404).json({ error: 'Aucun événement actif' });
+      const bundle = await hubFetchJson(`/api/sync/events/${active.id}/bundle`);
+      const questions = bundle.questions;
+      const meta = bundle.event.meta ?? {};
+      res.json({ questions, meta, hash: configHash(questions, meta) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── POST /api/sync/token ──────────────────────────────────────────────────────
+  // Change le BOX_TOKEN à chaud (sans redémarrer). Déclenche un pull immédiat.
+  router.post('/sync/token', auth, async (req, res, next) => {
+    try {
+      const { token } = req.body ?? {};
+      if (!token || typeof token !== 'string' || token.trim().length === 0) {
+        return res.status(400).json({ error: 'token requis' });
+      }
+      config.boxToken = token.trim();
+      cfg.boxToken = token.trim();
+      // Pull immédiat pour charger l'événement associé au nouveau token
+      await pullMyEvent(dataDir).catch(() => {});
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── POST /api/sync/pull ───────────────────────────────────────────────────────
+  // Pull manuel : attend la fin et retourne le résultat.
+  router.post('/sync/pull', auth, async (req, res, next) => {
+    try {
+      const pulled = await pullMyEvent(dataDir);
+      res.json({ ok: true, pulled: pulled > 0, localConfig: getLocalConfig(dataDir) });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── POST /api/sync/push-config ───────────────────────────────────────────────
+  // Pousse questions + event_meta de l'événement actif vers le Hub (overwrite).
+  // Autorisé en mode preview — usage principal : client ajuste et remonte sa config.
+  router.post('/sync/push-config', auth, async (req, res, next) => {
+    try {
+      if (!config.hubUrl && !cfg.hubUrl) {
+        return res.status(409).json({ error: 'Borne en mode autonome — aucun Hub configuré' });
+      }
+      const active = getActiveEvent();
+      if (!active) return res.status(404).json({ error: 'Aucun événement actif' });
+      const result = await pushConfig(active.id, dataDir);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
   });
 
   // ── POST /api/sync/push/:eventId ─────────────────────────────────────────────

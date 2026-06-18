@@ -1,30 +1,31 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
 import { createApp } from '../src/index.js';
-import { closeRegistry, getActiveEvent } from '../src/registry.js';
+import { closeRegistry, getActiveEvent, insertEvent, setActiveEvent } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
+import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 
 const TEST_CFG = { adminPassword: 'test', techPassword: 'tech-test', jwtSecret: 'secret-test', dataDir: '' };
+const EVENT_ID = 'ev-sessions-test';
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-sess-'));
+  const eventDir = join(dir, 'events', EVENT_ID);
+  mkdirSync(join(eventDir, 'videos'), { recursive: true });
+  const edb = createEventDb(join(eventDir, 'db.sqlite'));
+  edb.close();
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
   const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
   const token = loginRes.body.token;
   const techRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
   const techToken = techRes.body.token;
-  const evtRes = await request(app)
-    .post('/api/events')
-    .set('Authorization', `Bearer ${token}`)
-    .send({ name: 'Evt Sessions' });
-  await request(app)
-    .put(`/api/events/${evtRes.body.id}/activate`)
-    .set('Authorization', `Bearer ${token}`);
-  return { dir, app, token, techToken, eventId: evtRes.body.id };
+  insertEvent({ id: EVENT_ID, name: 'Evt Sessions', origin: 'hub', status: 'loaded' });
+  setActiveEvent(EVENT_ID);
+  return { dir, app, token, techToken, eventId: EVENT_ID };
 }
 
 function teardown(dir) {

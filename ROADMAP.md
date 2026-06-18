@@ -180,3 +180,8 @@ committé en `phase 6X.Y: …`.
 ## Phase 7 — Évolutions (au fil de l'eau)
 
 Machine de capture dédiée, job `chromakey`, portail invités, mode point d'accès Wi-Fi (hostapd).
+
+### Possible features — onglet Bornes (Hub admin)
+
+- **Monitoring serveur** : métriques live (CPU, RAM, température) remontées par chaque Raspberry via WebSocket ou polling `/api/sync/metrics`. Affichage dans l'onglet Bornes (courbes, alertes seuil).
+- **Console SSH distante** : terminal `xterm.js` dans le navigateur, relayé via WebSocket Hub → SSH sur le Raspberry (lib `ssh2`). Permet le débogage à distance sans accès réseau direct à la borne.

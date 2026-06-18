@@ -7,10 +7,21 @@ import {
   getDb,
   listUsers, insertUser, getUserById, updateUser,
   createRegistrationToken,
-  insertBoxToken, listBoxTokensByEvent, getBoxTokenById, deleteBoxToken, updateBoxToken,
+  insertBoxToken, listBoxTokensByEvent, listAllBoxTokens, getBoxTokenById, deleteBoxToken, updateBoxToken,
   getEvent,
 } from '../registry.js';
 import { requireUser } from '../middleware/auth.js';
+import { openEventDb } from '../eventStore.js';
+
+const META_HASH_KEYS = ['theme', 'idle_timeout', 'welcome_title', 'welcome_subtitle', 'name_prompt', 'consent_text', 'consent_details', 'thanks_text'];
+
+function configHash(questions, meta) {
+  const q = questions.map(({ text, max_duration, countdown, order_index, enabled }) =>
+    ({ text, max_duration, countdown, order_index, enabled })
+  );
+  const m = Object.fromEntries(META_HASH_KEYS.filter(k => meta[k] !== undefined).map(k => [k, meta[k]]));
+  return createHash('sha256').update(JSON.stringify({ questions: q, meta: m })).digest('hex').slice(0, 8);
+}
 
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Réservé aux admins' });
@@ -106,7 +117,7 @@ export function makeAdminRouter(dataDir) {
 
   // ── Tokens de borne (token = événement, §11.20) ──────────────────────────────
 
-  // POST /api/admin/events/:id/tokens — génère un token ; retourne le clair UNE SEULE FOIS
+  // POST /api/admin/events/:id/tokens — génère un token ; token_clear stocké et retourné
   router.post('/events/:id/tokens', (req, res) => {
     const db = getDb();
     const event = getEvent(db, req.params.id);
@@ -118,17 +129,39 @@ export function makeAdminRouter(dataDir) {
     const result = insertBoxToken(db, {
       event_id: req.params.id,
       token_hash,
+      token_clear: token,
       label: label?.trim() ?? null,
       location: location?.trim() ?? null,
       is_preview: is_preview ? 1 : 0,
     });
-    res.status(201).json({ id: result.lastInsertRowid, event_id: req.params.id, label, location, is_preview: is_preview ? 1 : 0, token });
+    res.status(201).json({
+      id: result.lastInsertRowid,
+      event_id: req.params.id,
+      token_clear: token,
+      label: label?.trim() ?? null,
+      location: location?.trim() ?? null,
+      is_preview: is_preview ? 1 : 0,
+    });
   });
 
-  // GET /api/admin/events/:id/tokens — liste sans hash
+  // GET /api/admin/events/:id/tokens — liste + hash de la config Hub courante
   router.get('/events/:id/tokens', (req, res) => {
     const db = getDb();
-    res.json(listBoxTokensByEvent(db, req.params.id));
+    const tokens = listBoxTokensByEvent(db, req.params.id);
+    let hub_config_hash = null;
+    try {
+      const edb = openEventDb(req.params.id, dataDir);
+      const questions = edb.prepare('SELECT text, max_duration, countdown, order_index, enabled FROM questions ORDER BY order_index, id').all();
+      const metaRows = edb.prepare('SELECT key, value FROM event_meta').all();
+      const meta = Object.fromEntries(metaRows.map(r => [r.key, r.value]));
+      hub_config_hash = configHash(questions, meta);
+    } catch { /* event sans DB encore */ }
+    res.json({ tokens, hub_config_hash });
+  });
+
+  // GET /api/admin/tokens — tous les tokens (vue globale onglet Tokens)
+  router.get('/tokens', (req, res) => {
+    res.json(listAllBoxTokens(getDb()));
   });
 
   // DELETE /api/admin/tokens/:tokenId — révocation

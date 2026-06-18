@@ -1,12 +1,9 @@
 import { Router } from 'express';
-import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { statfs } from 'node:fs/promises';
-import { v4 as uuidv4 } from 'uuid';
-import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { DEFAULTS, LIMITS, THEMES, TEXT_FIELDS, TEXT_FIELD_MAX } from '@kapsule/core';
 import {
-  getActiveEvent, listEvents, insertEvent, setActiveEvent, updateEventStatus,
+  getActiveEvent, listEvents, setActiveEvent, updateEventStatus,
 } from '../registry.js';
 import { getActiveEventDb } from '../eventDb.js';
 import { getPushState } from '../sync/push.js';
@@ -20,34 +17,6 @@ export function makeEventsRouter(dataDir, cfg) {
 
   router.get('/events', auth, (req, res) => {
     res.json(listEvents());
-  });
-
-  router.post('/events', auth, (req, res, next) => {
-    try {
-      const { name, event_date } = req.body;
-      if (!name || typeof name !== 'string' || name.trim().length === 0) {
-        return res.status(400).json({ error: 'Le nom de l\'événement est requis' });
-      }
-      const id = uuidv4();
-      const eventDir = join(dataDir, 'events', id);
-      mkdirSync(join(eventDir, 'videos'), { recursive: true });
-
-      const db = createEventDb(join(eventDir, 'db.sqlite'));
-      db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('event_id', id);
-      db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('name', name.trim());
-      db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('origin', 'local');
-      db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('theme', DEFAULTS.THEME);
-      if (event_date) {
-        db.prepare(`INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)`).run('event_date', event_date);
-      }
-      db.close();
-
-      insertEvent({ id, name: name.trim(), origin: 'local' });
-      const event = listEvents().find(e => e.id === id);
-      res.status(201).json(event);
-    } catch (err) {
-      next(err);
-    }
   });
 
   router.put('/events/:id/activate', auth, (req, res, next) => {

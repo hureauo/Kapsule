@@ -3,19 +3,25 @@ services:
     build:
       context: .
       dockerfile: apps/hub/server/Dockerfile
+    # Le nom de container fixe permet aux bornes preview de le joindre par ce nom
+    # depuis le réseau hub_net : http://hub-backend:3001
+    container_name: hub-backend
     environment:
       - JWT_SECRET=${JWT_SECRET:-change-me}
       - DATA_DIR=/app/data
       - PORT=3001
       - ALLOW_REGISTER=${ALLOW_REGISTER:-false}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - ADMIN_PASSWORD_HUB=${ADMIN_PASSWORD_HUB:-}
+    ports:
+      - "3001:3001"
     volumes:
       - hub_data:/app/data
     networks:
-      - internal
+      - hub_net
     restart: unless-stopped
 
   worker:
-    # Même image que backend, commande différente (ffmpeg installé dans le Dockerfile)
     build:
       context: .
       dockerfile: apps/hub/server/Dockerfile
@@ -26,13 +32,12 @@ services:
     volumes:
       - hub_data:/app/data
     networks:
-      - internal
+      - hub_net
     depends_on:
       - backend
     restart: unless-stopped
 
   frontend:
-    # Build multi-stage : Vite → nginx:alpine (sera complété en phase 2)
     build:
       context: .
       dockerfile: apps/hub/web/Dockerfile
@@ -40,17 +45,22 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      # Monter les certificats Let's Encrypt (ou cert manuel) depuis l'hôte
+      # Prod : monter les certificats Let's Encrypt depuis l'hôte.
+      # Dev local : si fullchain.pem est absent, l'entrypoint génère un cert auto-signé.
       - /etc/letsencrypt:/etc/letsencrypt:ro
     depends_on:
       - backend
     networks:
-      - internal
+      - hub_net
     restart: unless-stopped
 
 volumes:
   hub_data:
 
 networks:
-  internal:
+  # Réseau interne Hub. Nommé avec `name:` fixe pour être indépendant du
+  # nom de projet Docker Compose. Les bornes preview s'y attachent via
+  # `external: true / name: kapsule_hub_net` dans docker-compose.preview.yml.
+  hub_net:
     driver: bridge
+    name: kapsule_hub_net

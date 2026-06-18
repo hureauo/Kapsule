@@ -170,6 +170,95 @@ Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.s
   *.test.js couverts par le pattern générique de tests-runner.
 - Vérifs : manifeste/fichiers OK (51/51), liens internes OK (0 mort), `node --check pages.js` OK.
 
+## Sync incrémentale — Phase 6E (token_clear, seed admin, assignation owner, trust proxy)
+- Diff base : `git diff HEAD`. Périmètre code = **Hub** : `box_tokens.token_clear` (+ migration douce
+  + `listAllBoxTokens`), seed admin au démarrage (`seedAdminIfNeeded`, env `ADMIN_EMAIL`/
+  `ADMIN_PASSWORD_HUB`), `app.set('trust proxy', 1)`, création d'événement réservée admin
+  (`requireAdmin` local), nouvelle route `PUT /events/:id/owner` (assigne client, crée compte sans
+  mdp + lien d'enregistrement dérivé de `req.protocol`/`req.get('host')`), nouvelle route
+  `GET /admin/tokens` (vue globale). Front : `listAllTokens`, `assignEventOwner`, redirection admin→
+  /admin (LoginPage/App.jsx). §11.13 révisé (token stocké hash ET clair).
+- hub-config : table env enrichie (`adminEmail`/ADMIN_EMAIL, `adminPassword`/ADMIN_PASSWORD_HUB) +
+  paragraphe seed ; extrait config à jour.
+- hub-index : `trust proxy` dans createApp (extrait + callout info reverse proxy/req.protocol) ;
+  nouvelle section `seedAdminIfNeeded` (extrait, idempotence, argon2) ; démarrage `seedAdminIfNeeded().then()`.
+- hub-registry : schéma box_tokens + `token_clear` (commentaires hash/clair) ; bullet « stocké en
+  double » réécrit (§11.13b) ; nouvelle section migration douce token_clear (pragma table_info) ;
+  inventaire fonctions + `listAllBoxTokens` (JOIN event_name).
+- hub-routes-admin : POST tokens stocke+retourne `token_clear` (extrait + réponse) ; callout danger
+  « une seule fois » → callout info « re-consultable, §11.13b » ; nouvelle route GET /tokens (extrait
+  + paragraphe LEFT JOIN) ; GET /events/:id/tokens « avec token_clear » ; table d'API (POST/GET/+GET /tokens).
+- hub-routes-events : POST `/` re-titré « réservée admin » (extrait `requireAdmin` local + paragraphe) ;
+  nouvelle section `PUT /:eventId/owner` (extrait réel, 2 cas créé/existant, lien d'enregistrement,
+  renvoi trust proxy, PUBLIC_URL disparu) ; table d'API (POST admin, +PUT /owner).
+- hub-middleware-box : callout danger réécrit (auth ne compare que le hash ; clair stocké mais hors
+  auth/synchro, §11.13b) — l'affirmation « ne contient que token_hash » corrigée.
+- web-client-hub : table d'API api.* (+`listAllTokens`, +`assignEventOwner`). getRole déjà documenté
+  (routing admin) → inchangé.
+- invariants : §11.13b réécrit (hash auth ET clair consultation admin, exposé admin uniquement).
+- arch-deux-apps : box_tokens « hash + clair du token ».
+- flux-push-pull : Phase A étape 1 (admin crée + assigne owner, client édite) + étape 2 (clair
+  re-consultable §11.13b ; « assignation de borne » précisé).
+- pages.js : `js` enrichi sur hub-config (seed admin), hub-registry (token_clear migration),
+  hub-index (trust proxy, seed), hub-routes-events (requireAdmin, assignation propriétaire).
+- Hors scope doc (pas de page dédiée) : `docker/hub-entrypoint.sh` (script shell deploy : cert
+  auto-signé dev / Let's Encrypt prod — la doc ne couvre que le code JS, pas nginx/openssl/Docker),
+  hub/web Dockerfile + docker-compose.hub.yml + .env.example (déploiement), PROJET.md/ROADMAP.md ;
+  App.jsx/LoginPage.jsx (routing UI → seul client.js documenté côté front), AdminPage.jsx ;
+  tous les *.test.js couverts par le pattern générique de tests-runner.
+- Vérifs : manifeste/fichiers OK (51/51), liens internes OK (0 mort), `node --check pages.js` OK.
+
+## Sync incrémentale — refonte synchro Borne (suppression autoPull + remontée de config)
+- Diff base : `git diff HEAD`. Périmètre code = **Borne** : `sync/autoPull.js` SUPPRIMÉ (plus de
+  `setInterval`/heartbeats) ; `getLastPull`/`_lastPull` migrés dans `pull.js` ; pull one-shot au
+  démarrage dans `index.js` (puis tout manuel) ; nouvelles routes `GET /sync/hub-config`,
+  `POST /sync/token` (swap à chaud), `POST /sync/push-config` ; `POST /sync/pull` attend désormais et
+  renvoie `{ ok, pulled, localConfig }` ; `GET /sync/status` renvoie `localConfig`+`isPreview` ;
+  `pushConfig` ajouté à `push.js` ; `POST /events` (création locale) supprimée d'`events.js` ;
+  `pull.js` écrase `event_meta` par DELETE+INSERT et autorise l'overwrite en preview (§11.10 nuancé) ;
+  `config` : `pullIntervalMs` retiré, `hostPort` ajouté. Côté **Hub** : `POST /sync/events/:id/config`
+  (réception de la remontée, requireBox, overwrite/merge, FROZEN ≥ live → 409, theme validé THEMES).
+- PAGE SUPPRIMÉE : `borne-sync-autopull.html` (+ entrée pages.js) — fichier source disparu.
+- borne-sync-pull : callout « plus de pull périodique » + extrait `getLastPull` ; garde §11.10
+  `&& !config.previewMode` (extrait + exception preview) ; `event_meta` DELETE+INSERT (extrait +
+  callout) ; `pullMyEvent` canPull preview + `_setLastPull` ; note 404 reformulée (plus de cycle) ;
+  table d'API (getLastPull, nuance preview).
+- borne-routes-sync : intro élargie + callout « plus de pull périodique / configHash » ; nouvelle
+  section État/hub-config/token (extraits + callout swap config vivante) ; pull manuel réécrit
+  (await + résultat) + push-config (autorisé démo, 409 autonome) ; table d'API complète (6 routes).
+- borne-sync-push : nouvelle section `pushConfig` (extrait réel, overwrite, autorisé preview) +
+  ligne API.
+- borne-index : section démarrage réécrite (pull one-shot + bannière) ; callout autoPull→info
+  « un seul pull au boot ».
+- borne-config : `pullIntervalMs` retiré, `hostPort` ajouté (extrait + table) ; callout autonome
+  corrigé (plus de création locale, pull one-shot sauté, push-config 409) ; lien autopull retiré.
+- borne-routes-events : intro sans « création locale » + callout « ne crée plus d'événements » ;
+  section `POST /events` supprimée ; table d'API (ligne POST /events retirée).
+- hub-routes-sync : table étapes (+config, status reformulé) ; nouvelle section
+  `POST /events/:id/config` (extrait, overwrite/merge, 409 FROZEN, requireBox §11.20).
+- web-client-borne : `api.*` tech (getHubConfig/triggerPushConfig/updateToken ajoutés, createEvent
+  retiré côté client) ; table d'API.
+- web-client-hub : `importPreviewConfig` ajouté à la ligne api.*.
+- flux-push-pull : table statuts (live local, closed remonté au push) ; Phase A (variante
+  push-config) ; Phase B (one-shot + manuel, plus de 5 min) ; Phase C (heartbeats retirés).
+- arch-demarrage : section Borne (pull one-shot, plus de startAutoPull, lien → pull.js).
+- index-notions : ligne `setInterval`/`clearInterval` retirée (notion disparue du code).
+- borne-routes-sessions : `live` désormais local (plus de heartbeat) ; closed remonté au push.
+- core-constants : « heartbeats » → « route de transition de statut (POST /status) ».
+- invariants : §11.10 nuancé (exception preview overwrite).
+- pages.js : entrée autopull retirée ; `js` enrichi sur borne-sync-pull, borne-sync-push,
+  borne-routes-sync.
+- Sans impact doc : `hubClient.js` (ajout de `borneLog` — logging observable mais hors contrat
+  d'API ; extrait de la page volontairement simplifié) ; bannière de boot détaillée d'`index.js`
+  (cosmétique) ; tous les *.test.js (pattern générique tests-runner) ; composants UI (SyncPanel.jsx,
+  EventPanel.jsx, AdminPage/EventDetailPage Hub, app.css) ; docker/nginx/compose (déploiement) ;
+  PROJET.md/ROADMAP.md/README/.env.example. Changes Hub 6C/6D/6E (token_clear, seed admin, owner,
+  trust proxy) déjà documentés (pages modifiées dans les passes précédentes).
+- À surveiller : `importPreviewConfig` (hub web) cible `/api/events/:id/config` alors que la route
+  serveur vit sous `/api/sync/events/:id/config` (sync router) — mismatch de chemin probable côté
+  front, hors périmètre doc-sync (code).
+- Vérifs : manifeste/fichiers OK (50/50), liens internes OK (0 mort), `node --check pages.js` OK.
+
 ---
 
 ## Conventions du site (décidées avec l'utilisateur)
@@ -221,9 +310,9 @@ Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.s
 - borne-routes-questions : (renvois)
 - borne-routes-sync : tâche de fond (.catch(()=>{})), pushEvent lancé sans await
 - borne-sync-hubclient : **fetch natif** Node, backoff min(2000·2^(n-1),30000), Object.assign(new Error,{...}), spread headers, ne pas poser Content-Type si FormData
-- borne-sync-pull : vérif statut à l'application (§11.10), transaction DELETE questions + réinsert, Object.entries
-- borne-sync-push : **état module partagé** {..._state}, **for await** sur createReadStream, **FormData/Blob**, finally pour running=false, marquage running synchrone avant await
-- borne-sync-autopull : **setInterval**/clearInterval, premier cycle immédiat, _timer guard, heartbeat best-effort
+- borne-sync-pull : vérif statut à l'application (§11.10 + exception preview), DELETE+INSERT questions ET event_meta, Object.entries, getLastPull, pull one-shot au démarrage
+- borne-sync-push : **état module partagé** {..._state}, **for await** sur createReadStream, **FormData/Blob**, finally pour running=false, marquage running synchrone avant await, pushConfig (remontée config overwrite)
+- (borne-sync-autopull SUPPRIMÉ : autoPull.js retiré du code — plus de setInterval/heartbeats ; le pull est one-shot au boot puis manuel)
 - web-client-hub : **fetch** navigateur, **localStorage**, objet de méthodes fléchées, ...opts, instanceof FormData, res.status 204
 - web-client-borne : **XMLHttpRequest**, xhr.upload.onprogress (pourquoi pas fetch), FormData, File/Blob, new Promise wrapping XHR
 - web-mediarecorder : **React hook**, useState/useRef/useCallback/useEffect, **useRef vs useState** (pas de re-render), **closure piège** (durationRef pour le timer), MediaRecorder.isTypeSupported, URL.createObjectURL/revokeObjectURL, cleanup au démontage

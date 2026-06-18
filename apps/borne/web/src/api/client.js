@@ -82,8 +82,6 @@ export const api = {
   health: () => apiFetch('/api/health'), // public, pas d'auth requise
 
   listEvents: () => apiFetch('/api/events'),
-  createEvent: (data) =>
-    apiFetch('/api/events', { method: 'POST', body: JSON.stringify(data) }),
   activateEvent: (id) =>
     apiFetch(`/api/events/${id}/activate`, { method: 'PUT' }),
   updateEventSettings: (id, settings) =>
@@ -114,8 +112,14 @@ export const api = {
     techApiFetch(`/api/preflight?client_time=${encodeURIComponent(clientTime)}`),
 
   getSyncStatus: () => techApiFetch('/api/sync/status'),
+  getHubConfig: () => techApiFetch('/api/sync/hub-config'),
   triggerPull: () => techApiFetch('/api/sync/pull', { method: 'POST' }),
+  triggerPushConfig: () => techApiFetch('/api/sync/push-config', { method: 'POST' }),
   triggerPush: (eventId) => techApiFetch(`/api/sync/push/${eventId}`, { method: 'POST' }),
+  updateToken: (token) => techApiFetch('/api/sync/token', {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  }),
   purgeEvent: (eventId, confirm) =>
     techApiFetch(`/api/sync/purge/${eventId}`, {
       method: 'POST',

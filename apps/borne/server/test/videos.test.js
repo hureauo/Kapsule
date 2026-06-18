@@ -1,28 +1,30 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
 import { createApp } from '../src/index.js';
-import { closeRegistry } from '../src/registry.js';
+import { closeRegistry, insertEvent, setActiveEvent } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
+import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 
 const TEST_CFG = { adminPassword: 'test', jwtSecret: 'secret-test', dataDir: '', maxDataBytes: 0 };
+const EVENT_ID = 'ev-videos-test';
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-vid-'));
+  const eventDir = join(dir, 'events', EVENT_ID);
+  mkdirSync(join(eventDir, 'videos'), { recursive: true });
+  const edb = createEventDb(join(eventDir, 'db.sqlite'));
+  // Seed une question pour que les tests d'upload fonctionnent
+  edb.prepare("INSERT INTO questions (text, max_duration, countdown, order_index) VALUES ('Q1', 60, 3, 0)").run();
+  edb.close();
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
   const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
   const token = loginRes.body.token;
-  const evtRes = await request(app)
-    .post('/api/events')
-    .set('Authorization', `Bearer ${token}`)
-    .send({ name: 'Evt Videos' });
-  const eventId = evtRes.body.id;
-  await request(app)
-    .put(`/api/events/${eventId}/activate`)
-    .set('Authorization', `Bearer ${token}`);
+  insertEvent({ id: EVENT_ID, name: 'Evt Videos', origin: 'hub', status: 'loaded' });
+  setActiveEvent(EVENT_ID);
   const sessRes = await request(app)
     .post('/api/sessions')
     .send({ guest_name: 'Alice', consent: true });
@@ -30,7 +32,7 @@ async function setup() {
   const questRes = await request(app).get('/api/questions');
   const questionId = questRes.body[0].id;
   const questionText = questRes.body[0].text;
-  return { dir, app, token, eventId, sessionId, questionId, questionText };
+  return { dir, app, token, eventId: EVENT_ID, sessionId, questionId, questionText };
 }
 
 function teardown(dir) {
@@ -384,16 +386,15 @@ describe('POST /api/videos — quota 507', () => {
   beforeEach(async () => {
     // maxDataBytes = 1 → tout upload est refusé (quota atteint dès le 1er octet)
     const dir = mkdtempSync(join(tmpdir(), 'borne-vid-quota-'));
+    const quotaEventId = 'ev-quota-test';
+    const eventDir = join(dir, 'events', quotaEventId);
+    mkdirSync(join(eventDir, 'videos'), { recursive: true });
+    const edb = createEventDb(join(eventDir, 'db.sqlite'));
+    edb.prepare("INSERT INTO questions (text, max_duration, countdown, order_index) VALUES ('Q quota', 60, 3, 0)").run();
+    edb.close();
     const app = createApp(dir, { ...TEST_CFG, dataDir: dir, maxDataBytes: 1 });
-    const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
-    const token = loginRes.body.token;
-    const evtRes = await request(app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Evt Quota' });
-    await request(app)
-      .put(`/api/events/${evtRes.body.id}/activate`)
-      .set('Authorization', `Bearer ${token}`);
+    insertEvent({ id: quotaEventId, name: 'Evt Quota', origin: 'hub', status: 'loaded' });
+    setActiveEvent(quotaEventId);
     const sessRes = await request(app)
       .post('/api/sessions')
       .send({ guest_name: 'Bob', consent: true });

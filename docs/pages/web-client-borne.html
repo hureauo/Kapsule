@@ -144,10 +144,13 @@ export const api = {
   // Routes tech (requireTech) → techApiFetch / tech_token
   closeEvent:    (id) =&gt; techApiFetch(`/api/events/${id}/close`, { method: 'PUT' }),
   getPreflight:  (t)  =&gt; techApiFetch(`/api/preflight?client_time=${encodeURIComponent(t)}`),
-  getSyncStatus: ()   =&gt; techApiFetch('/api/sync/status'),
-  triggerPull:   ()   =&gt; techApiFetch('/api/sync/pull', { method: 'POST' }),
-  triggerPush:   (id) =&gt; techApiFetch(`/api/sync/push/${id}`, { method: 'POST' }),
-  purgeEvent:    (id, confirm) =&gt; techApiFetch(`/api/sync/purge/${id}`, { method: 'POST', body: JSON.stringify({ confirm }) }),
+  getSyncStatus:     ()   =&gt; techApiFetch('/api/sync/status'),
+  getHubConfig:      ()   =&gt; techApiFetch('/api/sync/hub-config'),
+  triggerPull:       ()   =&gt; techApiFetch('/api/sync/pull', { method: 'POST' }),
+  triggerPushConfig: ()   =&gt; techApiFetch('/api/sync/push-config', { method: 'POST' }),
+  updateToken:       (t)  =&gt; techApiFetch('/api/sync/token', { method: 'POST', body: JSON.stringify({ token: t }) }),
+  triggerPush:       (id) =&gt; techApiFetch(`/api/sync/push/${id}`, { method: 'POST' }),
+  purgeEvent:        (id, confirm) =&gt; techApiFetch(`/api/sync/purge/${id}`, { method: 'POST', body: JSON.stringify({ confirm }) }),
 };</code></pre>
 <p>
   Le découpage côté client doit <strong>refléter</strong> le re-tagging côté serveur : si
@@ -188,8 +191,8 @@ export const api = {
   <tr><td>apiFetch / techApiFetch</td><td>Deux wrappers <code>fetch</code> jumeaux : <code>admin_token</code> (client) vs <code>tech_token</code> (tech, §11.19).</td></tr>
   <tr><td>saveToken / clearToken / isAuthenticated</td><td>Gèrent <code>admin_token</code> (espace <code>/admin</code>).</td></tr>
   <tr><td>saveTechToken / clearTechToken / isTechAuthenticated</td><td>Gèrent <code>tech_token</code> (espace <code>/admin/tech</code>).</td></tr>
-  <tr><td>api.* (client)</td><td>listEvents, createEvent, activateEvent, updateEventSettings, questions, vidéos, sessions → <code>apiFetch</code>.</td></tr>
-  <tr><td>api.* (tech)</td><td>closeEvent, getPreflight, getSyncStatus, triggerPull, triggerPush, purgeEvent → <code>techApiFetch</code>.</td></tr>
+  <tr><td>api.* (client)</td><td>listEvents, activateEvent, updateEventSettings, questions, vidéos, sessions → <code>apiFetch</code>. (Plus de <code>createEvent</code> : la Borne ne crée plus d'événement local.)</td></tr>
+  <tr><td>api.* (tech)</td><td>closeEvent, getPreflight, getSyncStatus, getHubConfig, triggerPull, triggerPushConfig, updateToken, triggerPush, purgeEvent → <code>techApiFetch</code>.</td></tr>
   <tr><td>updateEventSettings(id, settings)</td><td>PUT du thème + textes vers <a href="#/borne-routes-events">/events/:id/settings</a> (JSON).</td></tr>
   <tr><td>videoStreamUrl / csvExportUrl / …</td><td>URLs avec <code>?token=</code> (<code>admin_token</code>) pour l'admin (§11.2).</td></tr>
   <tr><td>guestVideoUrl(sid, qid)</td><td>URL vidéo invité sans jeton (capability via UUID session).</td></tr>

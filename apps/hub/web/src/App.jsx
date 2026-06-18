@@ -26,7 +26,7 @@ export default function App() {
         <Route path="/admin" element={<RequireAdmin><AdminPage /></RequireAdmin>} />
         <Route path="/events" element={<RequireAuth><EventsPage /></RequireAuth>} />
         <Route path="/events/:id" element={<RequireAuth><EventDetailPage /></RequireAuth>} />
-        <Route path="*" element={<Navigate to={isAuthenticated() ? '/events' : '/login'} replace />} />
+        <Route path="*" element={<Navigate to={isAuthenticated() ? (getRole() === 'admin' ? '/admin' : '/events') : '/login'} replace />} />
       </Routes>
     </BrowserRouter>
   );

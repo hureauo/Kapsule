@@ -86,6 +86,7 @@ app.listen(3001);                   // démarre l'écoute</code></pre>
 <pre><code class="js">export function createApp(dataDir, opts = {}) {
   openRegistry(dataDir);
   const app = express();
+  app.set('trust proxy', 1);                        // 0. Hub derrière Nginx (un seul reverse proxy)
   app.use(express.json());                          // 1. parse le JSON entrant
 
   app.use('/api/auth', makeAuthRouter());           // 2. routeurs, DANS L'ORDRE
@@ -193,12 +194,58 @@ app.listen(3001);                   // démarre l'écoute</code></pre>
   </p>
 </div>
 
+<div class="callout info">
+  <div class="callout-title">ℹ <code>trust proxy</code> : Express derrière Nginx</div>
+  <p>
+    En production le Hub tourne <strong>derrière Nginx</strong> (terminaison TLS, fichiers statiques)
+    qui relaie vers le backend Express. <code>app.set('trust proxy', 1)</code> dit à Express de faire
+    confiance à <strong>un</strong> reverse proxy : il lit alors <code>X-Forwarded-For</code> /
+    <code>X-Forwarded-Proto</code> pour reconstituer l'IP cliente réelle et le protocole d'origine
+    (<code>req.protocol</code> renvoie <code>https</code> et non <code>http</code>). C'est ce que
+    consomme <a href="#/hub-routes-auth">express-rate-limit</a> (limiter par vraie IP, pas par celle
+    du proxy) et la construction des liens d'enregistrement
+    <code>`${req.protocol}://${req.get('host')}/register?token=…`</code> dans
+    <a href="#/hub-routes-events">PUT /events/:id/owner</a>. Le <code>1</code> (et non <code>true</code>)
+    borne la confiance à un seul saut : un client ne peut pas usurper son IP en injectant lui-même
+    un <code>X-Forwarded-For</code>.
+  </p>
+</div>
+
+<h2>Le seed d'un compte admin au démarrage</h2>
+<pre><code class="js">async function seedAdminIfNeeded() {
+  if (!config.adminEmail || !config.adminPassword) return;     // seed désactivé si l'un est vide
+  const db = getDb();
+  if (getUserByEmail(db, config.adminEmail)) return;           // déjà présent → idempotent
+  const password_hash = await argon2.hash(config.adminPassword, { type: argon2.argon2id });
+  insertUser(db, { email: config.adminEmail, password_hash, role: 'admin' });
+  console.log(`[hub] compte admin créé : ${config.adminEmail}`);
+}</code></pre>
+<p>
+  Au premier déploiement, le Hub n'a aucun compte — il faudrait lancer
+  <a href="#/hub-create-admin">create-admin</a> manuellement. <code>seedAdminIfNeeded</code> automatise
+  ce cas pour un déploiement Docker : si <code>ADMIN_EMAIL</code> et <code>ADMIN_PASSWORD_HUB</code>
+  sont fournis (<a href="#/hub-config">config</a>) et qu'aucun compte n'existe encore pour cet e-mail,
+  il crée un admin avec le mot de passe haché par <a href="#/hub-routes-auth">argon2</a>. C'est
+  <strong>idempotent</strong> : le garde <code>getUserByEmail</code> évite de recréer le compte (ou
+  d'écraser un mot de passe changé depuis) à chaque redémarrage. Le script <code>create-admin</code>
+  reste utile pour créer d'autres admins ou en interactif.
+</p>
+
 <h2>Le démarrage (rappel)</h2>
 <pre><code class="js">if (process.argv[1] === new URL(import.meta.url).pathname) {
   mkdirSync(config.dataDir, { recursive: true });
   const app = createApp(config.dataDir);
-  app.listen(config.port, () => console.log(`hub-server démarré sur le port ${config.port}`));
+  seedAdminIfNeeded().then(() => {                              // seed AVANT d'écouter
+    app.listen(config.port, () => console.log(`hub-server démarré sur le port ${config.port}`));
+  });
 }</code></pre>
+<p>
+  Le <code>seedAdminIfNeeded()</code> est <code>async</code> (argon2 hache de façon asynchrone) : on
+  attend qu'il finisse — via <code>.then(...)</code> — <strong>avant</strong> d'ouvrir l'écoute, pour
+  garantir que le compte existe dès la première requête. Notons qu'il n'est appelé que dans la branche
+  « lancé directement » : les <a href="#/tests-runner">tests</a> qui passent par <code>createApp</code>
+  ne seedent rien (ils créent leurs comptes explicitement).
+</p>
 <a class="see-also" href="#/arch-demarrage">→ notion JS : le main module guard (process.argv / import.meta.url) — vue dans Flux de démarrage</a>
 
 <table class="api-table">

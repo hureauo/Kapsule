@@ -3,11 +3,24 @@
 
 <p>
   Les routes technicien qui pilotent la synchronisation depuis la Borne : consulter l'état,
-  déclencher un pull manuel, lancer un push, purger un événement poussé. Ce sont des
-  <strong>déclencheurs</strong> — la logique réelle vit dans <span class="path">sync/</span>
-  (<a href="#/borne-sync-pull">pull.js</a>, <a href="#/borne-sync-push">push.js</a>). La notion clé
-  ici : lancer une <strong>tâche de fond</strong> sans bloquer la réponse HTTP.
+  comparer la config locale et celle du Hub, changer le token à chaud, déclencher un pull manuel,
+  remonter la config vers le Hub, lancer un push, réinitialiser une borne d'essai, purger un
+  événement poussé. Ce sont surtout des <strong>déclencheurs</strong> — la logique réelle vit dans
+  <span class="path">sync/</span> (<a href="#/borne-sync-pull">pull.js</a>,
+  <a href="#/borne-sync-push">push.js</a>). La notion clé ici : lancer une <strong>tâche de
+  fond</strong> sans bloquer la réponse HTTP.
 </p>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Plus de pull périodique : tout est manuel ou one-shot</div>
+  <p>
+    L'ancien <code>autoPull.js</code> (timer + heartbeats) a disparu. Le pull initial se fait au
+    démarrage (<a href="#/borne-index">index.js</a>) ; ensuite c'est le technicien qui synchronise via
+    ces routes. Le helper local <code>getLocalConfig(dataDir)</code> lit questions + <code>event_meta</code>
+    de l'événement actif et calcule un <strong>hash de config</strong> (<code>configHash</code>, sha256
+    tronqué) — comparé à celui du Hub pour détecter une divergence côté UI.
+  </p>
+</div>
 
 <div class="callout danger">
   <div class="callout-title">⛔ §11.19 : toute la synchro est réservée au technicien</div>
@@ -19,6 +32,63 @@
     <code>/sync/purge</code>. La synchro fait partie des outils de déploiement réservés à
     l'installateur (espace <code>/admin/tech</code>). Voir
     <a href="#/borne-middleware-auth">requireTech</a>.
+  </p>
+</div>
+
+<h2>État, comparaison de config et swap de token</h2>
+<pre><code class="js">// GET /sync/status — connexion Hub, token masqué, config locale (+hash), push en cours
+router.get('/sync/status', auth, (req, res) =&gt; {
+  res.json({
+    online: !!hubUrl, hubUrl,
+    token: boxToken ? `${boxToken.slice(0, 8)}…` : null,
+    isPreview: isPreviewMode(cfg),
+    lastPull: getLastPull(),
+    localConfig: getLocalConfig(dataDir),     // { questions, meta, hash }
+    push: getPushState(),
+  });
+});
+
+// GET /sync/hub-config — config actuelle du Hub (bundle), pour comparer au local
+router.get('/sync/hub-config', auth, async (req, res, next) =&gt; {
+  const active = getActiveEvent();
+  if (!active) return res.status(404).json({ error: 'Aucun événement actif' });
+  const bundle = await hubFetchJson(`/api/sync/events/${active.id}/bundle`);
+  res.json({ questions: bundle.questions, meta: bundle.event.meta ?? {}, hash: configHash(...) });
+});
+
+// POST /sync/token — change le BOX_TOKEN à chaud (sans redémarrer) puis pull immédiat
+router.post('/sync/token', auth, async (req, res, next) =&gt; {
+  const { token } = req.body ?? {};
+  if (!token?.trim()) return res.status(400).json({ error: 'token requis' });
+  config.boxToken = token.trim(); cfg.boxToken = token.trim();
+  await pullMyEvent(dataDir).catch(() =&gt; {});   // charge l'événement du nouveau token
+  res.json({ ok: true });
+});</code></pre>
+<p>
+  Trois utilitaires de déploiement :
+</p>
+<ul>
+  <li><strong><code>GET /sync/status</code></strong> expose désormais <code>isPreview</code> (mode
+      démo, §11.21) et <code>localConfig</code> (questions + meta + <strong>hash</strong>). Le front
+      compare ce hash à celui de <code>hub-config</code> pour afficher « config locale ≠ Hub ».</li>
+  <li><strong><code>GET /sync/hub-config</code></strong> va chercher le bundle du Hub
+      (<a href="#/hub-routes-sync">GET /bundle</a>) et renvoie le même format que
+      <code>localConfig</code> — c'est la moitié « distante » de la comparaison. <code>404</code> si
+      aucun événement actif.</li>
+  <li><strong><code>POST /sync/token</code></strong> réécrit <code>BOX_TOKEN</code> <em>en mémoire</em>
+      (config module + <code>cfg</code> injecté) puis relance un <code>pullMyEvent</code> immédiat : le
+      technicien peut basculer la borne d'un événement à l'autre (ou réel↔essai) sans redémarrer le
+      conteneur. <code>400</code> si le token est vide.</li>
+</ul>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Le swap de token modifie la config <em>vivante</em></div>
+  <p>
+    <code>config.boxToken = …</code> mute l'objet config importé : tous les modules qui le lisent
+    (<a href="#/borne-sync-hubclient">hubClient</a> pose <code>X-Box-Token</code> à chaque appel)
+    prennent le nouveau token au prochain usage. C'est possible parce que <code>config</code> est un
+    objet partagé (singleton ESM), pas une copie. Le changement n'est <strong>pas persisté</strong> :
+    au redémarrage, c'est la variable d'environnement <code>BOX_TOKEN</code> qui refait foi.
   </p>
 </div>
 
@@ -199,24 +269,50 @@ router.post('/sync/push/:eventId', auth, (req, res, next) =&gt; {
   </p>
 </div>
 
-<h2>Pull manuel</h2>
-<pre><code class="js">router.post('/sync/pull', auth, (req, res) =&gt; {
-  pullMyEvent(dataDir).catch(() =&gt; {});   // best-effort, sans attendre
-  res.json({ ok: true });
+<h2>Pull manuel (attendu) et remontée de config</h2>
+<pre><code class="js">// POST /sync/pull — attend la fin du pull et retourne le résultat
+router.post('/sync/pull', auth, async (req, res, next) =&gt; {
+  const pulled = await pullMyEvent(dataDir);
+  res.json({ ok: true, pulled: pulled &gt; 0, localConfig: getLocalConfig(dataDir) });
+});
+
+// POST /sync/push-config — pousse questions + event_meta de l'actif vers le Hub (overwrite)
+router.post('/sync/push-config', auth, async (req, res, next) =&gt; {
+  if (!config.hubUrl &amp;&amp; !cfg.hubUrl) {
+    return res.status(409).json({ error: 'Borne en mode autonome — aucun Hub configuré' });
+  }
+  const active = getActiveEvent();
+  if (!active) return res.status(404).json({ error: 'Aucun événement actif' });
+  const result = await pushConfig(active.id, dataDir);   // sync/push.js
+  res.json(result);
 });</code></pre>
 <p>
-  Même pattern « fire and forget » : on déclenche un pull immédiat (en plus du
-  <a href="#/borne-sync-autopull">pull automatique périodique</a>) sans attendre son résultat. Utile
-  pour forcer une synchro quand l'opérateur vient de préparer l'événement côté Hub.
+  Contrairement au push de vidéos, ces deux routes <strong>attendent</strong> leur résultat
+  (<code>await</code>) — les opérations sont rapides (un seul aller-retour JSON) :
 </p>
+<ul>
+  <li><strong><code>POST /sync/pull</code></strong> ne fait plus du « fire and forget » : il attend
+      <code>pullMyEvent</code>, puis renvoie <code>{ ok, pulled, localConfig }</code> — le client voit
+      tout de suite s'il y a eu un pull et la config qui en résulte (utile après avoir préparé
+      l'événement côté Hub).</li>
+  <li><strong><code>POST /sync/push-config</code></strong> fait l'inverse du pull : la Borne
+      <em>remonte</em> ses questions + <code>event_meta</code> vers le Hub en mode <code>overwrite</code>
+      (<a href="#/borne-sync-push">pushConfig</a> → <a href="#/hub-routes-sync">POST /sync/events/:id/config</a>).
+      Usage principal : un client ajuste sa config sur la borne d'essai et la <strong>remonte</strong>
+      au Hub. <strong>Autorisée en mode démo</strong> (au contraire du push de vidéos). <code>409</code>
+      en mode autonome, <code>404</code> sans événement actif.</li>
+</ul>
 
 <p>Toutes ces routes exigent un jeton <strong>tech</strong> (<code>requireTech</code>, §11.19).</p>
 
 <table class="api-table">
   <tr><th>Endpoint</th><th>Rôle</th></tr>
-  <tr><td>GET /sync/status</td><td>État : en ligne ?, URL Hub, dernier pull, progression du push.</td></tr>
-  <tr><td>POST /sync/pull</td><td>Déclenche un pull immédiat (tâche de fond).</td></tr>
-  <tr><td>POST /sync/push/:eventId</td><td>Lance le push (tâche de fond, gardes : pas mode démo §11.21, closed, pas déjà en cours).</td></tr>
+  <tr><td>GET /sync/status</td><td>État : en ligne ?, token masqué, <code>isPreview</code>, dernier pull, <code>localConfig</code> (questions+meta+hash), progression du push.</td></tr>
+  <tr><td>GET /sync/hub-config</td><td>Config actuelle du Hub (bundle) pour comparaison. <code>404</code> sans actif.</td></tr>
+  <tr><td>POST /sync/token</td><td>Change <code>BOX_TOKEN</code> à chaud (en mémoire) + pull immédiat. <code>400</code> si vide.</td></tr>
+  <tr><td>POST /sync/pull</td><td>Pull manuel <strong>attendu</strong> : renvoie <code>{ ok, pulled, localConfig }</code>.</td></tr>
+  <tr><td>POST /sync/push-config</td><td>Remonte questions + event_meta au Hub (overwrite). Autorisé en mode démo. <code>409</code> autonome, <code>404</code> sans actif.</td></tr>
+  <tr><td>POST /sync/push/:eventId</td><td>Lance le push de vidéos (tâche de fond, gardes : pas mode démo §11.21, closed, pas déjà en cours).</td></tr>
   <tr><td>POST /sync/reset-preview</td><td>Borne d'essai : vide sessions + vidéos de l'événement actif sans toucher aux questions. <code>403</code> hors mode démo (§11.21).</td></tr>
   <tr><td>POST /sync/purge/:eventId</td><td>Supprime les fichiers locaux après push (§11.11 + confirmation).</td></tr>
 </table>

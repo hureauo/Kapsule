@@ -73,8 +73,13 @@ if (allowed !== status) {
   });
 }</code></pre>
 
-<h2>Création d'un événement</h2>
-<pre><code class="js">router.post('/', requireUser, (req, res, next) => {
+<h2>Création d'un événement (réservée à l'admin)</h2>
+<pre><code class="js">function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Réservé aux admins' });
+  next();
+}
+
+router.post('/', requireUser, requireAdmin, (req, res, next) => {
   try {
     const { name, event_date } = req.body;
     if (!name || typeof name !== 'string' || !name.trim()) {
@@ -98,6 +103,63 @@ if (allowed !== status) {
   et seede les questions). L'<code>uuidv4()</code> vient du paquet <code>uuid</code> (importé
   <code>{ v4 as uuidv4 }</code>). <code>req.user.sub</code> est l'id du propriétaire, posé par
   <a href="#/hub-middleware-auth">requireUser</a>.
+</p>
+<p>
+  <strong>Seul un admin crée un événement</strong> : le garde local <code>requireAdmin</code>
+  (déclaré dans ce fichier, distinct du <code>requireAdmin</code> de
+  <a href="#/hub-routes-admin">routes/admin.js</a> mais identique) renvoie <code>403</code> à un
+  client. Dans le modèle Phase 6, c'est le super-admin qui crée les événements puis les
+  <em>assigne</em> à un client (route ci-dessous) ; le client édite ensuite « ses » événements mais
+  n'en crée pas. Le propriétaire initial est l'admin lui-même (<code>owner_id: req.user.sub</code>),
+  jusqu'à réassignation.
+</p>
+
+<h2>Assigner un client : <code>PUT /:eventId/owner</code></h2>
+<pre><code class="js">router.put('/:eventId/owner', requireUser, requireAdmin, requireOwner, async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email || !email.trim()) return res.status(400).json({ error: 'email requis' });
+
+    const db = getDb();
+    let user = getUserByEmail(db, email.trim());
+    let registration_url = null;
+    let created = false;
+
+    if (!user) {                                        // compte inexistant → on le crée (sans mdp)
+      const result = insertUser(db, { email: email.trim(), role: 'client' });
+      user = { id: result.lastInsertRowid, email: email.trim() };
+      const { token } = createRegistrationToken(db, { user_id: user.id });
+      registration_url = `${req.protocol}://${req.get('host')}/register?token=${token}`;
+      created = true;
+    }
+
+    db.prepare('UPDATE events SET owner_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(user.id, req.params.eventId);
+
+    res.json({ event: getEvent(db, req.params.eventId), owner: { id: user.id, email: user.email },
+               created, registration_url });
+  } catch (err) { next(err); }
+});</code></pre>
+<p>
+  Cette route donne la propriété d'un événement à un client par son e-mail. Deux cas :
+</p>
+<ul>
+  <li><strong>Le compte existe déjà</strong> : on se contente de réassigner <code>owner_id</code>.
+      <code>created = false</code>, <code>registration_url = null</code>.</li>
+  <li><strong>Le compte n'existe pas</strong> : on le crée <em>sans mot de passe</em>
+      (<code>role: 'client'</code>, <code>password_hash</code> reste <code>null</code>), on génère un
+      jeton d'enregistrement (<a href="#/hub-registry">createRegistrationToken</a>) et on renvoie une
+      <code>registration_url</code> que l'admin transmet au client pour qu'il définisse son mot de
+      passe. <code>created = true</code>.</li>
+</ul>
+<p>
+  L'URL d'enregistrement est <strong>dérivée de la requête</strong> :
+  <code>`${req.protocol}://${req.get('host')}/register?token=…`</code>. C'est pourquoi le Hub fait
+  confiance au reverse proxy (<a href="#/hub-index"><code>trust proxy</code></a>) — sinon
+  <code>req.protocol</code> renverrait <code>http</code> derrière Nginx. Aucune variable d'URL
+  publique à configurer (l'ancien <code>PUBLIC_URL</code> a disparu). La route est protégée par
+  <code>requireAdmin</code> <em>et</em> <code>requireOwner</code> (l'événement doit exister : 404
+  sinon, posé par <a href="#/hub-middleware-auth">requireOwner</a>).
 </p>
 
 <h2>La purge RGPD : <code>DELETE /:eventId</code></h2>
@@ -164,10 +226,11 @@ if (allowed !== status) {
 <table class="api-table">
   <tr><th>Endpoint</th><th>Auth</th><th>Rôle</th></tr>
   <tr><td>GET /</td><td>user</td><td>Liste les événements (filtrés par propriétaire sauf admin).</td></tr>
-  <tr><td>POST /</td><td>user</td><td>Crée un événement (fiche + dossier + db.sqlite).</td></tr>
+  <tr><td>POST /</td><td>user+<strong>admin</strong></td><td>Crée un événement (fiche + dossier + db.sqlite). 403 pour un client.</td></tr>
   <tr><td>GET /:eventId</td><td>user+owner</td><td>Détail (sert <code>req.event</code>).</td></tr>
   <tr><td>PUT /:eventId</td><td>user+owner</td><td>Modifie nom/date + <code>consent_text</code>/<code>idle_timeout</code> (écrits dans event_meta). 409 si gelé.</td></tr>
   <tr><td>PUT /:eventId/status</td><td>user+owner</td><td>Transition manuelle draft↔ready uniquement.</td></tr>
   <tr><td>GET /:eventId/sync</td><td>user+owner</td><td>État de synchro (jobs, sync_log, <code>tokens</code> de borne liés à l'événement).</td></tr>
+  <tr><td>PUT /:eventId/owner</td><td>user+<strong>admin</strong>+owner</td><td>Assigne un client (email). Crée le compte sans mdp + <code>registration_url</code> s'il n'existe pas. 400 si email manquant.</td></tr>
   <tr><td>DELETE /:eventId</td><td>user+owner</td><td>Purge RGPD (confirmation + §11.11).</td></tr>
 </table>

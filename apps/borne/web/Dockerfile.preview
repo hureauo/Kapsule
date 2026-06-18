@@ -1,0 +1,25 @@
+# Frontend borne d'essai — HTTP uniquement (pas de TLS, port 80).
+# Différences vs Dockerfile principal : pas d'openssl, pas d'entrypoint, nginx:alpine direct.
+
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY packages/core/package.json ./packages/core/
+COPY apps/borne/web/package.json ./apps/borne/web/
+
+RUN npm ci
+
+COPY packages/core/src ./packages/core/src
+COPY apps/borne/web ./apps/borne/web
+
+WORKDIR /app/apps/borne/web
+RUN npm run build
+
+FROM nginx:alpine
+
+COPY docker/preview-nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/apps/borne/web/dist /usr/share/nginx/html
+
+EXPOSE 80

@@ -26,7 +26,7 @@ before(async () => {
   const db = getDb();
   const hash = await argon2.hash('pass123', { type: argon2.argon2id });
   const hashOther = await argon2.hash('other123', { type: argon2.argon2id });
-  const res = insertUser(db, { email: 'owner@gallery.test', password_hash: hash, role: 'client' });
+  const res = insertUser(db, { email: 'owner@gallery.test', password_hash: hash, role: 'admin' });
   insertUser(db, { email: 'other@gallery.test', password_hash: hashOther, role: 'client' });
 
   const loginRes = await supertest(app).post('/api/auth/login').send({ email: 'owner@gallery.test', password: 'pass123' });

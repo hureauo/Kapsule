@@ -1,12 +1,14 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
 import { createApp } from '../src/index.js';
-import { closeRegistry, updateEventStatus } from '../src/registry.js';
+import { closeRegistry, insertEvent, setActiveEvent, updateEventStatus } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
+import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
+import { DEFAULTS } from '@kapsule/core';
 import { _setPushRunning } from '../src/sync/push.js';
 
 const TEST_CFG = { adminPassword: 'test', techPassword: 'tech-test', jwtSecret: 'secret-test', dataDir: '' };
@@ -14,10 +16,8 @@ const TEST_CFG = { adminPassword: 'test', techPassword: 'tech-test', jwtSecret: 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-ev-'));
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
-  // token client (adminPassword) — pour les routes requireAdmin
   const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
   const token = loginRes.body.token;
-  // token tech (techPassword) — pour les routes requireTech (close, preflight, sync)
   const techRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
   const techToken = techRes.body.token;
   return { dir, app, token, techToken };
@@ -27,6 +27,25 @@ function teardown(dir) {
   closeEventDb();
   closeRegistry();
   rmSync(dir, { recursive: true });
+}
+
+// Crée un événement hub en statut 'loaded' avec sa structure disque.
+function makeEvent(dir, id, name = 'Test Event') {
+  const eventDir = join(dir, 'events', id);
+  mkdirSync(join(eventDir, 'videos'), { recursive: true });
+  const db = createEventDb(join(eventDir, 'db.sqlite'));
+  db.prepare('INSERT OR IGNORE INTO event_meta (key,value) VALUES (?,?)').run('theme', DEFAULTS.THEME);
+  db.prepare('INSERT OR IGNORE INTO event_meta (key,value) VALUES (?,?)').run('name', name);
+  db.close();
+  insertEvent({ id, name, origin: 'hub', status: 'loaded' });
+  return id;
+}
+
+// Crée un événement et l'active.
+function makeActiveEvent(dir, id, name = 'Test Event') {
+  makeEvent(dir, id, name);
+  setActiveEvent(id);
+  return id;
 }
 
 // ── GET /api/events ───────────────────────────────────────────────────────────
@@ -48,45 +67,19 @@ describe('GET /api/events', () => {
   });
 });
 
-// ── POST /api/events ──────────────────────────────────────────────────────────
+// ── POST /api/events supprimé — 404 attendu ──────────────────────────────────
 
 describe('POST /api/events', () => {
   let ctx;
   beforeEach(async () => { ctx = await setup(); });
   afterEach(() => teardown(ctx.dir));
 
-  test('crée un événement local et retourne 201', async () => {
+  test('retourne 404 — création locale désactivée', async () => {
     const res = await request(ctx.app)
       .post('/api/events')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ name: 'Mariage Test' });
-    assert.equal(res.status, 201);
-    assert.equal(res.body.name, 'Mariage Test');
-    assert.equal(res.body.origin, 'local');
-    assert.ok(res.body.id);
-  });
-
-  test('crée le dossier events/<id>/videos sur disque', async () => {
-    const res = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({ name: 'Test disque' });
-    const { existsSync } = await import('node:fs');
-    assert.ok(existsSync(join(ctx.dir, 'events', res.body.id, 'videos')));
-    assert.ok(existsSync(join(ctx.dir, 'events', res.body.id, 'db.sqlite')));
-  });
-
-  test('retourne 400 si name manquant', async () => {
-    const res = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({});
-    assert.equal(res.status, 400);
-  });
-
-  test('retourne 401 sans token', async () => {
-    const res = await request(ctx.app).post('/api/events').send({ name: 'X' });
-    assert.equal(res.status, 401);
+    assert.equal(res.status, 404);
   });
 });
 
@@ -98,12 +91,9 @@ describe('PUT /api/events/:id/activate', () => {
   afterEach(() => teardown(ctx.dir));
 
   test('active un événement existant', async () => {
-    const created = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({ name: 'Evt A' });
+    makeEvent(ctx.dir, 'ev-activate', 'Evt A');
     const res = await request(ctx.app)
-      .put(`/api/events/${created.body.id}/activate`)
+      .put('/api/events/ev-activate/activate')
       .set('Authorization', `Bearer ${ctx.token}`);
     assert.equal(res.status, 200);
     assert.equal(res.body.active, 1);
@@ -122,19 +112,16 @@ describe('PUT /api/events/:id/activate', () => {
   });
 
   test('retourne 409 si un push est en cours (§6)', async () => {
-    const created = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({ name: 'Evt push' });
+    makeEvent(ctx.dir, 'ev-push', 'Evt push');
     _setPushRunning(true);
     try {
       const res = await request(ctx.app)
-        .put(`/api/events/${created.body.id}/activate`)
+        .put('/api/events/ev-push/activate')
         .set('Authorization', `Bearer ${ctx.token}`);
       assert.equal(res.status, 409);
       assert.match(res.body.error, /push/i);
     } finally {
-      _setPushRunning(false); // ne pas polluer les autres tests (état module partagé)
+      _setPushRunning(false);
     }
   });
 });
@@ -147,37 +134,28 @@ describe('PUT /api/events/:id/close', () => {
   afterEach(() => teardown(ctx.dir));
 
   test('clôture un événement live (tech token)', async () => {
-    const created = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({ name: 'Evt Live' });
-    updateEventStatus(created.body.id, 'live');
+    makeEvent(ctx.dir, 'ev-live', 'Evt Live');
+    updateEventStatus('ev-live', 'live');
     const res = await request(ctx.app)
-      .put(`/api/events/${created.body.id}/close`)
+      .put('/api/events/ev-live/close')
       .set('Authorization', `Bearer ${ctx.techToken}`);
     assert.equal(res.status, 200);
     assert.equal(res.body.status, 'closed');
   });
 
   test('retourne 403 avec un token client (§11.19)', async () => {
-    const created = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({ name: 'Evt 403' });
-    updateEventStatus(created.body.id, 'live');
+    makeEvent(ctx.dir, 'ev-403', 'Evt 403');
+    updateEventStatus('ev-403', 'live');
     const res = await request(ctx.app)
-      .put(`/api/events/${created.body.id}/close`)
+      .put('/api/events/ev-403/close')
       .set('Authorization', `Bearer ${ctx.token}`);
     assert.equal(res.status, 403);
   });
 
   test('retourne 409 si l\'événement n\'est pas live', async () => {
-    const created = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({ name: 'Evt Loaded' });
+    makeEvent(ctx.dir, 'ev-loaded', 'Evt Loaded');
     const res = await request(ctx.app)
-      .put(`/api/events/${created.body.id}/close`)
+      .put('/api/events/ev-loaded/close')
       .set('Authorization', `Bearer ${ctx.techToken}`);
     assert.equal(res.status, 409);
   });
@@ -190,7 +168,7 @@ describe('PUT /api/events/:id/close', () => {
   });
 });
 
-// ── GET /api/event (public) ────────────────────────────────────────────────────
+// ── GET /api/event (public) ───────────────────────────────────────────────────
 
 describe('GET /api/event', () => {
   let ctx;
@@ -203,70 +181,45 @@ describe('GET /api/event', () => {
   });
 
   test('retourne l\'événement actif avec consent_text et idle_timeout', async () => {
-    const created = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({ name: 'Evt Public' });
-    await request(ctx.app)
-      .put(`/api/events/${created.body.id}/activate`)
-      .set('Authorization', `Bearer ${ctx.token}`);
+    makeActiveEvent(ctx.dir, 'ev-public', 'Evt Public');
     const res = await request(ctx.app).get('/api/event');
     assert.equal(res.status, 200);
-    assert.equal(res.body.id, created.body.id);
+    assert.equal(res.body.id, 'ev-public');
     assert.equal(res.body.name, 'Evt Public');
     assert.ok(res.body.consent_text);
     assert.ok(typeof res.body.idle_timeout === 'number');
   });
 
   test('accessible sans token (route publique)', async () => {
-    const created = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({ name: 'Evt Public 2' });
-    await request(ctx.app)
-      .put(`/api/events/${created.body.id}/activate`)
-      .set('Authorization', `Bearer ${ctx.token}`);
-    const res = await request(ctx.app).get('/api/event'); // pas de token
+    makeActiveEvent(ctx.dir, 'ev-public2', 'Evt Public 2');
+    const res = await request(ctx.app).get('/api/event');
     assert.equal(res.status, 200);
   });
 });
 
-// ── PUT /api/events/:id/settings (thème) ──────────────────────────────────────
+// ── PUT /api/events/:id/settings (thème) ─────────────────────────────────────
 
 describe('PUT /api/events/:id/settings', () => {
   let ctx;
   beforeEach(async () => { ctx = await setup(); });
   afterEach(() => teardown(ctx.dir));
 
-  // Crée un événement et l'active (le thème ne se configure que sur l'actif).
-  async function createActiveEvent(name) {
-    const res = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({ name });
-    await request(ctx.app)
-      .put(`/api/events/${res.body.id}/activate`)
-      .set('Authorization', `Bearer ${ctx.token}`);
-    return res.body.id;
-  }
-
   test('écrit le thème et le relit via GET /event', async () => {
-    const id = await createActiveEvent('Evt Thème');
+    makeActiveEvent(ctx.dir, 'ev-theme', 'Evt Thème');
     const put = await request(ctx.app)
-      .put(`/api/events/${id}/settings`)
+      .put('/api/events/ev-theme/settings')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ theme: 'dark' });
     assert.equal(put.status, 200);
     assert.equal(put.body.theme, 'dark');
-
     const get = await request(ctx.app).get('/api/event');
     assert.equal(get.body.theme, 'dark');
   });
 
   test('accepte le thème modern', async () => {
-    const id = await createActiveEvent('Evt Modern');
+    makeActiveEvent(ctx.dir, 'ev-modern', 'Evt Modern');
     const put = await request(ctx.app)
-      .put(`/api/events/${id}/settings`)
+      .put('/api/events/ev-modern/settings')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ theme: 'modern' });
     assert.equal(put.status, 200);
@@ -274,27 +227,24 @@ describe('PUT /api/events/:id/settings', () => {
   });
 
   test('thème par défaut = cute à la création', async () => {
-    await createActiveEvent('Evt Défaut');
+    makeActiveEvent(ctx.dir, 'ev-default', 'Evt Défaut');
     const get = await request(ctx.app).get('/api/event');
     assert.equal(get.body.theme, 'cute');
   });
 
   test('retourne 400 pour un thème invalide', async () => {
-    const id = await createActiveEvent('Evt Invalide');
+    makeActiveEvent(ctx.dir, 'ev-invalid', 'Evt Invalide');
     const res = await request(ctx.app)
-      .put(`/api/events/${id}/settings`)
+      .put('/api/events/ev-invalid/settings')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ theme: 'neon' });
     assert.equal(res.status, 400);
   });
 
   test('retourne 409 si l\'événement n\'est pas actif', async () => {
-    const res = await request(ctx.app)
-      .post('/api/events')
-      .set('Authorization', `Bearer ${ctx.token}`)
-      .send({ name: 'Evt Inactif' });
+    makeEvent(ctx.dir, 'ev-inactive', 'Evt Inactif');
     const put = await request(ctx.app)
-      .put(`/api/events/${res.body.id}/settings`)
+      .put('/api/events/ev-inactive/settings')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ theme: 'dark' });
     assert.equal(put.status, 409);
@@ -316,22 +266,21 @@ describe('PUT /api/events/:id/settings', () => {
   });
 
   test('écrit name_prompt et le relit via GET /event', async () => {
-    const id = await createActiveEvent('Evt Name Prompt');
+    makeActiveEvent(ctx.dir, 'ev-name-prompt', 'Evt Name Prompt');
     const put = await request(ctx.app)
-      .put(`/api/events/${id}/settings`)
+      .put('/api/events/ev-name-prompt/settings')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ name_prompt: 'Quel est votre prénom ?' });
     assert.equal(put.status, 200);
     assert.equal(put.body.name_prompt, 'Quel est votre prénom ?');
-
     const get = await request(ctx.app).get('/api/event');
     assert.equal(get.body.name_prompt, 'Quel est votre prénom ?');
   });
 
   test('écrit thanks_text et le relit via GET /event', async () => {
-    const id = await createActiveEvent('Evt Thanks');
+    makeActiveEvent(ctx.dir, 'ev-thanks', 'Evt Thanks');
     await request(ctx.app)
-      .put(`/api/events/${id}/settings`)
+      .put('/api/events/ev-thanks/settings')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ thanks_text: 'Merci infiniment !' });
     const get = await request(ctx.app).get('/api/event');
@@ -339,10 +288,10 @@ describe('PUT /api/events/:id/settings', () => {
   });
 
   test('écrit consent_details et le relit via GET /event', async () => {
-    const id = await createActiveEvent('Evt Consent Details');
+    makeActiveEvent(ctx.dir, 'ev-consent', 'Evt Consent Details');
     const details = 'Vos données sont stockées 30 jours.';
     await request(ctx.app)
-      .put(`/api/events/${id}/settings`)
+      .put('/api/events/ev-consent/settings')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ consent_details: details });
     const get = await request(ctx.app).get('/api/event');
@@ -350,9 +299,9 @@ describe('PUT /api/events/:id/settings', () => {
   });
 
   test('écrit welcome_title et le relit', async () => {
-    const id = await createActiveEvent('Evt Welcome');
+    makeActiveEvent(ctx.dir, 'ev-welcome', 'Evt Welcome');
     await request(ctx.app)
-      .put(`/api/events/${id}/settings`)
+      .put('/api/events/ev-welcome/settings')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ welcome_title: 'Bienvenue à la soirée !' });
     const get = await request(ctx.app).get('/api/event');
@@ -360,13 +309,13 @@ describe('PUT /api/events/:id/settings', () => {
   });
 
   test('welcome_title dynamique = nom event quand non défini', async () => {
-    await createActiveEvent('Mon Mariage');
+    makeActiveEvent(ctx.dir, 'ev-dyn-title', 'Mon Mariage');
     const get = await request(ctx.app).get('/api/event');
     assert.equal(get.body.welcome_title, 'Mon Mariage');
   });
 
   test('welcome_subtitle dynamique = 1ère ligne du consent quand non défini', async () => {
-    await createActiveEvent('Evt Subtitle');
+    makeActiveEvent(ctx.dir, 'ev-dyn-subtitle', 'Evt Subtitle');
     const get = await request(ctx.app).get('/api/event');
     const { DEFAULTS: D } = await import('@kapsule/core');
     const expected = D.CONSENT_TEXT.split('\n')[0];
@@ -375,18 +324,18 @@ describe('PUT /api/events/:id/settings', () => {
 
   test('retourne 400 si un champ texte dépasse TEXT_FIELD_MAX', async () => {
     const { TEXT_FIELD_MAX: MAX } = await import('@kapsule/core');
-    const id = await createActiveEvent('Evt Long');
+    makeActiveEvent(ctx.dir, 'ev-long', 'Evt Long');
     const res = await request(ctx.app)
-      .put(`/api/events/${id}/settings`)
+      .put('/api/events/ev-long/settings')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ name_prompt: 'x'.repeat(MAX + 1) });
     assert.equal(res.status, 400);
   });
 
   test('retourne 400 si un champ texte n\'est pas une chaîne', async () => {
-    const id = await createActiveEvent('Evt Type');
+    makeActiveEvent(ctx.dir, 'ev-type', 'Evt Type');
     const res = await request(ctx.app)
-      .put(`/api/events/${id}/settings`)
+      .put('/api/events/ev-type/settings')
       .set('Authorization', `Bearer ${ctx.token}`)
       .send({ thanks_text: 42 });
     assert.equal(res.status, 400);
@@ -408,7 +357,7 @@ describe('GET /api/preflight', () => {
     assert.equal(res.body.event.loaded, false);
     assert.equal(res.body.questions_count, 0);
     assert.equal(typeof res.body.disk_ok, 'boolean');
-    assert.equal(res.body.clock_ok, null); // pas de ?client_time
+    assert.equal(res.body.clock_ok, null);
   });
 
   test('retourne 403 avec un token client (§11.19)', async () => {

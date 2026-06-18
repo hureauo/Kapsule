@@ -3,6 +3,11 @@ import { join } from 'node:path';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { getRegistry, insertEvent } from '../registry.js';
 import { hubFetchJson } from './hubClient.js';
+import { config } from '../config.js';
+
+let _lastPull = null;
+export function getLastPull() { return _lastPull; }
+function _setLastPull() { _lastPull = new Date().toISOString(); }
 
 /**
  * Tire un événement spécifique depuis le Hub et l'applique localement.
@@ -19,8 +24,9 @@ export async function pullEvent(hubEventId, dataDir) {
   const db = getRegistry();
   const existing = db.prepare('SELECT * FROM local_events WHERE id = ?').get(hubEventId);
 
-  if (existing && existing.status !== 'loaded') {
-    // Événement passé live/closed entre la requête et la réponse — ne pas écraser
+  // §11.10 : sur borne physique, ne jamais écraser un événement live/closed
+  // (sessions invités en cours). En preview, données jetables → toujours écraser.
+  if (existing && existing.status !== 'loaded' && !config.previewMode) {
     return { skipped: true, reason: `statut local ${existing.status} — pull ignoré` };
   }
 
@@ -52,17 +58,17 @@ export async function pullEvent(hubEventId, dataDir) {
       }
     })();
 
-    // Écrit event_meta (consent_text, idle_timeout) si présent
-    if (bundle.event.meta && Object.keys(bundle.event.meta).length > 0) {
-      const upsertMeta = edb.prepare(
-        'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
-      );
-      edb.transaction(() => {
+    // Écrase event_meta depuis le Hub (source de vérité) — DELETE + INSERT
+    // pour éviter de conserver des clés absentes du bundle (ex: thème changé côté hub)
+    edb.transaction(() => {
+      edb.prepare('DELETE FROM event_meta').run();
+      if (bundle.event.meta && typeof bundle.event.meta === 'object') {
+        const insMeta = edb.prepare('INSERT INTO event_meta (key, value) VALUES (?, ?)');
         for (const [k, v] of Object.entries(bundle.event.meta)) {
-          upsertMeta.run(k, v);
+          insMeta.run(k, v);
         }
-      })();
-    }
+      }
+    })();
   } finally {
     edb.close();
   }
@@ -88,12 +94,16 @@ export async function pullMyEvent(dataDir) {
   const db = getRegistry();
   const existing = db.prepare('SELECT * FROM local_events WHERE id = ?').get(eventInfo.id);
 
-  if (!existing || existing.status === 'loaded') {
+  // En mode preview, toujours puller (pas de sessions réelles à protéger).
+  // Sur borne physique, refuser si l'événement est live/closed (§11.10).
+  const canPull = !existing || existing.status === 'loaded' || config.previewMode;
+  if (canPull) {
     await pullEvent(eventInfo.id, dataDir);
-    // Persiste is_preview depuis la réponse Hub (§11.20)
     db.prepare('UPDATE local_events SET is_preview = ? WHERE id = ?')
       .run(eventInfo.is_preview ? 1 : 0, eventInfo.id);
+    _setLastPull();
     return 1;
   }
+  _setLastPull();
   return 0;
 }

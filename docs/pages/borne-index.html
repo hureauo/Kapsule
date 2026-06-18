@@ -104,22 +104,34 @@ app.use('/api', makeSessionsRouter(dataDir, routerCfg));
   même formule <code>isPreviewMode()</code> qui garde le push dans <a href="#/borne-routes-sync">sync.js</a>.
 </p>
 
-<h2>Démarrage (rappel) + le pull automatique</h2>
+<h2>Démarrage + pull one-shot</h2>
 <pre><code class="js">if (process.argv[1] === new URL(import.meta.url).pathname) {
   mkdirSync(config.dataDir, { recursive: true });
   const app = createApp(config.dataDir);
-  app.listen(config.port, () =&gt; console.log(`borne-server démarré sur le port ${config.port}`));
+  app.listen(config.port, async () =&gt; {
+    // Pull one-shot au démarrage — bootstrappe l'événement du token si aucun n'est présent.
+    // Les pulls suivants sont déclenchés manuellement depuis /admin/tech.
+    let pullResult = null;
+    if (config.hubUrl &amp;&amp; config.boxToken) {
+      pullResult = await pullMyEvent(config.dataDir)
+        .then(n =&gt; ({ pulled: n &gt; 0 }))
+        .catch(err =&gt; ({ error: err.message }));
+    }
+    // … puis affiche une bannière de boot (port, Hub, événement actif, quota, secret JWT) …
+  });
 }</code></pre>
 <a class="see-also" href="#/arch-demarrage">→ notion JS : le main module guard (vue dans Flux de démarrage)</a>
-<div class="callout warn">
-  <div class="callout-title">⚠ Où démarre le pull automatique ?</div>
+<div class="callout info">
+  <div class="callout-title">ℹ Un seul pull, au démarrage (plus de timer périodique)</div>
   <p>
-    Le code de <code>index.js</code> montré ici ne lance pas explicitement
-    <code>startAutoPull</code> dans cet extrait. Le démarrage du cycle de synchronisation
-    automatique est porté par <a href="#/borne-sync-autopull">autoPull.js</a> (fonction
-    <code>startAutoPull(dataDir)</code>) — à appeler au bootstrap de la Borne quand un Hub est
-    configuré. Reporte-toi à cette page pour le détail du cycle et à
-    <span class="path">ROADMAP.md</span> pour son état d'intégration.
+    L'ancien <code>autoPull.js</code> (un <code>setInterval</code> toutes les 5 min + des heartbeats)
+    a été <strong>supprimé</strong>. Désormais la Borne fait <strong>un pull au boot</strong>
+    (<a href="#/borne-sync-pull">pullMyEvent</a>) si un Hub et un token sont configurés — juste pour
+    bootstrapper l'événement du token si la borne est vierge. Le résultat est affiché dans la bannière
+    de démarrage (<code>✓ pull réussi</code> / <code>aucun événement pullable</code> / l'erreur).
+    Ensuite, toute synchro est <strong>manuelle</strong> depuis l'espace technicien
+    (<a href="#/borne-routes-sync">POST /sync/pull</a>, swap de token, push…). Le mode autonome
+    (pas de <code>hubUrl</code>/<code>boxToken</code>) saute simplement le pull.
   </p>
 </div>
 

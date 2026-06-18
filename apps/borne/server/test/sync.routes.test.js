@@ -85,12 +85,22 @@ describe('GET /api/sync/status', () => {
     assert.equal(res.status, 200);
     assert.ok('online' in res.body);
     assert.ok('hubUrl' in res.body);
+    assert.ok('token' in res.body);
+    assert.ok('isPreview' in res.body);
     assert.ok('lastPull' in res.body);
+    assert.ok('localConfig' in res.body);
     assert.ok('push' in res.body);
     assert.ok('running' in res.body.push);
     assert.ok('total' in res.body.push);
     assert.ok('done' in res.body.push);
     assert.ok('currentFile' in res.body.push);
+  });
+
+  it('token masqué (8 chars + …)', async () => {
+    const res = await request(app)
+      .get('/api/sync/status')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(res.body.token, 'tok…');
   });
 
   it('retourne 401 sans token', async () => {
@@ -114,20 +124,70 @@ describe('POST /api/sync/pull', () => {
 
   beforeEach(async () => {
     ({ dir, app, token } = await setup());
-    mockFetchSuccess();
+    // Mock /sync/event → 404 gracieux (pas d'event pullable)
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/event') && !url.includes('/bundle') && !url.includes('/status')) {
+        return { ok: false, status: 404, json: async () => ({ error: 'Aucun' }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
   });
   afterEach(() => { restoreFetch(); teardown(dir); });
 
-  it('retourne { ok: true } immédiatement', async () => {
+  it('retourne { ok: true, pulled } après le pull', async () => {
     const res = await request(app)
       .post('/api/sync/pull')
       .set('Authorization', `Bearer ${token}`);
     assert.equal(res.status, 200);
     assert.equal(res.body.ok, true);
+    assert.ok('pulled' in res.body);
   });
 
   it('retourne 401 sans token', async () => {
     const res = await request(app).post('/api/sync/pull');
+    assert.equal(res.status, 401);
+  });
+});
+
+// ── POST /api/sync/token ──────────────────────────────────────────────────────
+
+describe('POST /api/sync/token', () => {
+  let dir, app, token;
+
+  beforeEach(async () => {
+    ({ dir, app, token } = await setup());
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/event') && !url.includes('/bundle')) {
+        return { ok: false, status: 404, json: async () => ({ error: 'Aucun' }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+  });
+  afterEach(() => { restoreFetch(); teardown(dir); });
+
+  it('accepte un nouveau token et retourne { ok: true }', async () => {
+    const res = await request(app)
+      .post('/api/sync/token')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ token: 'nouveau-token-xyz' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+  });
+
+  it('retourne 400 si token absent', async () => {
+    const res = await request(app)
+      .post('/api/sync/token')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+    assert.equal(res.status, 400);
+  });
+
+  it('retourne 401 sans token auth', async () => {
+    const res = await request(app)
+      .post('/api/sync/token')
+      .send({ token: 'abc' });
     assert.equal(res.status, 401);
   });
 });
@@ -367,6 +427,49 @@ describe('POST /api/sync/push — mode démo', () => {
       .set('Authorization', `Bearer ${token}`);
     assert.equal(res.status, 409);
     assert.match(res.body.error, /mode démo/);
+  });
+});
+
+// ── POST /api/sync/push-config ───────────────────────────────────────────────
+
+describe('POST /api/sync/push-config', () => {
+  let dir, app, token;
+
+  beforeEach(async () => {
+    ({ dir, app, token } = await setup());
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true }) });
+  });
+  afterEach(() => { restoreFetch(); teardown(dir); });
+
+  it('retourne 404 si aucun événement actif', async () => {
+    const res = await request(app)
+      .post('/api/sync/push-config')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 404);
+    assert.match(res.body.error, /événement actif/);
+  });
+
+  it('retourne { ok: true } quand un événement actif existe', async () => {
+    const eventId = 'ev-push-config';
+    const eventDir = join(dir, 'events', eventId);
+    mkdirSync(join(eventDir, 'videos'), { recursive: true });
+    const edb = createEventDb(join(eventDir, 'db.sqlite'));
+    edb.close();
+    insertEvent({ id: eventId, name: 'Push Config Test', origin: 'hub', status: 'loaded' });
+    const { setActiveEvent } = await import('../src/registry.js');
+    setActiveEvent(eventId);
+
+    const res = await request(app)
+      .post('/api/sync/push-config')
+      .set('Authorization', `Bearer ${token}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+  });
+
+  it('retourne 401 sans token', async () => {
+    const res = await request(app).post('/api/sync/push-config');
+    assert.equal(res.status, 401);
   });
 });
 

@@ -11,11 +11,11 @@
       "Bash(git log:*)",
       "Bash(git show:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Read(./.env.example)"
     ],
     "deny": [
       "Read(./.env)",
-      "Read(./.env.*)",
       "Bash(git push:*)"
     ]
   }

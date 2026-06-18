@@ -36,20 +36,20 @@ before(async () => {
   tokenAdmin  = r1.body.token;
   tokenClient = r2.body.token;
 
-  // Événement en statut 'ready'
+  // Événement en statut 'ready' (création réservée aux admins §6E)
   const evRes = await request.post('/api/events')
-    .set('Authorization', `Bearer ${tokenClient}`)
+    .set('Authorization', `Bearer ${tokenAdmin}`)
     .send({ name: 'Événement Sync', event_date: '2026-09-01' });
   eventId = evRes.body.id;
 
   await request.put(`/api/events/${eventId}/status`)
-    .set('Authorization', `Bearer ${tokenClient}`)
+    .set('Authorization', `Bearer ${tokenAdmin}`)
     .send({ status: 'ready' });
 
   // Token de borne lié à cet événement (modèle 6C : token = événement §11.20)
   const raw = 'a'.repeat(64);
   const hash = createHash('sha256').update(raw).digest('hex');
-  insertBoxToken(db, { event_id: eventId, token_hash: hash, label: 'Borne Sync Test' });
+  insertBoxToken(db, { event_id: eventId, token_hash: hash, token_clear: raw, label: 'Borne Sync Test' });
   boxToken = raw;
 });
 
@@ -105,11 +105,11 @@ describe('GET /api/sync/event', () => {
     // Créer un event en draft + token pour lui
     const db = getDb();
     const evDraft = await request.post('/api/events')
-      .set('Authorization', `Bearer ${tokenClient}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ name: 'Draft event' });
     const rawDraft = randomBytes(32).toString('hex');
     const hashDraft = createHash('sha256').update(rawDraft).digest('hex');
-    insertBoxToken(db, { event_id: evDraft.body.id, token_hash: hashDraft, label: 'draft token' });
+    insertBoxToken(db, { event_id: evDraft.body.id, token_hash: hashDraft, token_clear: rawDraft, label: 'draft token' });
 
     const res = await request.get('/api/sync/event')
       .set('X-Box-Token', rawDraft);
@@ -154,14 +154,14 @@ describe('GET /api/sync/events/:id/bundle', () => {
     // Créer un événement B avec son propre token B
     const db = getDb();
     const evB = await request.post('/api/events')
-      .set('Authorization', `Bearer ${tokenClient}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ name: 'Événement borne B' });
     await request.put(`/api/events/${evB.body.id}/status`)
-      .set('Authorization', `Bearer ${tokenClient}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ status: 'ready' });
     const rawB = 'b'.repeat(64);
     const hashB = createHash('sha256').update(rawB).digest('hex');
-    insertBoxToken(db, { event_id: evB.body.id, token_hash: hashB, label: 'Borne B' });
+    insertBoxToken(db, { event_id: evB.body.id, token_hash: hashB, token_clear: rawB, label: 'Borne B' });
 
     // boxToken (lié à eventId) tente d'accéder à l'événement B → 403
     const res = await request.get(`/api/sync/events/${evB.body.id}/bundle`)
@@ -173,11 +173,11 @@ describe('GET /api/sync/events/:id/bundle', () => {
     // Créer un événement en draft + token pour lui
     const db = getDb();
     const evDraft2 = await request.post('/api/events')
-      .set('Authorization', `Bearer ${tokenClient}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ name: 'Événement draft 2' });
     const rawD = 'd'.repeat(64);
     const hashD = createHash('sha256').update(rawD).digest('hex');
-    insertBoxToken(db, { event_id: evDraft2.body.id, token_hash: hashD, label: 'Draft borne' });
+    insertBoxToken(db, { event_id: evDraft2.body.id, token_hash: hashD, token_clear: rawD, label: 'Draft borne' });
 
     const res = await request.get(`/api/sync/events/${evDraft2.body.id}/bundle`)
       .set('X-Box-Token', rawD);
@@ -241,12 +241,12 @@ describe('POST /api/sync/events/:id/status (heartbeat)', () => {
     const rawC = 'c'.repeat(64);
     const hashC = createHash('sha256').update(rawC).digest('hex');
     const evC = await request.post('/api/events')
-      .set('Authorization', `Bearer ${tokenClient}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ name: 'Événement borne C' });
     await request.put(`/api/events/${evC.body.id}/status`)
-      .set('Authorization', `Bearer ${tokenClient}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ status: 'ready' });
-    insertBoxToken(db, { event_id: evC.body.id, token_hash: hashC, label: 'Borne C' });
+    insertBoxToken(db, { event_id: evC.body.id, token_hash: hashC, token_clear: rawC, label: 'Borne C' });
     // pull pour passer en loaded
     await request.get(`/api/sync/events/${evC.body.id}/bundle`).set('X-Box-Token', rawC);
 
@@ -262,12 +262,12 @@ describe('POST /api/sync/events/:id/status (heartbeat)', () => {
     const rawE = 'e'.repeat(64);
     const hashE = createHash('sha256').update(rawE).digest('hex');
     const ev5 = await request.post('/api/events')
-      .set('Authorization', `Bearer ${tokenClient}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ name: 'Événement log test' });
     await request.put(`/api/events/${ev5.body.id}/status`)
-      .set('Authorization', `Bearer ${tokenClient}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ status: 'ready' });
-    insertBoxToken(db, { event_id: ev5.body.id, token_hash: hashE, label: 'Log test' });
+    insertBoxToken(db, { event_id: ev5.body.id, token_hash: hashE, token_clear: rawE, label: 'Log test' });
     // Pull pour passer en loaded
     await request.get(`/api/sync/events/${ev5.body.id}/bundle`).set('X-Box-Token', rawE);
 
@@ -287,16 +287,16 @@ describe('POST /api/sync/events/:id/status (heartbeat)', () => {
 
 // Crée un événement en état 'closed' avec son propre token de borne.
 // Retourne { id, token } — chaque événement a son propre token (§11.20).
-async function makeClosedEvent(req, db, tokenClient, name) {
+async function makeClosedEvent(req, db, _unusedToken, name) {
   const ev = await req.post('/api/events')
-    .set('Authorization', `Bearer ${tokenClient}`)
+    .set('Authorization', `Bearer ${tokenAdmin}`)
     .send({ name });
   const id = ev.body.id;
-  await req.put(`/api/events/${id}/status`).set('Authorization', `Bearer ${tokenClient}`).send({ status: 'ready' });
+  await req.put(`/api/events/${id}/status`).set('Authorization', `Bearer ${tokenAdmin}`).send({ status: 'ready' });
 
   const raw = randomBytes(32).toString('hex');
   const hash = createHash('sha256').update(raw).digest('hex');
-  insertBoxToken(db, { event_id: id, token_hash: hash, label: name });
+  insertBoxToken(db, { event_id: id, token_hash: hash, token_clear: raw, label: name });
 
   await req.get(`/api/sync/events/${id}/bundle`).set('X-Box-Token', raw);      // loaded
   await req.post(`/api/sync/events/${id}/status`).set('X-Box-Token', raw).send({ status: 'live' });
@@ -310,7 +310,7 @@ describe('POST /api/sync/events/:id/manifest', () => {
   let manifestEventId, manifestBoxToken;
 
   before(async () => {
-    const ev = await makeClosedEvent(request, getDb(), tokenClient, 'Push manifest test');
+    const ev = await makeClosedEvent(request, getDb(), tokenAdmin, 'Push manifest test');
     manifestEventId = ev.id;
     manifestBoxToken = ev.token;
   });
@@ -361,12 +361,12 @@ describe('POST /api/sync/events/:id/manifest', () => {
     // Utilise un événement en statut 'loaded' avec son token
     const db = getDb();
     const evLoaded = await request.post('/api/events')
-      .set('Authorization', `Bearer ${tokenClient}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ name: 'Loaded event' });
     await request.put(`/api/events/${evLoaded.body.id}/status`)
-      .set('Authorization', `Bearer ${tokenClient}`).send({ status: 'ready' });
+      .set('Authorization', `Bearer ${tokenAdmin}`).send({ status: 'ready' });
     const rawL = randomBytes(32).toString('hex');
-    insertBoxToken(db, { event_id: evLoaded.body.id, token_hash: createHash('sha256').update(rawL).digest('hex'), label: 'loaded' });
+    insertBoxToken(db, { event_id: evLoaded.body.id, token_hash: createHash('sha256').update(rawL).digest('hex'), token_clear: rawL, label: 'loaded' });
     await request.get(`/api/sync/events/${evLoaded.body.id}/bundle`).set('X-Box-Token', rawL);
 
     const res = await request.post(`/api/sync/events/${evLoaded.body.id}/manifest`)
@@ -389,7 +389,7 @@ describe('PUT /api/sync/events/:id/files/:videoId', () => {
   let uploadEventId, uploadBoxToken;
 
   before(async () => {
-    const ev = await makeClosedEvent(request, getDb(), tokenClient, 'Upload vidéo test');
+    const ev = await makeClosedEvent(request, getDb(), tokenAdmin, 'Upload vidéo test');
     uploadEventId = ev.id;
     uploadBoxToken = ev.token;
     await request.post(`/api/sync/events/${uploadEventId}/manifest`)
@@ -412,7 +412,7 @@ describe('PUT /api/sync/events/:id/files/:videoId', () => {
   it('retourne 422 si checksum mismatch', async () => {
     const badVid = uuidv4();
     const wrongChecksum = 'a'.repeat(64);
-    const evMismatch = await makeClosedEvent(request, getDb(), tokenClient, 'Checksum mismatch');
+    const evMismatch = await makeClosedEvent(request, getDb(), tokenAdmin, 'Checksum mismatch');
     await request.post(`/api/sync/events/${evMismatch.id}/manifest`)
       .set('X-Box-Token', evMismatch.token)
       .send({ files: [{ video_id: badVid, filename: `${badVid}.mp4`, size: 10, checksum: wrongChecksum }], db: { size: 0, checksum: 'x' } });
@@ -437,7 +437,7 @@ describe('PUT /api/sync/events/:id/db', () => {
   let dbUploadEventId, dbUploadBoxToken;
 
   before(async () => {
-    const ev = await makeClosedEvent(request, getDb(), tokenClient, 'Upload db test');
+    const ev = await makeClosedEvent(request, getDb(), tokenAdmin, 'Upload db test');
     dbUploadEventId = ev.id;
     dbUploadBoxToken = ev.token;
   });
@@ -468,7 +468,7 @@ describe('PUT /api/sync/events/:id/db', () => {
   });
 
   it('retourne 422 si checksum db mismatch', async () => {
-    const evDbMismatch = await makeClosedEvent(request, getDb(), tokenClient, 'DB mismatch');
+    const evDbMismatch = await makeClosedEvent(request, getDb(), tokenAdmin, 'DB mismatch');
     const wrongHash = 'b'.repeat(64);
     await request.post(`/api/sync/events/${evDbMismatch.id}/manifest`)
       .set('X-Box-Token', evDbMismatch.token)
@@ -488,7 +488,7 @@ describe('POST /api/sync/events/:id/finalize', () => {
   let finalizeEventId, finalizeBoxToken;
 
   before(async () => {
-    const ev = await makeClosedEvent(request, getDb(), tokenClient, 'Finalize test');
+    const ev = await makeClosedEvent(request, getDb(), tokenAdmin, 'Finalize test');
     finalizeEventId = ev.id;
     finalizeBoxToken = ev.token;
 
@@ -538,7 +538,7 @@ describe('POST /api/sync/events/:id/finalize', () => {
   });
 
   it('retourne 409 si des fichiers sont encore manquants', async () => {
-    const evPartial = await makeClosedEvent(request, getDb(), tokenClient, 'Partial push');
+    const evPartial = await makeClosedEvent(request, getDb(), tokenAdmin, 'Partial push');
     await request.post(`/api/sync/events/${evPartial.id}/manifest`)
       .set('X-Box-Token', evPartial.token)
       .send({ files: [{ video_id: 'missing-vid', filename: 'missing.mp4', size: 10, checksum: 'z'.repeat(64) }], db: { size: 0, checksum: 'z'.repeat(64) } });
@@ -550,7 +550,7 @@ describe('POST /api/sync/events/:id/finalize', () => {
   });
 
   it('retourne 409 si manifest absent', async () => {
-    const evNoManifest = await makeClosedEvent(request, getDb(), tokenClient, 'No manifest');
+    const evNoManifest = await makeClosedEvent(request, getDb(), tokenAdmin, 'No manifest');
     const res = await request.post(`/api/sync/events/${evNoManifest.id}/finalize`)
       .set('X-Box-Token', evNoManifest.token);
     assert.equal(res.status, 409);

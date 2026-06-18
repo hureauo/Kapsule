@@ -3,11 +3,22 @@ import { existsSync, mkdirSync, renameSync, writeFileSync, readFileSync, readdir
 import { join, extname } from 'node:path';
 import multer from 'multer';
 import { sha256File } from '@kapsule/core/src/checksum.js';
-import { LIMITS } from '@kapsule/core';
+import { LIMITS, THEMES, TEXT_FIELDS } from '@kapsule/core';
 import { getDb, getEvent, updateEvent, insertSyncLog } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { requireBox } from '../middleware/boxAuth.js';
 import { validateUuidParams } from '../middleware/validateParams.js';
+
+// Format : [hub/sync] ← METHOD /path  token=abc…  detail  → status résultat
+function syncLog(req, status, detail = '') {
+  const token = (req.headers['x-box-token'] ?? '').slice(0, 8) || '?';
+  const event = req.box?.event_id?.slice(0, 8) ?? '?';
+  const ok = status < 400;
+  const icon = ok ? '✓' : '✗';
+  const parts = [`[hub/sync] ${icon} ${req.method} ${req.path}`, `token=${token}…`, `event=${event}…`, `→ ${status}`];
+  if (detail) parts.push(detail);
+  console.log(parts.join('  '));
+}
 
 // Ordre des statuts pour les transitions avant uniquement (heartbeat)
 const STATUS_ORDER = ['draft', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'purged'];
@@ -73,14 +84,76 @@ export function makeSyncRouter(dataDir, opts = {}) {
     limits: { fileSize: maxUploadBytes, files: 1 },
   });
 
+  // ── POST /api/sync/events/:id/config — push config depuis borne/preview ──
+  // body: { mode: 'overwrite'|'merge', questions: [...], meta: { theme, ... } }
+  // Protégé par requireBox (token borne) — pas requireUser (JWT admin).
+  router.post('/events/:id/config', validateUuidParams('id'), (req, res, next) => {
+    try {
+      const db = getDb();
+      const event = getEvent(db, req.params.id);
+      if (!event) { syncLog(req, 404); return res.status(404).json({ error: 'Événement introuvable' }); }
+      if (req.params.id !== req.box.event_id) { syncLog(req, 403); return res.status(403).json({ error: 'Non assigné à cette borne' }); }
+
+      const FROZEN = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
+      if (FROZEN.has(event.status)) {
+        syncLog(req, 409, `statut ${event.status}`);
+        return res.status(409).json({ error: `Import impossible : événement en statut ${event.status}` });
+      }
+
+      const { mode, questions, meta } = req.body;
+      if (!['overwrite', 'merge'].includes(mode)) {
+        return res.status(400).json({ error: 'mode doit être overwrite ou merge' });
+      }
+
+      const META_KEYS = ['theme', 'idle_timeout', ...Object.keys(TEXT_FIELDS)];
+      const edb = openEventDb(event.id, dataDir);
+      const upsert = edb.prepare(
+        'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'
+      );
+
+      if (meta && typeof meta === 'object') {
+        for (const key of META_KEYS) {
+          if (meta[key] === undefined) continue;
+          if (mode === 'merge') {
+            const existing = edb.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value;
+            if (existing && existing.trim() !== '') continue;
+          }
+          if (key === 'theme' && !THEMES.includes(meta[key])) continue;
+          upsert.run(key, String(meta[key]));
+        }
+      }
+
+      if (Array.isArray(questions)) {
+        if (mode === 'overwrite') edb.prepare('DELETE FROM questions').run();
+        const existingTexts = new Set(edb.prepare('SELECT text FROM questions').all().map(q => q.text));
+        const insert = edb.prepare(
+          'INSERT INTO questions (text, max_duration, countdown, order_index, enabled) VALUES (?, ?, ?, ?, ?)'
+        );
+        const maxRow = edb.prepare('SELECT MAX(order_index) as m FROM questions').get();
+        let nextOrder = (maxRow?.m ?? -1) + 1;
+        for (const q of questions) {
+          if (!q.text || typeof q.text !== 'string') continue;
+          if (mode === 'merge' && existingTexts.has(q.text)) continue;
+          insert.run(q.text.slice(0, 500), q.max_duration ?? 60, q.countdown ?? 3, nextOrder++, q.enabled !== undefined ? (q.enabled ? 1 : 0) : 1);
+        }
+      }
+
+      insertSyncLog(db, { event_id: event.id, action: 'config_import', detail: { mode, questions: questions?.length ?? 0 } });
+      syncLog(req, 200, `mode=${mode}  questions=${questions?.length ?? 0}`);
+      res.json({ ok: true });
+    } catch (err) { next(err); }
+  });
+
   // ── GET /api/sync/event ───────────────────────────────────────────────────
   // Remplace GET /assigned (liste) — un token = un événement (§11.20)
   router.get('/event', (req, res) => {
     const db = getDb();
     const event = getEvent(db, req.box.event_id);
     if (!event || !['ready', 'loaded'].includes(event.status)) {
+      syncLog(req, 404, 'aucun événement pullable');
       return res.status(404).json({ error: 'Aucun événement pullable pour ce token' });
     }
+    syncLog(req, 200, `name="${event.name}"  status=${event.status}`);
     res.json({
       id: event.id, name: event.name, event_date: event.event_date,
       status: event.status, updated_at: event.updated_at,
@@ -114,6 +187,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const meta = Object.fromEntries(metaRows.map(r => [r.key, r.value]));
 
       const freshEvent = getEvent(db, event.id);
+      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  status=${freshEvent.status}`);
       res.json({ event: { ...freshEvent, meta }, questions });
     } catch (err) {
       next(err);
@@ -134,12 +208,14 @@ export function makeSyncRouter(dataDir, opts = {}) {
       if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Non assigné à cette borne' });
 
       if (statusRank(status) <= statusRank(event.status)) {
+        syncLog(req, 409, `transition ${event.status}→${status} refusée`);
         return res.status(409).json({ error: `Transition ${event.status}→${status} non autorisée (retour en arrière)` });
       }
 
       updateEvent(db, event.id, { status });
       insertSyncLog(db, { event_id: event.id,  action: 'status', detail: { from: event.status, to: status } });
 
+      syncLog(req, 200, `${event.status}→${status}`);
       res.json({ ok: true, status });
     } catch (err) {
       next(err);
@@ -176,6 +252,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       writeFileSync(manifestPath(dataDir, event.id), JSON.stringify({ files, db: dbMeta }));
       insertSyncLog(db, { event_id: event.id,  action: 'push_manifest', detail: { total: files.length, missing: missing.length } });
 
+      syncLog(req, 200, `total=${files.length}  missing=${missing.length}`);
       res.json({ missing });
     } catch (err) {
       next(err);
@@ -221,6 +298,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       }
 
       insertSyncLog(db, { event_id: event.id,  action: 'push_file', detail: { video_id: req.params.videoId, size: req.file.size } });
+      syncLog(req, 200, `video_id=${req.params.videoId.slice(0, 8)}…  size=${req.file.size}`);
       res.json({ ok: true, video_id: req.params.videoId, checksum: actual });
     } catch (err) {
       next(err);
@@ -275,6 +353,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       renameSync(req.file.path, dest);
 
       insertSyncLog(db, { event_id: event.id,  action: 'push_db', detail: { checksum: actual } });
+      syncLog(req, 200, `checksum=${actual.slice(0, 12)}…`);
       res.json({ ok: true, checksum: actual });
     } catch (err) {
       next(err);
@@ -322,6 +401,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       // Idempotence : si déjà pushed, ne pas ré-enfiler les jobs (évite doublons worker)
       if (event.status === 'pushed') {
         const existingJobs = db.prepare('SELECT COUNT(*) as n FROM jobs WHERE event_id = ?').get(event.id).n;
+        syncLog(req, 200, `already pushed  jobs=${existingJobs}`);
         return res.json({ ok: true, jobs: existingJobs, alreadyPushed: true });
       }
 
@@ -345,6 +425,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       updateEvent(db, event.id, { status: 'pushed', pushed_at: new Date().toISOString() });
       insertSyncLog(db, { event_id: event.id,  action: 'finalize', detail: { videos: manifest.files.length, jobs: jobsToCreate.length } });
 
+      syncLog(req, 200, `videos=${manifest.files.length}  jobs=${jobsToCreate.length}`);
       res.json({ ok: true, jobs: jobsToCreate.length });
     } catch (err) {
       next(err);

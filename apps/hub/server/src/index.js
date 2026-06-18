@@ -1,8 +1,9 @@
 import express from 'express';
 import { statfs } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
+import argon2 from 'argon2';
 import { config } from './config.js';
-import { openRegistry } from './registry.js';
+import { openRegistry, getDb, getUserByEmail, insertUser } from './registry.js';
 import { makeAuthRouter } from './routes/auth.js';
 import { makeEventsRouter } from './routes/events.js';
 import { makeQuestionsRouter } from './routes/questions.js';
@@ -10,10 +11,20 @@ import { makeAdminRouter } from './routes/admin.js';
 import { makeSyncRouter } from './routes/sync.js';
 import { makeGalleryRouter } from './routes/gallery.js';
 
+async function seedAdminIfNeeded() {
+  if (!config.adminEmail || !config.adminPassword) return;
+  const db = getDb();
+  if (getUserByEmail(db, config.adminEmail)) return;
+  const password_hash = await argon2.hash(config.adminPassword, { type: argon2.argon2id });
+  insertUser(db, { email: config.adminEmail, password_hash, role: 'admin' });
+  console.log(`[hub] compte admin créé : ${config.adminEmail}`);
+}
+
 export function createApp(dataDir, opts = {}) {
   openRegistry(dataDir);
 
   const app = express();
+  app.set('trust proxy', 1);
   app.use(express.json());
 
   app.use('/api/auth', makeAuthRouter());
@@ -56,7 +67,22 @@ export function createApp(dataDir, opts = {}) {
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   mkdirSync(config.dataDir, { recursive: true });
   const app = createApp(config.dataDir);
-  app.listen(config.port, () => {
-    console.log(`hub-server démarré sur le port ${config.port}`);
+  seedAdminIfNeeded().then(() => {
+    app.listen(config.port, () => {
+      const w = 52;
+      const line = (s = '') => console.log(`│ ${s.padEnd(w - 2)} │`);
+      console.log(`┌${'─'.repeat(w)}┐`);
+      line('  KAPSULE HUB');
+      console.log(`├${'─'.repeat(w)}┤`);
+      line(`  Port interne   : ${config.port}`);
+      line(`  Interface web  : https://<domaine>  (via Nginx)`);
+      line(`  Health check   : http://localhost:${config.port}/api/health`);
+      console.log(`├${'─'.repeat(w)}┤`);
+      line(`  Data dir       : ${config.dataDir}`);
+      line(`  Admin email    : ${config.adminEmail || '(non configuré)'}`);
+      line(`  Inscription    : ${config.allowRegister ? 'ouverte' : 'fermée (liens admin)'}`);
+      line(`  JWT secret     : ${config.jwtSecret === 'change-me' ? '⚠️  change-me (DEV)' : '✓ configuré'}`);
+      console.log(`└${'─'.repeat(w)}┘`);
+    });
   });
 }

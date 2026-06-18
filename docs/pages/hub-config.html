@@ -15,6 +15,8 @@ export const config = {
   jwtSecret: env.JWT_SECRET ?? 'change-me',
   dataDir: env.DATA_DIR ?? '/app/data',
   allowRegister: env.ALLOW_REGISTER === 'true',
+  adminEmail: env.ADMIN_EMAIL ?? '',
+  adminPassword: env.ADMIN_PASSWORD_HUB ?? '',
 };</code></pre>
 
 <p>
@@ -23,14 +25,21 @@ export const config = {
 </p>
 <a class="see-also" href="#/arch-docker">→ notion JS : process.env &amp; nullish coalescing (vue dans arch-docker)</a>
 
-<h2>Les quatre réglages</h2>
+<h2>Les réglages</h2>
 <table class="api-table">
   <tr><th>Champ</th><th>Variable d'env</th><th>Défaut</th><th>Rôle</th></tr>
   <tr><td>port</td><td>PORT</td><td>3001</td><td>Port d'écoute du serveur HTTP.</td></tr>
   <tr><td>jwtSecret</td><td>JWT_SECRET</td><td>'change-me'</td><td>Secret de signature des JWT. <strong>Doit être changé en prod.</strong></td></tr>
   <tr><td>dataDir</td><td>DATA_DIR</td><td>'/app/data'</td><td>Racine de stockage (registry + events). Surchargé en test par un dossier temporaire.</td></tr>
   <tr><td>allowRegister</td><td>ALLOW_REGISTER</td><td>false</td><td>Autorise (ou non) l'inscription publique via l'API. Voir <a href="#/hub-routes-auth">routes/auth</a>.</td></tr>
+  <tr><td>adminEmail</td><td>ADMIN_EMAIL</td><td>'' (vide)</td><td>E-mail du compte admin <em>seedé</em> au démarrage. Vide = pas de seed.</td></tr>
+  <tr><td>adminPassword</td><td>ADMIN_PASSWORD_HUB</td><td>'' (vide)</td><td>Mot de passe du compte admin seedé. Vide = pas de seed. Suffixé <code>_HUB</code> pour ne pas entrer en collision avec le <code>ADMIN_PASSWORD</code> de la Borne.</td></tr>
 </table>
+<p>
+  Les deux derniers alimentent le <em>seed</em> d'un compte admin au démarrage du serveur — détaillé
+  dans <a href="#/hub-index">index.js</a> (<code>seedAdminIfNeeded</code>). Tant qu'une des deux est
+  vide, aucun seed n'a lieu : on retombe alors sur le script <a href="#/hub-create-admin">create-admin</a>.
+</p>
 
 <h2>Deux conversions de type à noter</h2>
 <ul>

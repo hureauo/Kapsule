@@ -14,8 +14,8 @@
   <tr><td>draft</td><td>Hub</td><td>Création de l'événement (<a href="#/hub-routes-events">POST /events</a>).</td></tr>
   <tr><td>ready</td><td>Hub</td><td>Le client marque l'événement prêt (transition manuelle draft↔ready).</td></tr>
   <tr><td>loaded</td><td>Hub + Borne</td><td>La Borne a tiré le bundle (<a href="#/hub-routes-sync">GET /bundle</a> passe ready→loaded).</td></tr>
-  <tr><td>live</td><td>Borne → Hub</td><td>Premier invité (<a href="#/borne-routes-sessions">POST /sessions</a>), remonté par heartbeat.</td></tr>
-  <tr><td>closed</td><td>Borne → Hub</td><td>Clôture (<a href="#/borne-routes-events">PUT /close</a>), remonté par heartbeat.</td></tr>
+  <tr><td>live</td><td>Borne</td><td>Premier invité (<a href="#/borne-routes-sessions">POST /sessions</a>) — local à la Borne.</td></tr>
+  <tr><td>closed</td><td>Borne → Hub</td><td>Clôture (<a href="#/borne-routes-events">PUT /close</a>) ; remonté au Hub au <em>début du push</em> (<a href="#/hub-routes-sync">POST /status</a>, best-effort).</td></tr>
   <tr><td>pushed</td><td>Hub</td><td>Push finalisé (<a href="#/hub-routes-sync">POST /finalize</a>).</td></tr>
   <tr><td>processed</td><td>Hub</td><td>Tous les jobs terminés (<a href="#/hub-worker">worker</a>).</td></tr>
   <tr><td>purged</td><td>Hub et/ou Borne</td><td>Suppression RGPD.</td></tr>
@@ -23,20 +23,28 @@
 
 <h2>Phase A — Préparation (sur le Hub)</h2>
 <ol>
-  <li>Le client crée un événement (<code>draft</code>), ajoute des questions, règle le consentement
-      (<a href="#/hub-routes-events">events</a> + <a href="#/hub-routes-questions">questions</a>).</li>
+  <li>L'<strong>admin</strong> crée un événement (<code>draft</code>) — la création est réservée à
+      l'admin (<a href="#/hub-routes-events">events</a>, <code>requireAdmin</code>) — puis l'assigne
+      à un client (<a href="#/hub-routes-events">PUT /events/:id/owner</a>, qui crée le compte client
+      et son lien d'enregistrement si besoin). Le client édite ensuite « son » événement : questions,
+      consentement (<a href="#/hub-routes-questions">questions</a>). Variante : il peut aussi peaufiner
+      la config sur une <a href="#/borne-config">borne d'essai</a> et la <strong>remonter</strong> au
+      Hub (<a href="#/borne-routes-sync">POST /sync/push-config</a> → <a href="#/hub-routes-sync">POST
+      /sync/events/:id/config</a>).</li>
   <li>L'admin génère un <strong>token de borne pour cet événement</strong>
-      (<a href="#/hub-routes-admin">POST /admin/events/:id/tokens</a>) → jeton en clair, à
-      configurer dans <code>BOX_TOKEN</code> sur la Borne. Le token <em>désigne</em> l'événement
-      (modèle token = événement, §11.20) : il n'y a plus d'étape d'« assignation » séparée.</li>
+      (<a href="#/hub-routes-admin">POST /admin/events/:id/tokens</a>) → jeton en clair (aussi
+      re-consultable, §11.13b), à configurer dans <code>BOX_TOKEN</code> sur la Borne. Le token
+      <em>désigne</em> l'événement (modèle token = événement, §11.20) : il n'y a plus d'étape
+      d'« assignation de borne » séparée.</li>
   <li>L'admin passe l'événement <code>ready</code>.</li>
 </ol>
 
 <h2>Phase B — Pull (Borne ← Hub, avant l'événement)</h2>
 <p>La Borne, quand elle a du réseau, tire l'événement :</p>
 <ol>
-  <li>Le <a href="#/borne-sync-autopull">pull automatique</a> (toutes les 5 min) ou un
-      <a href="#/borne-routes-sync">pull manuel</a> appelle <code>pullMyEvent</code>.</li>
+  <li>Le <strong>pull one-shot au démarrage</strong> (<a href="#/borne-index">index.js</a>) ou un
+      <a href="#/borne-routes-sync">pull manuel</a> depuis l'espace technicien appelle
+      <code>pullMyEvent</code> (il n'y a plus de pull périodique).</li>
   <li><a href="#/borne-sync-pull">pull.js</a> demande l'unique événement de son token
       (<a href="#/hub-routes-sync">GET /sync/event</a>, 404 si rien à tirer), puis son bundle
       (<a href="#/hub-routes-sync">GET /bundle</a>) — ce qui passe l'événement <code>ready→loaded</code>
@@ -60,8 +68,10 @@
       (<a href="#/web-client-borne">XHR avec progression</a> → <a href="#/borne-routes-videos">POST /videos</a>,
       transaction de remplacement §11.9).</li>
   <li>Fin : l'opérateur clôture (<a href="#/borne-routes-events">PUT /close</a>) → <code>live→closed</code>.</li>
-  <li>Pendant tout ce temps, si la Borne capte par intermittence, les <a href="#/borne-sync-autopull">heartbeats</a>
-      remontent les statuts <code>live</code>/<code>closed</code> au Hub (best-effort).</li>
+  <li>Pendant l'événement, la Borne est typiquement hors-ligne : les statuts <code>live</code>/
+      <code>closed</code> restent <strong>locaux</strong>. Le Hub n'apprend la clôture qu'au moment du
+      push, qui commence par signaler <code>closed</code> (<a href="#/hub-routes-sync">POST /status</a>,
+      best-effort) avant d'envoyer le manifest.</li>
 </ol>
 
 <h2>Phase D — Push (Borne → Hub, après l'événement)</h2>

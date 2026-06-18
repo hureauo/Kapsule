@@ -46,7 +46,7 @@ draft → ready → loaded → live → closed → pushed → processed → purg
  hub     hub     pull    1ʳᵉ session  borne   push OK   worker    RGPD
 ```
 
-**Règle anti-conflit (à respecter scrupuleusement)** : le pull automatique des questions n'opère que tant que l'événement local est en `loaded`. Dès la première session invitée (`live`), plus aucun pull ; au push, l'état de la Borne **écrase** celui du Hub pour cet événement (traçé dans `sync_log`). La Borne remonte ses transitions d'état (`live`, `closed`) au Hub en **best effort** quand elle est online (heartbeat, §7) — le Hub peut donc geler l'édition et informer le client, mais ne doit jamais *compter* sur cette information (la Borne peut être restée offline).
+**Règle anti-conflit (à respecter scrupuleusement)** : le pull n'opère que tant que l'événement local est en `loaded`. Dès la première session invitée (`live`), plus aucun pull ; au push, l'état de la Borne **écrase** celui du Hub pour cet événement (tracé dans `sync_log`). Le Hub connaît le statut `live`/`closed` uniquement au moment du push — entre temps, il gèle l'édition dès `loaded` (voir §7).
 
 ---
 
@@ -102,11 +102,9 @@ kapsule/
 │   │   │       │   ├── videos.js     # upload/replace, stream, download, csv, delete
 │   │   │       │   └── sync.js       # admin : état synchro, déclenchement pull/push, purge
 │   │   │       └── sync/
-│   │   │           ├── hubClient.js  # fetch vers le Hub avec token borne + retry/backoff
-│   │   │           ├── pull.js       # pullEvent(hubEventId) ; pullAssigned()
-│   │   │           ├── push.js       # pushEvent(eventId) — manifest, uploads, finalize, reprise
-│   │   │           └── autoPull.js   # setInterval : pull auto si statut ≤ loaded + heartbeat
-│   │   │                             # best-effort des transitions live/closed vers le Hub
+│   │   │           ├── hubClient.js  # fetch vers le Hub avec token borne + retry/backoff + borneLog
+│   │   │           ├── pull.js       # pullMyEvent() : pull one-shot ; pullEvent(id) : écrit bundle
+│   │   │           └── push.js       # pushEvent(eventId) + pushConfig(eventId) — manifest, uploads, finalize, reprise
 │   │   └── web/
 │   │       ├── package.json, vite.config.js, index.html
 │   │       └── src/
@@ -136,10 +134,10 @@ kapsule/
 │       │   ├── package.json
 │       │   └── src/
 │       │       ├── index.js, config.js
-│       │       ├── registry.js              # users, boxes, events, jobs, sync_log
+│       │       ├── registry.js              # users, box_tokens, events, jobs, sync_log
 │       │       ├── eventStore.js            # openEventDb(eventId) avec cache LRU + closeEventDb()
 │       │       ├── middleware/auth.js       # requireUser (JWT), requireOwner(eventId)
-│       │       ├── middleware/boxAuth.js    # requireBox : header X-Box-Token → sha256 → boxes
+│       │       ├── middleware/boxAuth.js    # requireBox : header X-Box-Token → sha256 → box_tokens
 │       │       ├── routes/
 │       │       │   ├── auth.js              # login/register
 │       │       │   ├── events.js            # CRUD événements du client + transitions d'état
@@ -147,7 +145,7 @@ kapsule/
 │       │       │   ├── admin.js             # super-admin : bornes (token affiché une fois),
 │       │       │   │                        # overview (stockage/événement, jobs en erreur, bornes)
 │       │       │   ├── gallery.js           # vidéos : list, stream (Range), download, zip, csv
-│       │       │   └── sync.js              # endpoints appelés par la Borne (dont heartbeat)
+│       │       │   └── sync.js              # endpoints appelés par la Borne (requireBox)
 │       │       └── worker/
 │       │           ├── index.js             # boucle : prend un job 'pending', l'exécute
 │       │           ├── ffmpeg.js            # runFfprobe(file), makeThumbnail(file, out)
@@ -271,7 +269,8 @@ registration_tokens (                          -- lien d'inscription (pas de SMT
 box_tokens (                                   -- token = ÉVÉNEMENT (§1) : un jeton initialise une Borne sur CET événement.
   id INTEGER PRIMARY KEY AUTOINCREMENT,        -- plusieurs tokens possibles par événement (ex. réel + essai).
   event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  token_hash TEXT UNIQUE NOT NULL,             -- sha256(token) ; le token clair n'est montré qu'une fois
+  token_hash TEXT UNIQUE NOT NULL,             -- sha256(token) — utilisé pour l'auth (X-Box-Token)
+  token_clear TEXT UNIQUE NOT NULL,            -- token en clair — stocké pour permettre la ré-consultation et la copie (décision Phase 6E)
   label TEXT,                                  -- libellé libre (« Borne salle des fêtes », « Démo client »)
   location TEXT,                               -- lieu du Raspberry (les bornes sont à des endroits différents)
   is_preview INTEGER NOT NULL DEFAULT 0,       -- 1 = token d'essai : la Borne se met en mode démo (push interdit, quota, bandeau)
@@ -312,7 +311,7 @@ sync_log (
 );
 ```
 
-**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` et `box_tokens` ne stockent que des hash de jetons et des métadonnées techniques (jamais de secret en clair, jamais de donnée invité). La purge d'un événement : `rm -rf events/<id>` + `status='purged'` + ligne `sync_log` ; le `ON DELETE CASCADE` sur `box_tokens.event_id` retire au passage les tokens de l'événement purgé.
+**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` ne stocke que des hash ; `box_tokens` stocke à la fois le hash (auth) et le token en clair (consultation admin, cf. §11.13). Jamais de donnée invité dans le registre. La purge d'un événement : `rm -rf events/<id>` + `status='purged'` + ligne `sync_log` ; le `ON DELETE CASCADE` sur `box_tokens.event_id` retire au passage les tokens de l'événement purgé.
 
 ### 5.4 Registre de la Borne — `registry.sqlite`
 
@@ -352,7 +351,7 @@ Base `/api`. JSON partout sauf flux de fichiers. Gestionnaire d'erreurs global �
 - `GET /api/events` — liste du registre local.
 - `POST /api/events` `{ name, event_date? }` — création **autonome** (origin `local`) : crée `events/<uuid>/` + `db.sqlite` + questions par défaut.
 - `PUT /api/events/:id/activate` — désactive les autres, active celui-ci. Refusé pendant un push en cours.
-- `PUT /api/events/:id/close` — **clôture** (`live → closed`) : le kiosque cesse d'accepter de nouvelles sessions (écran « événement terminé »). Réservé à l'admin local = l'**opérateur** ; le client n'a jamais accès à l'admin Borne. Signalé au Hub via le heartbeat quand online.
+- `PUT /api/events/:id/close` — **clôture** (`live → closed`) : le kiosque cesse d'accepter de nouvelles sessions (écran « événement terminé »). Réservé à l'admin local = l'**opérateur** ; le client n'a jamais accès à l'admin Borne. Le Hub apprend la clôture au moment du push.
 - `GET /api/event` — **public** : `{ id, name, status, consent_text, idle_timeout }` de l'événement actif (consommé par le kiosque ; `consent_text` et `idle_timeout` viennent d'`event_meta`, avec défauts génériques). 404 si aucun.
 - `GET /api/preflight` — admin : checklist agrégée `{ event: {loaded, pulled_at}, questions_count, disk_ok, clock_ok }` (la vérification caméra se fait côté iPad dans `PreflightPanel`). `clock_ok` compare l'heure de la Borne à l'heure envoyée par le navigateur admin (`?client_time=`) — alerte si écart > 2 min.
 
@@ -380,7 +379,8 @@ Base `/api`. JSON partout sauf flux de fichiers. Gestionnaire d'erreurs global �
 
 **Synchro** (`routes/sync.js`) — admin :
 - `GET /api/sync/status` — `{ online, hubUrl, lastPull, push: { running, total, done, currentFile } }`.
-- `POST /api/sync/pull` — pull manuel immédiat (sinon `autoPull.js` toutes les 5 min si statut ≤ `loaded` ; le même cycle envoie en **best effort** les transitions `live`/`closed` au Hub — un échec est silencieux et retenté au cycle suivant).
+- `POST /api/sync/pull` — pull manuel immédiat.
+- `POST /api/sync/push-config` — pousse questions + `event_meta` de l'événement actif vers le Hub (overwrite). Autorisé en mode preview.
 - `POST /api/sync/push/:eventId` — **409 si l'événement n'est pas `closed`** (message : « Clôturez l'événement avant le push ») ; sinon lance `push.js` en tâche de fond ; la progression se lit via `GET /api/sync/status`.
 - `POST /api/sync/purge/:eventId` — refusé si `status != 'pushed'` ; demande une confirmation explicite (`{ confirm: name }`).
 
@@ -404,9 +404,9 @@ Base `/api`. `GET /api/health`.
 
 **Questions** (`routes/questions.js`) — user + owner ; mêmes routes que la Borne mais sur `eventStore.openEventDb(eventId)` : `GET/POST/PUT/DELETE /api/events/:id/questions`, `PUT /api/events/:id/questions/reorder/batch`.
 
-**Règle de gel d'édition (Hub)** — le Hub ne voit pas l'événement passer `live` en temps réel (la Borne est offline) ; il l'apprend par le heartbeat best effort ou au push. Donc :
-- Édition **autorisée** en `draft`, `ready` et `loaded` (c'est ce qui permet la synchro automatique des questions jusqu'au jour J).
-- Édition **refusée (409)** dès que le Hub connaît un statut ≥ `live` (heartbeat reçu ou push effectué).
+**Règle de gel d'édition (Hub)** — le Hub ne voit pas l'événement passer `live` en temps réel (la Borne est offline) ; il l'apprend au push. Donc :
+- Édition **autorisée** en `draft`, `ready` et `loaded` (c'est ce qui permet d'ajuster les questions jusqu'au jour J).
+- Édition **refusée (409)** dès que le Hub connaît un statut ≥ `live` (push effectué).
 - Si `updated_at > pulled_at`, l'UI affiche un bandeau **« Modifications non encore récupérées par la borne »** — le client sait que ses changements ne s'appliqueront que si la Borne re-pull avant l'événement. Au push, l'état de la Borne écrase de toute façon celui du Hub (la Borne est maître).
 
 **Galerie** (`routes/gallery.js`) — user + owner, disponible après push :
@@ -422,14 +422,14 @@ Base `/api`. `GET /api/health`.
   - `GET /api/admin/users` — liste (email, name, role, active, a-un-mot-de-passe).
   - `PUT /api/admin/users/:id` `{ active?, name? }` — désactive/réactive (login refusé si `active=0`), renomme. Régénération d'un lien d'enregistrement : `POST /api/admin/users/:id/registration-link` → nouveau token + URL.
 - **Tokens de borne, par événement** (token = événement, §1) :
-  - `POST /api/admin/events/:id/tokens` `{ label?, location?, is_preview? }` → génère token (32 octets hex), stocke `sha256(token)` dans `box_tokens` lié à `:id`, **retourne le token en clair une seule fois**.
+  - `POST /api/admin/events/:id/tokens` `{ label?, location?, is_preview? }` → génère token (32 octets hex), stocke `sha256(token)` + `token_clear` dans `box_tokens` lié à `:id`, retourne `token_clear` (consultable à tout moment via `GET /api/admin/tokens`).
   - `GET /api/admin/events/:id/tokens` (sans le hash), `DELETE /api/admin/tokens/:tokenId` (révocation), `PUT /api/admin/tokens/:tokenId` `{ label?, location? }`.
 - `GET /api/admin/overview` — vue d'ensemble : tous les événements (tous clients), espace disque consommé par événement (`du` sur `events/<id>/`), disque libre du volume, jobs `failed` récents, et pour chaque événement ses tokens de borne (label, location, `is_preview`, `last_seen_at`).
 
 **Synchro** (`routes/sync.js`) — `requireBox` (header `X-Box-Token`) résout le token via `box_tokens`, met à jour `box_tokens.last_seen_at`, écrit `sync_log`, et **expose `req.box = { token_id, event_id, is_preview }`** (le token désigne directement l'événement, §1) :
 - `GET /api/sync/event` — l'**unique** événement de ce token s'il est `status IN ('ready','loaded')` : `{ id, name, event_date, status, updated_at, is_preview }`. **404** si l'événement n'est plus pullable (purgé, ou déjà ≥ `live`). Remplace l'ancien `GET /assigned` (liste) — une borne = un événement.
 - `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […] }`. **403 si `:id` ≠ `req.box.event_id`** (un token ne peut tirer que son propre événement). Passe `ready→loaded`, set `pulled_at`.
-- `POST /api/sync/events/:id/status` `{ status: 'live'|'closed' }` — **heartbeat best effort** envoyé par la Borne quand elle est online : met à jour le statut du registre (transitions avant uniquement, jamais de retour en arrière) pour que le Hub gèle l'édition et informe le client. Le Hub ne doit jamais dépendre de cet appel pour fonctionner.
+- `POST /api/sync/events/:id/status` `{ status: 'live'|'closed' }` — envoyé par la Borne au moment du push (transitions avant uniquement, jamais de retour en arrière) ; met à jour le statut dans le registre Hub pour déclencher le gel d'édition.
 - `POST /api/sync/events/:id/manifest` — body `{ files: [{ video_id, filename, size, checksum }], db: { size, checksum } }`. Réponse : `{ missing: [video_id…] }` (ceux non encore reçus ou de checksum différent) → **c'est ce qui rend le push reprenable et idempotent**.
 - `PUT /api/sync/events/:id/files/:videoId` — upload multipart d'UN fichier ; le Hub recalcule le sha256, 422 si mismatch (la Borne retentera).
 - `PUT /api/sync/events/:id/db` — upload du `db.sqlite` final (après `wal_checkpoint`, voir §11). **Le Hub ferme d'abord le handle de l'`eventStore` (cache LRU) avant d'écraser le fichier** — écraser une base ouverte = corruption.
@@ -525,9 +525,7 @@ Base `/api`. `GET /api/health`.
 | `BOX_TOKEN` | Borne | _(vide)_ | Token d'appairage = **événement** (§1) |
 | `MAX_DATA_BYTES` | Borne | _(vide = illimité)_ | Quota disque de l'événement (essai : `1073741824` = 1 Go) ; upload invité → 507 au-delà |
 | `PREVIEW_MODE` | Borne | _(déduit du token `is_preview`)_ | Force le mode démo (bandeau « BORNE D'ESSAI », push interdit). Override optionnel ; normalement déduit du token |
-| `PUBLIC_URL` | Hub | _(vide)_ | Base des liens d'enregistrement client (`…/register?token=`) affichés à l'admin (pas de SMTP) |
 | `ALLOW_REGISTER` | Hub | `false` | Ouvrir l'inscription publique (indépendant des comptes créés par l'admin) |
-| `PULL_INTERVAL_MS` | Borne | `300000` | Période du pull auto |
 
 > **TLS / iPad** : iOS Safari exige HTTPS pour la caméra. Faire confiance au certificat auto-signé sur l'iPad (Réglages → Général → VPN et gestion de l'appareil) ou fournir un vrai cert. Utiliser Accès Guidé + « Ajouter à l'écran d'accueil » pour le mode kiosque.
 
@@ -544,10 +542,10 @@ Base `/api`. `GET /api/health`.
 7. Upload avec retry + backoff exponentiel : indispensable sur le Wi-Fi d'événement.
 8. **`wal_checkpoint(TRUNCATE)` avant de checksummer/transférer un `db.sqlite`** — sinon le fichier est incomplet (les écritures vivent dans le `-wal`).
 9. Remplacement de vidéo : `DELETE`+`INSERT` en transaction, `unlink` de l'ancien fichier **après** commit seulement.
-10. Le pull auto ne doit **jamais** écrire si le statut local n'est pas `loaded` — vérifier le statut au moment d'appliquer, pas au moment de lancer la requête.
+10. Le pull ne doit **jamais** écrire si le statut local n'est pas `loaded` (exception : mode preview, où les données sont jetables) — vérifier le statut au moment d'appliquer la réponse, pas au lancement de la requête.
 11. `eventStore` du Hub : cache LRU des handles SQLite (~10 ouverts max), et **fermer le handle avant toute purge `rm -rf` ET avant d'écraser un `db.sqlite` reçu au push** — écrire par-dessus une base ouverte = corruption.
 12. Le push est repris via le manifest (`missing`) — toujours recalculer côté Hub, ne jamais faire confiance au `push_state` local seul.
-13. Le token de borne n'est stocké qu'en hash ; toute réponse 401 du Hub sur la synchro doit s'afficher clairement dans `SyncPanel` (token révoqué ?).
+13. Le token de borne est stocké **en hash** (`token_hash`, pour l'auth `requireBox`) **et en clair** (`token_clear`, pour la consultation et la copie depuis l'interface admin). `token_clear` n'est jamais exposé aux routes synchro borne ni aux clients — uniquement aux routes `GET /api/admin/tokens` et `GET /api/admin/events/:id/tokens` (admin uniquement). Toute réponse 401 du Hub sur la synchro doit s'afficher clairement dans `SyncPanel` (token révoqué ?).
 14. Raspberry : monter `DATA_DIR` sur **SSD USB**, pas sur la carte SD (usure + corruption = perte de souvenirs irremplaçables).
 15. Tester chaque phase sur **iPad Safari réel** (caméra, HTTPS auto-signé à faire confiance dans Réglages → Général → VPN et gestion de l'appareil, Range, retry) — pas seulement Chrome desktop.
 16. **Le Raspberry n'a pas d'horloge RTC** : sans Internet, l'heure dérive ou repart du dernier arrêt — or `consent_at` est la **preuve légale RGPD** et tous les timestamps en dépendent. Matériel requis : module **RTC DS3231** (~5 €, I2C) + chrony ; le Préflight vérifie l'écart d'horloge avec l'appareil admin.
@@ -567,12 +565,12 @@ Base `/api`. `GET /api/health`.
 | **0 — Socle** | Monorepo npm workspaces, `@kapsule/core` (schémas + `createEventDb` + checksum) **avec ses tests unitaires (`node:test`)**, squelettes Express des deux serveurs, docker-compose ×2, `.env.example` | `docker compose up` sur chaque fichier → `/api/health` répond ; `npm test` passe |
 | **1 — Borne autonome** | Registre local, création d'événement local, **clôture**, routes questions/sessions/vidéos (avec remplacement), kiosque complet (navigation + réenregistrement + récap + **timeout d'inactivité + reprise de session + barre de progression d'upload**), admin local avec **indicateur disque** et **Préflight** (sans SyncPanel), HTTPS auto-signé | Un événement entier se déroule sur iPad Safari **sans aucun Hub** ; test arm64 sur le Raspberry réel (avec RTC installé) |
 | **2 — Hub minimal** | Registre Hub, `create-admin`, auth argon2/JWT **+ rate limiting**, CRUD événements + questions avec cloisonnement `requireOwner`, frontend (login, events, éditeur questions), règle de gel d'édition (§7) | Deux comptes ne voient que leurs événements respectifs ; questions éditables en ligne |
-| **3 — Synchro** | `boxes` + tokens, `GET assigned` + `bundle` + pull (auto et manuel) avec règle `loaded`, **heartbeat live/closed**, push complet (manifest/upload/db/finalize, exige `closed`) avec reprise, `SyncPanel`, onglet Synchro du Hub (avec bandeau « modifs non récupérées »), purge Borne, **tests d'intégration du protocole** (pull → uploads → coupure simulée → reprise → finalize, via supertest) | Scénario manuel complet OK **et les tests d'intégration passent** (reprise incluse) |
+| **3 — Synchro** | `box_tokens`, `GET /sync/event` + bundle, pull avec règle `loaded`, push complet (manifest/upload/db/finalize, exige `closed`) avec reprise, `SyncPanel`, onglet Synchro du Hub (avec bandeau « modifs non récupérées »), purge Borne, **tests d'intégration du protocole** (pull → uploads → coupure simulée → reprise → finalize, via supertest) | Scénario manuel complet OK **et les tests d'intégration passent** (reprise incluse) |
 | **4 — Traitement & galerie** | Worker (boucle jobs), `probe` + `thumbnail` + **`archive` (ZIP)** (ffmpeg/archiver), passage `processed`, galerie Hub (miniatures, lecture range, download, **« Tout télécharger »**, CSV), suppression RGPD côté Hub, **page super-admin** (overview stockage/jobs/bornes) | Après un push, le client voit ses vidéos en ligne avec miniatures et télécharge le ZIP complet ; supprimer l'événement efface tout |
 | **6 — Refonte administration** | Borne : **admin client / tech** (deux mots de passe, deux rôles, re-tagging des routes, routing manuel). Hub : **comptes clients** (création + lien d'enregistrement affiché + activation), **modèle token=événement** (`box_tokens` remplace `boxes` + `events.box_id` ; `GET /sync/event` remplace `/assigned`), **super-admin UI** (événements, tokens réel/essai, clients), **aperçu distant** (borne d'essai `is_preview`, quota 1 Go, push interdit, onglet client, `docker-compose.preview.yml`) | Le client gère sa borne sans voir le tech ; un compte client se crée via lien ; lancer le conteneur d'essai avec un token le rattache à son événement ; le client valide sa config à distance (≤ 1 Go, sans push) |
 | **7 — Évolutions** | Machine de capture dédiée (appareil photo), job `chromakey` (fond vert), portail invités, mode point d'accès Wi-Fi de la Borne (hostapd) | Au fil de l'eau |
 
-> **Impact de la Phase 6 sur la Phase 3 (déjà faite)** : le passage à token=événement réécrit `boxes` → `box_tokens`, `requireBox` (expose `event_id`), `GET /sync/assigned` → `GET /sync/event`, et côté Borne `pullAssigned()` → `pullMyEvent()`. Les tests d'intégration sync (3.9) sont à adapter. Ces cases de la Phase 3 sont rouvertes dans ROADMAP.md avec la mention « révisé Phase 6 » plutôt que décochées, pour garder la traçabilité.
+> **Note** : la Phase 6 a rétroactivement réécrit le modèle de la Phase 3 (`boxes` → `box_tokens`, `GET /assigned` → `GET /sync/event`, `pullAssigned` → `pullMyEvent`). L'implémentation courante reflète cet état final.
 
 **Ordre interne conseillé pour chaque phase** : schéma BD → routes backend → client API frontend → écrans → CSS → test iPad.
 

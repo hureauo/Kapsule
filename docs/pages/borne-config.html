@@ -18,9 +18,9 @@ export const config = {
   dataDir: env.DATA_DIR ?? '/app/data',
   hubUrl: env.HUB_URL ?? '',
   boxToken: env.BOX_TOKEN ?? '',
-  pullIntervalMs: parseInt(env.PULL_INTERVAL_MS ?? '300000', 10),
   maxDataBytes: parseInt(env.MAX_DATA_BYTES || '0', 10),
   previewMode: env.PREVIEW_MODE === 'true',
+  hostPort: env.HOST_PORT ?? null,
 };</code></pre>
 
 <a class="see-also" href="#/arch-docker">→ notion JS : process.env, ??, parseInt (vue dans arch-docker)</a>
@@ -31,10 +31,10 @@ export const config = {
   <tr><td>adminPassword</td><td>ADMIN_PASSWORD</td><td>'admin123'</td><td>Mot de passe de l'admin <strong>client</strong> (questions, vidéos, textes, design). Espace <code>/admin</code>.</td></tr>
   <tr><td>techPassword</td><td>TECH_PASSWORD</td><td>'tech123'</td><td>Mot de passe de l'admin <strong>technicien</strong> (préflight, synchro, clôture). Espace <code>/admin/tech</code> (§11.19).</td></tr>
   <tr><td>hubUrl</td><td>HUB_URL</td><td>'' (vide)</td><td>URL du Hub. <strong>Vide = mode autonome</strong> (pas de synchro).</td></tr>
-  <tr><td>boxToken</td><td>BOX_TOKEN</td><td>'' (vide)</td><td>Jeton d'identification auprès du Hub (en-tête <code>X-Box-Token</code>).</td></tr>
-  <tr><td>pullIntervalMs</td><td>PULL_INTERVAL_MS</td><td>300000 (5 min)</td><td>Période du pull automatique.</td></tr>
+  <tr><td>boxToken</td><td>BOX_TOKEN</td><td>'' (vide)</td><td>Jeton d'identification auprès du Hub (en-tête <code>X-Box-Token</code>). Modifiable à chaud via <a href="#/borne-routes-sync">POST /sync/token</a>.</td></tr>
   <tr><td>maxDataBytes</td><td>MAX_DATA_BYTES</td><td>0 (illimité)</td><td>Quota de stockage des vidéos. <code>0</code> = pas de limite ; sinon l'upload invité est refusé (<code>507</code>) dès que <span class="path">events/</span> dépasse ce seuil (§11.21). Mis à <code>1 Go</code> sur la borne d'essai.</td></tr>
   <tr><td>previewMode</td><td>PREVIEW_MODE</td><td>false</td><td>Force le <strong>mode démo</strong> (« borne d'essai ») : push refusé, reset autorisé. Comparé à la chaîne <code>'true'</code> (les variables d'env sont toujours des chaînes). Le mode démo peut aussi venir du token (<code>is_preview</code>) — voir <a href="#/borne-routes-sync">sync.js</a>.</td></tr>
+  <tr><td>hostPort</td><td>HOST_PORT</td><td>null</td><td>Port hôte exposé (affiché dans la bannière de démarrage en mode aperçu). Purement informatif : la bannière indique l'URL d'accès client quand un Nginx publie la borne sur ce port.</td></tr>
   <tr><td>port, jwtSecret, dataDir</td><td>(idem Hub)</td><td>—</td><td>Mêmes rôles que côté Hub.</td></tr>
 </table>
 
@@ -72,10 +72,11 @@ export const config = {
 <div class="callout warn">
   <div class="callout-title">⚠ Le mode autonome (<code>hubUrl</code> vide)</div>
   <p>
-    Si <code>HUB_URL</code> n'est pas défini, la Borne fonctionne <strong>seule</strong> : on peut
-    créer des événements locaux directement (origine <code>'local'</code>), enregistrer des vidéos,
-    mais il n'y a ni pull ni push. C'est ce que vérifie <a href="#/borne-sync-autopull">autoPull.js</a>
-    (<code>if (!config.hubUrl || !config.boxToken) return;</code>) : sans URL ni jeton, le cycle de
-    synchro ne fait rien. Utile pour une borne 100 % offline qui n'a jamais de réseau.
+    Si <code>HUB_URL</code> n'est pas défini, la Borne fonctionne <strong>seule</strong> : elle sert
+    l'événement déjà présent localement (enregistrement de vidéos, parcours invité) mais il n'y a ni
+    pull ni push. Le démarrage saute le pull one-shot (<a href="#/borne-index">index.js</a> :
+    <code>if (config.hubUrl &amp;&amp; config.boxToken)</code>) et <a href="#/borne-routes-sync">POST
+    /sync/push-config</a> répond <code>409</code> « mode autonome ». Utile pour une borne 100 %
+    offline qui n'a jamais de réseau.
   </p>
 </div>

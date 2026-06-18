@@ -110,17 +110,25 @@ schémas <a href="#/hub-registry">hub registry</a> &amp; <a href="#/borne-regist
 
 <label class="inv"><input type="checkbox"> <strong>§11.10 — pull n'écrit que si statut local <code>loaded</code> (vérifié à l'application)</strong></label>
 <p>L'état peut changer pendant l'aller-retour réseau. Casse : écraser les questions d'un événement
-passé <code>live</code> (invités en cours). Code : <a href="#/borne-sync-pull">pull.js (étape 2)</a>.</p>
+passé <code>live</code> (invités en cours). <strong>Exception</strong> : en mode démo
+(<code>config.previewMode</code>), les données sont jetables → on écrase toujours (re-pull libre).
+Code : <a href="#/borne-sync-pull">pull.js (étape 2, garde <code>&amp;&amp; !config.previewMode</code>)</a>.</p>
 
 <label class="inv"><input type="checkbox"> <strong>§11.12 — push repris via le manifest, <code>missing</code> recalculé côté Hub</strong></label>
 <p>Ne jamais faire confiance au <code>push_state</code> local seul. Casse : un événement marqué
 « poussé » alors que des vidéos manquent côté Hub. Code :
 <a href="#/hub-routes-sync">sync (manifest + finalize)</a>.</p>
 
-<label class="inv"><input type="checkbox"> <strong>§11.13b — token de borne en hash, 401 visible</strong></label>
-<p>Le jeton n'est stocké qu'en hash ; un 401 du Hub (token révoqué) doit être affiché clairement.
-Casse : push qui échoue sans explication. Code : <a href="#/hub-middleware-box">boxAuth</a>,
-<a href="#/borne-sync-push">push (lastError sur 401)</a>.</p>
+<label class="inv"><input type="checkbox"> <strong>§11.13b — token de borne en hash (auth) ET en clair (consultation admin), 401 visible</strong></label>
+<p>Le jeton est stocké en <strong>hash</strong> (<code>token_hash</code>, ce qui sert à l'auth
+<a href="#/hub-middleware-box">requireBox</a>) <strong>et en clair</strong> (<code>token_clear</code>,
+pour que l'admin re-consulte/copie le token depuis l'interface — décision Phase 6E). Le clair n'est
+<strong>jamais</strong> exposé aux routes synchro borne ni aux clients : uniquement aux routes admin
+<code>GET /api/admin/tokens</code> et <code>GET /api/admin/events/:id/tokens</code>. Un 401 du Hub
+(token révoqué) doit être affiché clairement. Casse : clair exposé hors admin = fuite de secret ;
+ou push qui échoue sans explication. Code : <a href="#/hub-registry">registry (<code>token_clear</code>)</a>,
+<a href="#/hub-routes-admin">routes/admin (génération + lecture)</a>,
+<a href="#/hub-middleware-box">boxAuth</a>, <a href="#/borne-sync-push">push (lastError sur 401)</a>.</p>
 
 <label class="inv"><input type="checkbox"> <strong>§11.20 — token = événement : un token ne tire/pousse que son propre événement</strong></label>
 <p><a href="#/hub-middleware-box">requireBox</a> expose <code>req.box.event_id</code> ; chaque route

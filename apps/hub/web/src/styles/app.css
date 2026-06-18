@@ -271,27 +271,92 @@ button { cursor: pointer; font: inherit; }
 .admin-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
 .admin-table th, .admin-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .admin-table th { font-weight: 600; color: var(--text-muted); }
-.panel-section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.panel-section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .disk-bar-wrap { background: var(--border); border-radius: 4px; height: 10px; overflow: hidden; margin-bottom: 8px; }
 .disk-bar { height: 100%; background: var(--accent); transition: width .3s; }
 .disk-bar-wrap--low .disk-bar { background: var(--danger); }
 .disk-warn { color: var(--danger); }
 .token-display { background: #f0f0f0; padding: 8px 12px; border-radius: 4px; font-family: monospace; word-break: break-all; }
 
-/* ── Onglets admin (6C.4) */
-.admin-tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--border); margin-bottom: 24px; }
-.admin-tab { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 8px 18px; font-size: 14px; font-weight: 500; cursor: pointer; color: var(--text-muted); }
+/* ── Onglets admin */
+.admin-tabs { display: flex; gap: 0; border-bottom: 2px solid var(--border); margin-bottom: 24px; overflow-x: auto; }
+.admin-tab { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; color: var(--text-muted); white-space: nowrap; }
+.admin-tab:hover { color: var(--text); }
 .admin-tab--active { color: var(--accent); border-bottom-color: var(--accent); }
 
-/* ── Liste événements + tokens */
+/* ── Dashboard cards */
+.dashboard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.dash-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 12px; display: flex; flex-direction: column; align-items: center; gap: 4px; box-shadow: var(--shadow); }
+.dash-card--alert { border-color: var(--danger); background: #fff5f5; }
+.dash-card__value { font-size: 28px; font-weight: 700; color: var(--text); }
+.dash-card--alert .dash-card__value { color: var(--danger); }
+.dash-card__label { font-size: 12px; color: var(--text-muted); text-align: center; }
+
+/* ── Liste événements */
+.ev-list { display: flex; flex-direction: column; gap: 8px; }
+.ev-row { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.ev-row__header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; cursor: pointer; }
+.ev-row__header:hover { background: var(--bg); }
+.ev-row__info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ev-row__toggle { font-size: 12px; flex-shrink: 0; }
+
+/* ── Panneau événement inline */
+.event-panel { border-top: 1px solid var(--border); }
+.event-panel__section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.event-panel__section:last-child { border-bottom: none; }
+.event-panel__label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin-bottom: 8px; }
+.event-panel__owner { font-size: 14px; margin-bottom: 8px; }
+
+/* ── Formulaire owner */
+.owner-form { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+
+/* ── Lien d'enregistrement */
+.reg-link-box { margin-top: 8px; background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.reg-link-code { font-family: monospace; font-size: 11px; word-break: break-all; background: #e8f5e9; padding: 4px 6px; border-radius: 4px; }
+
+/* ── Liste tokens dans panneau événement */
+.token-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.token-item { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+.token-item__top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.token-item__label { font-weight: 500; font-size: 13px; }
+.token-item__row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.token-code { font-family: monospace; font-size: 11px; word-break: break-all; background: #fff; border: 1px solid var(--border); padding: 3px 6px; border-radius: 4px; flex: 1; min-width: 0; }
+
+/* ── Formulaire génération token */
+.token-gen-form { display: flex; flex-direction: column; gap: 6px; max-width: 380px; margin-top: 8px; }
+
+/* ── Formulaire création événement */
+.create-event-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* ── Formulaire création utilisateur */
+.create-user-form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+
+/* ── Placeholder bornes */
+.placeholder-box { background: var(--surface); border: 1px dashed var(--border); border-radius: var(--radius); padding: 24px; max-width: 560px; }
+
+/* ── Ancien (conservé pour compatibilité EventDetailPage) */
 .events-token-list { display: flex; flex-direction: column; gap: 8px; }
 .event-token-row { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .event-token-row__header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #fafafa; }
 .event-token-row__body { padding: 12px 16px; border-top: 1px solid var(--border); }
 .admin-table--sm { font-size: 13px; }
 .admin-table--sm th, .admin-table--sm td { padding: 6px 8px; }
-
-/* ── Formulaire token inline */
 .token-form { display: flex; flex-direction: column; gap: 8px; max-width: 420px; margin-top: 8px; }
 .hub-input--sm { font-size: 13px; padding: 6px 8px; }
 .token-reveal { background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 12px; margin-top: 8px; }
+
+/* ── Sélecteur de thème (onglet Design) */
+.theme-picker { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.theme-option { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 16px; border: 2px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; transition: border-color .15s; min-width: 140px; }
+.theme-option:hover:not(:disabled) { border-color: var(--accent); }
+.theme-option--active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.theme-option:disabled { opacity: .6; cursor: not-allowed; }
+.theme-option__label { font-size: 14px; font-weight: 600; }
+.theme-option__hint { font-size: 12px; color: var(--text-muted); }
+
+/* ── Preview token card (onglet Aperçu) */
+.preview-token-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 10px; }
+
+/* ── Modale générique (alias pour .modal__title / .modal__body) */
+.modal__title { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+.modal__body { font-size: 14px; }

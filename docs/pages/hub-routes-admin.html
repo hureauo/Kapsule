@@ -26,8 +26,8 @@ export function makeAdminRouter(dataDir) {
   ensuite).
 </p>
 
-<h2>Générer un token de borne : un jeton montré une seule fois</h2>
-<pre><code class="js">// POST /api/admin/events/:id/tokens — génère un token ; retourne le clair UNE SEULE FOIS
+<h2>Générer un token de borne</h2>
+<pre><code class="js">// POST /api/admin/events/:id/tokens — génère un token ; token_clear stocké et retourné
 router.post('/events/:id/tokens', (req, res) => {
   const db = getDb();
   const event = getEvent(db, req.params.id);
@@ -39,11 +39,16 @@ router.post('/events/:id/tokens', (req, res) => {
   const result = insertBoxToken(db, {
     event_id: req.params.id,
     token_hash,
+    token_clear: token,                                            // clair conservé en base
     label: label?.trim() ?? null,
     location: location?.trim() ?? null,
     is_preview: is_preview ? 1 : 0,
   });
-  res.status(201).json({ id: result.lastInsertRowid, event_id: req.params.id, label, location, is_preview: is_preview ? 1 : 0, token });  // token EN CLAIR ici
+  res.status(201).json({
+    id: result.lastInsertRowid, event_id: req.params.id,
+    token_clear: token, label: label?.trim() ?? null,
+    location: location?.trim() ?? null, is_preview: is_preview ? 1 : 0,
+  });
 });</code></pre>
 <p>
   Le token est <strong>rattaché à un événement</strong> (<code>:id</code> dans l'URL) : c'est le
@@ -71,24 +76,32 @@ router.post('/events/:id/tokens', (req, res) => {
   </table>
 </div>
 
-<div class="callout danger">
-  <div class="callout-title">⛔ Le jeton en clair n'est renvoyé qu'à la génération</div>
+<div class="callout info">
+  <div class="callout-title">ℹ Le jeton en clair reste consultable (décision Phase 6E)</div>
   <p>
-    <code>POST /events/:id/tokens</code> renvoie <code>{ id, event_id, label, location, is_preview,
-    token }</code> avec le <strong>jeton en clair</strong> — c'est la <em>seule et unique fois</em>
-    qu'il est visible. L'admin doit le copier pour le configurer sur la Borne (<code>BOX_TOKEN</code>).
-    En base, seul <code>token_hash</code> est stocké. <code>GET /events/:id/tokens</code> ne renvoie
-    jamais le jeton (la requête SQL ne sélectionne même pas la colonne <code>token_hash</code>). Si
-    l'admin le perd, il régénère un token (et révoque l'ancien). C'est le même principe que les
-    « personal access tokens » de GitHub.
+    <code>POST /events/:id/tokens</code> renvoie <code>token_clear</code> (le jeton en clair) que
+    l'admin copie pour configurer la Borne (<code>BOX_TOKEN</code>). Contrairement à un « personal
+    access token » GitHub, ce clair n'est <em>pas</em> jeté après la génération : il est
+    <strong>stocké en base</strong> (colonne <code>token_clear</code>, voir
+    <a href="#/hub-registry">registry</a>) et renvoyé par les routes de lecture admin
+    (<code>GET /events/:id/tokens</code> et <code>GET /tokens</code>). Raison : l'opérateur configure
+    plusieurs Raspberry à des moments différents et doit pouvoir recopier un token sans le régénérer.
+    Le compromis est borné par l'invariant <strong>§11.13b</strong> : <code>token_clear</code> n'est
+    exposé qu'aux routes admin (jamais aux routes synchro borne ni aux clients), et
+    <code>token_hash</code> reste ce qui sert à l'authentification (<a href="#/hub-middleware-box">requireBox</a>).
   </p>
 </div>
 
 <h2>Lister, révoquer et renommer les tokens</h2>
-<pre><code class="js">// GET /api/admin/events/:id/tokens — liste sans hash
+<pre><code class="js">// GET /api/admin/events/:id/tokens — liste les tokens de l'événement (avec token_clear, sans hash)
 router.get('/events/:id/tokens', (req, res) => {
   const db = getDb();
-  res.json(listBoxTokensByEvent(db, req.params.id));   // SELECT sans token_hash
+  res.json(listBoxTokensByEvent(db, req.params.id));   // SELECT … token_clear … (pas token_hash)
+});
+
+// GET /api/admin/tokens — tous les tokens, tous événements confondus (vue globale onglet Tokens)
+router.get('/tokens', (req, res) => {
+  res.json(listAllBoxTokens(getDb()));                 // JOIN events → ajoute event_name
 });
 
 // DELETE /api/admin/tokens/:tokenId — révocation
@@ -113,10 +126,14 @@ router.put('/tokens/:tokenId', (req, res) => {
   Deux familles d'URL coexistent : <strong>par événement</strong> (<code>/events/:id/tokens</code>
   pour générer/lister, naturel car un token appartient à un événement) et <strong>par token</strong>
   (<code>/tokens/:tokenId</code> pour révoquer/renommer, car on agit sur un token précis sans avoir
-  à répéter son événement). La révocation est une vraie suppression (<code>DELETE</code>) — le hash
-  disparaît, le token devient inutilisable côté Borne (401). <code>updateBoxToken</code> ne laisse
-  modifier que <code>label</code>/<code>location</code> (liste blanche), jamais l'<code>event_id</code>
-  ni <code>is_preview</code>.
+  à répéter son événement). À ces deux familles s'ajoute la vue <strong>globale</strong>
+  <code>GET /tokens</code> (sans <code>:id</code>) : <code>listAllBoxTokens</code> fait une jointure
+  <code>LEFT JOIN events</code> pour ajouter <code>event_name</code> à chaque ligne — c'est ce
+  qu'affiche l'onglet « Tokens » du super-admin (tous les tokens de tous les événements, triés par
+  date). La révocation est une vraie suppression (<code>DELETE</code>) — le hash disparaît, le token
+  devient inutilisable côté Borne (401). <code>updateBoxToken</code> ne laisse modifier que
+  <code>label</code>/<code>location</code> (liste blanche), jamais l'<code>event_id</code> ni
+  <code>is_preview</code>.
 </p>
 
 <div class="js-note">
@@ -183,8 +200,9 @@ router.put('/tokens/:tokenId', (req, res) => {
 
 <table class="api-table">
   <tr><th>Endpoint</th><th>Notes</th></tr>
-  <tr><td>POST /events/:id/tokens</td><td>Génère un token pour l'événement, renvoie le jeton en clair (une seule fois). 404 si l'événement n'existe pas.</td></tr>
-  <tr><td>GET /events/:id/tokens</td><td>Liste les tokens de l'événement, sans <code>token_hash</code>.</td></tr>
+  <tr><td>POST /events/:id/tokens</td><td>Génère un token pour l'événement, renvoie <code>token_clear</code> (aussi stocké, re-consultable). 404 si l'événement n'existe pas.</td></tr>
+  <tr><td>GET /events/:id/tokens</td><td>Liste les tokens de l'événement (avec <code>token_clear</code>, sans <code>token_hash</code>).</td></tr>
+  <tr><td>GET /tokens</td><td>Vue globale : tous les tokens, tous événements (JOIN → <code>event_name</code>). Onglet Tokens.</td></tr>
   <tr><td>DELETE /tokens/:tokenId</td><td>Révoque un token (404 si <code>changes === 0</code>).</td></tr>
   <tr><td>PUT /tokens/:tokenId</td><td>Met à jour <code>label</code>/<code>location</code> (404 si token inconnu).</td></tr>
   <tr><td>GET /overview</td><td>Vue globale : événements + tailles, disque, jobs échoués, tokens de borne.</td></tr>

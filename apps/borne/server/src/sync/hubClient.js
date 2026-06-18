@@ -1,5 +1,14 @@
 import { config } from '../config.js';
 
+// Format : [borne/sync] ✓/✗ METHOD /path  → status  detail
+function borneLog(method, path, status, detail = '') {
+  const ok = typeof status === 'number' ? status < 400 : status === 'ok';
+  const icon = ok ? '✓' : '✗';
+  const parts = [`[borne/sync] ${icon} ${method} ${path}`, `→ ${status}`];
+  if (detail) parts.push(detail);
+  console.log(parts.join('  '));
+}
+
 const MAX_ATTEMPTS = 5;
 
 function backoffMs(attempt) {
@@ -32,9 +41,11 @@ export async function hubFetch(path, options = {}) {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const res = await fetch(url, { ...options, headers });
+      borneLog(options.method ?? 'GET', path, res.status, attempt > 1 ? `attempt=${attempt}` : '');
       return res;
     } catch (err) {
       lastError = err;
+      borneLog(options.method ?? 'GET', path, 'ERR', `attempt=${attempt}  ${err.message}`);
       if (attempt < MAX_ATTEMPTS) {
         await sleep(backoffMs(attempt));
       }

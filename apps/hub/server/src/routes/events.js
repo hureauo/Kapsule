@@ -2,11 +2,18 @@ import { Router } from 'express';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
+import { THEMES, TEXT_FIELDS } from '@kapsule/core';
 import {
   getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog,
+  getUserByEmail, insertUser, createRegistrationToken,
 } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { requireUser, requireOwner } from '../middleware/auth.js';
+
+function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Réservé aux admins' });
+  next();
+}
 
 // Statuts à partir desquels l'édition est gelée (Hub connaît un statut ≥ live)
 const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
@@ -21,6 +28,19 @@ const MANUAL_TRANSITIONS = new Map([
   ['ready', 'draft'],
 ]);
 
+// Enrichit un événement avec ses event_meta (thème, textes, idle_timeout).
+// Retourne null si l'event_meta n'existe pas encore (événement tout juste créé).
+function withMeta(event, dataDir) {
+  try {
+    const edb = openEventDb(event.id, dataDir);
+    const rows = edb.prepare('SELECT key, value FROM event_meta').all();
+    const meta = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    return { ...event, meta };
+  } catch {
+    return event;
+  }
+}
+
 export function makeEventsRouter(dataDir) {
   const router = Router();
 
@@ -31,7 +51,7 @@ export function makeEventsRouter(dataDir) {
   });
 
   // ── POST /api/events ───────────────────────────────────────────────────────
-  router.post('/', requireUser, (req, res, next) => {
+  router.post('/', requireUser, requireAdmin, (req, res, next) => {
     try {
       const { name, event_date } = req.body;
       if (!name || typeof name !== 'string' || !name.trim()) {
@@ -55,7 +75,7 @@ export function makeEventsRouter(dataDir) {
 
   // ── GET /api/events/:eventId ───────────────────────────────────────────────
   router.get('/:eventId', requireUser, requireOwner, (req, res) => {
-    res.json(req.event);
+    res.json(withMeta(req.event, dataDir));
   });
 
   // ── PUT /api/events/:eventId ───────────────────────────────────────────────
@@ -70,15 +90,23 @@ export function makeEventsRouter(dataDir) {
       if (name !== undefined) fields.name = name;
       if (event_date !== undefined) fields.event_date = event_date;
 
-      // consent_text et idle_timeout sont écrits dans event_meta de la BD événement
-      const { consent_text, idle_timeout } = req.body;
-      if (consent_text !== undefined || idle_timeout !== undefined) {
+      // Champs event_meta : thème, textes du parcours, idle_timeout, consent_text
+      const { theme, idle_timeout } = req.body;
+      const metaUpdates = {};
+      if (theme !== undefined) {
+        if (!THEMES.includes(theme)) return res.status(400).json({ error: `Thème invalide : ${theme}` });
+        metaUpdates.theme = theme;
+      }
+      if (idle_timeout !== undefined) metaUpdates.idle_timeout = String(idle_timeout);
+      for (const key of Object.keys(TEXT_FIELDS)) {
+        if (req.body[key] !== undefined) metaUpdates[key] = String(req.body[key]);
+      }
+      if (Object.keys(metaUpdates).length > 0) {
         const evDb = openEventDb(event.id, dataDir);
         const upsert = evDb.prepare(
           'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'
         );
-        if (consent_text !== undefined) upsert.run('consent_text', String(consent_text));
-        if (idle_timeout !== undefined) upsert.run('idle_timeout', String(idle_timeout));
+        for (const [k, v] of Object.entries(metaUpdates)) upsert.run(k, v);
       }
 
       if (Object.keys(fields).length > 0) {
@@ -87,7 +115,7 @@ export function makeEventsRouter(dataDir) {
       }
 
       const db = getDb();
-      res.json(getEvent(db, event.id));
+      res.json(withMeta(getEvent(db, event.id), dataDir));
     } catch (err) {
       next(err);
     }
@@ -153,6 +181,92 @@ export function makeEventsRouter(dataDir) {
       jobs: { total: jobs.length, done: jobsDone, failed: jobsFailed, list: jobs },
       sync_log: logs,
     });
+  });
+
+  // ── POST /api/events/:eventId/config — import config depuis UI Hub (admin) ──
+  // body: { mode: 'overwrite'|'merge', questions: [...], meta: { theme, ... } }
+  // Protégé par requireUser (JWT) — distinct de POST /api/sync/events/:id/config (box token).
+  router.post('/:eventId/config', requireUser, requireOwner, (req, res, next) => {
+    try {
+      const event = req.event;
+      const FROZEN = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
+      if (FROZEN.has(event.status)) {
+        return res.status(409).json({ error: `Import impossible : événement en statut ${event.status}` });
+      }
+
+      const { mode, questions, meta } = req.body;
+      if (!['overwrite', 'merge'].includes(mode)) {
+        return res.status(400).json({ error: 'mode doit être overwrite ou merge' });
+      }
+
+      const META_KEYS = ['theme', 'idle_timeout', ...Object.keys(TEXT_FIELDS)];
+      const edb = openEventDb(event.id, dataDir);
+      const upsert = edb.prepare(
+        'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'
+      );
+
+      if (meta && typeof meta === 'object') {
+        for (const key of META_KEYS) {
+          if (meta[key] === undefined) continue;
+          if (mode === 'merge') {
+            const existing = edb.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value;
+            if (existing && existing.trim() !== '') continue;
+          }
+          if (key === 'theme' && !THEMES.includes(meta[key])) continue;
+          upsert.run(key, String(meta[key]));
+        }
+      }
+
+      if (Array.isArray(questions)) {
+        if (mode === 'overwrite') edb.prepare('DELETE FROM questions').run();
+        const existingTexts = new Set(edb.prepare('SELECT text FROM questions').all().map(q => q.text));
+        const insert = edb.prepare(
+          'INSERT INTO questions (text, max_duration, countdown, order_index, enabled) VALUES (?, ?, ?, ?, ?)'
+        );
+        const maxRow = edb.prepare('SELECT MAX(order_index) as m FROM questions').get();
+        let nextOrder = (maxRow?.m ?? -1) + 1;
+        for (const q of questions) {
+          if (!q.text || typeof q.text !== 'string') continue;
+          if (mode === 'merge' && existingTexts.has(q.text)) continue;
+          insert.run(q.text.slice(0, 500), q.max_duration ?? 60, q.countdown ?? 3, nextOrder++, q.enabled !== undefined ? (q.enabled ? 1 : 0) : 1);
+        }
+      }
+
+      const db = getDb();
+      insertSyncLog(db, { event_id: event.id, action: 'config_import', detail: { mode, questions: questions?.length ?? 0 } });
+      res.json({ ok: true });
+    } catch (err) { next(err); }
+  });
+
+  // ── PUT /api/events/:eventId/owner — assigne un client (crée le compte si absent) ──
+  router.put('/:eventId/owner', requireUser, requireAdmin, requireOwner, async (req, res, next) => {
+    try {
+      const { email } = req.body;
+      if (!email || !email.trim()) return res.status(400).json({ error: 'email requis' });
+
+      const db = getDb();
+      let user = getUserByEmail(db, email.trim());
+      let registration_url = null;
+      let created = false;
+
+      if (!user) {
+        const result = insertUser(db, { email: email.trim(), role: 'client' });
+        user = { id: result.lastInsertRowid, email: email.trim() };
+        const { token } = createRegistrationToken(db, { user_id: user.id });
+        registration_url = `${req.protocol}://${req.get('host')}/register?token=${token}`;
+        created = true;
+      }
+
+      db.prepare('UPDATE events SET owner_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(user.id, req.params.eventId);
+
+      res.json({
+        event: getEvent(db, req.params.eventId),
+        owner: { id: user.id, email: user.email },
+        created,
+        registration_url,
+      });
+    } catch (err) { next(err); }
   });
 
   // ── DELETE /api/events/:eventId — purge RGPD ──────────────────────────────

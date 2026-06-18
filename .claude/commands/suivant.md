@@ -11,3 +11,5 @@ Implémente une tâche du plan de développement Kapsule.
 4. Coche la case dans ROADMAP.md. Si un nouveau script npm est apparu, mets à jour la section « Commandes » de CLAUDE.md.
 5. Commit avec le message `phase X.Y: <description courte>`.
 6. Termine en résumant ce qui a été fait, ce qui reste dans le sous-lot, et toute vérification humaine 🧑 à prévoir.
+
+))

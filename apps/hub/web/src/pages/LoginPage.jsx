@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, saveToken } from '../api/client.js';
+import { api, saveToken, getRole } from '../api/client.js';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -16,7 +16,7 @@ export default function LoginPage() {
     try {
       const data = await api.login(email, password);
       saveToken(data.token);
-      navigate('/events', { replace: true });
+      navigate(getRole() === 'admin' ? '/admin' : '/events', { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {

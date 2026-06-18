@@ -24,9 +24,6 @@ export default function EventPanel() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [newName, setNewName] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,23 +47,6 @@ export default function EventPanel() {
       await load();
     } catch (e) {
       setError(e.message);
-    }
-  }
-
-  async function handleCreate(e) {
-    e.preventDefault();
-    const name = newName.trim();
-    if (!name) return;
-    setCreating(true);
-    setCreateError('');
-    try {
-      await api.createEvent({ name });
-      setNewName('');
-      await load();
-    } catch (err) {
-      setCreateError(err.message);
-    } finally {
-      setCreating(false);
     }
   }
 
@@ -126,23 +106,6 @@ export default function EventPanel() {
         )}
       </section>
 
-      <section className="panel-section">
-        <h2 className="panel-section__title">Créer un événement local</h2>
-        <form className="inline-form" onSubmit={handleCreate}>
-          <input
-            className="admin-input"
-            type="text"
-            placeholder="Nom de l'événement"
-            value={newName}
-            onChange={(e) => { setNewName(e.target.value); setCreateError(''); }}
-            disabled={creating}
-          />
-          <button className="btn btn--small btn--primary" type="submit" disabled={creating || !newName.trim()}>
-            {creating ? 'Création…' : 'Créer'}
-          </button>
-        </form>
-        {createError && <p className="text--error">{createError}</p>}
-      </section>
     </div>
   );
 }

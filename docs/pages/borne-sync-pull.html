@@ -6,8 +6,27 @@
   C'est ce qui se passe <em>avant</em> l'événement, quand la Borne a du réseau. Ce fichier porte deux
   points importants : la vérification du statut local <strong>au moment d'appliquer</strong> la
   réponse (§11.10), et le modèle <strong>un token = un événement</strong> (§11.20) qui fait que
-  <code>pullMyEvent</code> tire un seul événement, pas une liste.
+  <code>pullMyEvent</code> tire un seul événement, pas une liste. Ce fichier porte aussi
+  <code>getLastPull()</code> — l'horodatage du dernier pull, lu par <code>GET /sync/status</code>.
 </p>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Il n'y a plus de pull périodique : un pull au démarrage, puis manuel</div>
+  <p>
+    L'ancien module <code>autoPull.js</code> (timer <code>setInterval</code> toutes les 5 min +
+    heartbeats) a été <strong>supprimé</strong>. Désormais la Borne fait un <strong>pull one-shot au
+    démarrage</strong> (dans <a href="#/borne-index">index.js</a>, pour bootstrapper l'événement du
+    token si aucun n'est présent), et les pulls suivants sont <strong>déclenchés à la main</strong>
+    depuis l'espace technicien (<a href="#/borne-routes-sync">POST /sync/pull</a>). Le statut
+    <code>closed</code> n'est plus remonté par heartbeat mais au <em>début du push</em>
+    (<a href="#/borne-sync-push">push.js</a>, best-effort). Conséquence : <code>getLastPull()</code>
+    et le flag <code>_lastPull</code> ont migré ici, dans <code>pull.js</code>.
+  </p>
+</div>
+
+<pre><code class="js">let _lastPull = null;
+export function getLastPull() { return _lastPull; }
+function _setLastPull() { _lastPull = new Date().toISOString(); }</code></pre>
 
 <h2><code>pullEvent</code> : tirer un événement précis</h2>
 <pre><code class="js">export async function pullEvent(hubEventId, dataDir) {
@@ -17,8 +36,9 @@
   // 2. Vérifie le statut LOCAL au moment d'appliquer (invariant §11.10)
   const db = getRegistry();
   const existing = db.prepare('SELECT * FROM local_events WHERE id = ?').get(hubEventId);
-  if (existing &amp;&amp; existing.status !== 'loaded') {
-    // Événement passé live/closed entre la requête et la réponse — ne pas écraser
+  // §11.10 : sur borne physique, ne jamais écraser un événement live/closed
+  // (sessions invités en cours). En preview, données jetables → toujours écraser.
+  if (existing &amp;&amp; existing.status !== 'loaded' &amp;&amp; !config.previewMode) {
     return { skipped: true, reason: `statut local ${existing.status} — pull ignoré` };
   }
 
@@ -40,7 +60,16 @@
       const ins = edb.prepare('INSERT INTO questions (id, text, max_duration, countdown, order_index, enabled) VALUES (?, ?, ?, ?, ?, ?)');
       for (const q of bundle.questions) ins.run(q.id, q.text, q.max_duration, q.countdown, q.order_index, q.enabled ?? 1);
     })();
-    // … upsert event_meta …
+
+    // Écrase event_meta depuis le Hub (source de vérité) — DELETE + INSERT
+    // pour ne pas conserver des clés absentes du bundle (ex: thème changé côté Hub)
+    edb.transaction(() =&gt; {
+      edb.prepare('DELETE FROM event_meta').run();
+      if (bundle.event.meta &amp;&amp; typeof bundle.event.meta === 'object') {
+        const insMeta = edb.prepare('INSERT INTO event_meta (key, value) VALUES (?, ?)');
+        for (const [k, v] of Object.entries(bundle.event.meta)) insMeta.run(k, v);
+      }
+    })();
   } finally {
     edb.close();
   }
@@ -67,6 +96,25 @@
     La règle générale : pour une opération « lire à distance puis appliquer localement », revérifie
     l'état local <em>au moment d'appliquer</em>, pas au moment de lancer la requête. L'état a pu
     changer pendant l'aller-retour réseau.
+  </p>
+  <p>
+    <strong>Exception du mode démo</strong> : la garde inclut <code>&amp;&amp; !config.previewMode</code>.
+    Sur une <a href="#/borne-config">borne d'essai</a>, les sessions sont jetables — on
+    <em>veut</em> pouvoir re-puller la dernière config à tout moment, même si l'événement a déjà été
+    « démarré » en démo. Le garde §11.10 ne protège donc que les bornes physiques (données invité
+    réelles).
+  </p>
+</div>
+
+<div class="callout info">
+  <div class="callout-title">ℹ <code>event_meta</code> : DELETE + INSERT (et non upsert)</div>
+  <p>
+    Les réglages (<code>theme</code>, textes du parcours, <code>idle_timeout</code>…) sont écrits par
+    un <strong>DELETE + INSERT</strong> en transaction, pas par un upsert clé par clé. Raison : un
+    simple upsert <em>conserverait</em> les clés qui ne sont plus dans le bundle (ex. un thème retiré
+    côté Hub resterait collé localement). En vidant la table d'abord, on garantit que
+    <code>event_meta</code> reflète <strong>exactement</strong> ce que le Hub envoie — le Hub est la
+    source de vérité, comme pour les questions.
   </p>
 </div>
 
@@ -114,14 +162,18 @@ export async function pullMyEvent(dataDir) {
   const db = getRegistry();
   const existing = db.prepare('SELECT * FROM local_events WHERE id = ?').get(eventInfo.id);
 
-  // Pull si : pas encore présent localement, ou encore en statut 'loaded' (re-pull autorisé)
-  if (!existing || existing.status === 'loaded') {
+  // En mode preview, toujours puller (pas de sessions réelles à protéger).
+  // Sur borne physique, refuser si l'événement est live/closed (§11.10).
+  const canPull = !existing || existing.status === 'loaded' || config.previewMode;
+  if (canPull) {
     await pullEvent(eventInfo.id, dataDir);
     // Persiste is_preview depuis la réponse Hub (§11.20)
     db.prepare('UPDATE local_events SET is_preview = ? WHERE id = ?')
       .run(eventInfo.is_preview ? 1 : 0, eventInfo.id);
+    _setLastPull();
     return 1;
   }
+  _setLastPull();
   return 0;
 }</code></pre>
 <p>
@@ -130,9 +182,12 @@ export async function pullMyEvent(dataDir) {
   <em>liste</em> mais l'événement singulier de son token
   (<a href="#/hub-routes-sync">GET /sync/event</a>), puis applique le même filtre qu'avant : pull
   seulement s'il est absent localement ou encore en <code>loaded</code> (re-pull autorisé pour
-  récupérer des modifications de questions tant que l'événement n'a pas démarré). Un événement déjà
-  <code>live</code>/<code>closed</code> est ignoré. C'est ce que le
-  <a href="#/borne-sync-autopull">pull automatique</a> appelle en boucle.
+  récupérer des modifications de questions tant que l'événement n'a pas démarré) — ou
+  <strong>toujours</strong> en mode preview (<code>config.previewMode</code>), où les données sont
+  jetables. Un événement déjà <code>live</code>/<code>closed</code> sur une borne physique est ignoré.
+  <code>pullMyEvent</code> est appelé une fois au démarrage (<a href="#/borne-index">index.js</a>) et
+  à chaque <a href="#/borne-routes-sync">pull manuel</a> ; à la fin, qu'il y ait eu pull ou non, il
+  note l'horodatage via <code>_setLastPull()</code>.
 </p>
 <p>
   Après le pull, <code>pullMyEvent</code> recopie le flag <code>is_preview</code> de la réponse Hub
@@ -154,13 +209,16 @@ export async function pullMyEvent(dataDir) {
     <strong>404 est un cas normal</strong> : l'événement n'est plus pullable (purgé, ou déjà passé
     <code>live</code>). On l'intercepte spécifiquement (<code>if (e.status === 404) return 0</code>)
     et on renvoie <code>0</code> — « aucun pull » — au lieu de propager l'exception. Toute autre
-    erreur (réseau, 500…) est <code>throw</code>-ée pour être retentée au prochain cycle. Distinguer
-    « pas de travail » d'« échec » évite de polluer les logs et de déclencher des retries inutiles.
+    erreur (réseau, 500…) est <code>throw</code>-ée pour être remontée à l'appelant (au démarrage,
+    elle s'affiche dans la bannière de boot ; sur un pull manuel, elle devient la réponse d'erreur de
+    <code>POST /sync/pull</code>). Distinguer « pas de travail » d'« échec » évite de polluer les logs
+    et de déclencher des retries inutiles.
   </p>
 </div>
 
 <table class="api-table">
   <tr><th>Export</th><th>Détail</th></tr>
-  <tr><td>pullEvent(hubEventId, dataDir)</td><td>Tire un événement et l'applique (questions+meta). Abandonne si le statut local ≠ loaded (§11.10). Async.</td></tr>
-  <tr><td>pullMyEvent(dataDir)</td><td>Tire l'unique événement du token (§11.20). Retourne 1 si pull effectué, 0 si rien à faire (404 ou déjà ≥ live). Async.</td></tr>
+  <tr><td>pullEvent(hubEventId, dataDir)</td><td>Tire un événement et l'applique (questions + meta par DELETE+INSERT). Abandonne si le statut local ≠ loaded sur borne physique (§11.10) ; écrase toujours en mode preview. Async.</td></tr>
+  <tr><td>pullMyEvent(dataDir)</td><td>Tire l'unique événement du token (§11.20). Retourne 1 si pull effectué, 0 si rien à faire (404 ou déjà ≥ live hors preview). Note l'horodatage. Async.</td></tr>
+  <tr><td>getLastPull()</td><td>ISO du dernier pull (ou tentative). Affiché dans <code>GET /sync/status</code>.</td></tr>
 </table>

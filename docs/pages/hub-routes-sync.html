@@ -14,7 +14,8 @@
   <tr><th>Endpoint</th><th>Rôle</th></tr>
   <tr><td>GET /event</td><td>La Borne demande l'<strong>unique</strong> événement de son token (404 si non pullable). Remplace l'ancien <code>GET /assigned</code> (§11.20).</td></tr>
   <tr><td>GET /events/:id/bundle</td><td>Pull : renvoie l'événement + questions + meta. 403 si <code>:id ≠ req.box.event_id</code>. Passe <code>ready→loaded</code>.</td></tr>
-  <tr><td>POST /events/:id/status</td><td>Heartbeat : la Borne signale <code>live</code>/<code>closed</code>.</td></tr>
+  <tr><td>POST /events/:id/config</td><td>Remontée de config : la Borne <em>pousse</em> questions + meta (overwrite/merge). 409 si statut figé (≥ live).</td></tr>
+  <tr><td>POST /events/:id/status</td><td>Transition de statut : la Borne signale <code>closed</code> (au début du push). Refus 409 si retour en arrière.</td></tr>
   <tr><td>POST /events/:id/manifest</td><td>Push étape 1 : la Borne annonce ses fichiers ; le Hub répond la liste des <code>missing</code>.</td></tr>
   <tr><td>PUT /events/:id/files/:videoId</td><td>Push étape 2 : upload d'une vidéo, vérif checksum.</td></tr>
   <tr><td>PUT /events/:id/db</td><td>Push étape 3 : upload du db.sqlite, remplacement atomique.</td></tr>
@@ -64,6 +65,47 @@ if (req.params.id !== req.box.event_id) {
     </li>
   </ol>
 </div>
+
+<h2>Réception d'une remontée de config (<code>POST /events/:id/config</code>)</h2>
+<pre><code class="js">// body: { mode: 'overwrite'|'merge', questions: [...], meta: { theme, ... } }
+// Protégé par requireBox (token borne) — pas requireUser (JWT admin).
+router.post('/events/:id/config', validateUuidParams('id'), (req, res, next) =&gt; {
+  const event = getEvent(getDb(), req.params.id);
+  if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+  if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Non assigné à cette borne' });
+
+  const FROZEN = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
+  if (FROZEN.has(event.status)) return res.status(409).json({ error: `Import impossible : statut ${event.status}` });
+
+  const { mode, questions, meta } = req.body;
+  if (!['overwrite', 'merge'].includes(mode)) return res.status(400).json({ error: 'mode invalide' });
+
+  const META_KEYS = ['theme', 'idle_timeout', ...Object.keys(TEXT_FIELDS)];
+  const edb = openEventDb(event.id, dataDir);
+  // meta : upsert clé par clé (en merge, on ne remplace pas une valeur non vide ; theme validé via THEMES)
+  // questions : en overwrite on vide d'abord ; en merge on ignore les textes déjà présents
+  // … insertSyncLog('config_import') …
+  res.json({ ok: true });
+});</code></pre>
+<p>
+  C'est le pendant Hub de <a href="#/borne-sync-push">pushConfig</a> (la Borne <em>remonte</em> sa
+  config). Comme toutes les routes de ce fichier, elle est protégée par
+  <a href="#/hub-middleware-box">requireBox</a> (token borne), pas par le JWT admin — et applique le
+  même garde §11.20 (<code>:id === req.box.event_id</code>, sinon <code>403</code>). Deux modes :
+</p>
+<ul>
+  <li><strong><code>overwrite</code></strong> : la Borne fait foi — on vide les questions puis on
+      réinsère celles reçues ; les <code>event_meta</code> connues sont écrasées.</li>
+  <li><strong><code>merge</code></strong> : on ne touche pas à une valeur de meta déjà non vide, et on
+      ignore les questions dont le texte existe déjà — on ne fait qu'<em>ajouter</em> ce qui manque.</li>
+</ul>
+<p>
+  Le statut est verrouillé : si l'événement est déjà <code>live</code> ou au-delà (<code>FROZEN</code>),
+  on refuse avec <code>409</code> — pas question de réécrire la config d'un événement en cours ou
+  archivé. Seules les clés meta connues (<code>theme</code> validé contre <code>THEMES</code>,
+  <code>idle_timeout</code>, les <code>TEXT_FIELDS</code>) sont acceptées, et chaque import laisse une
+  trace dans <code>sync_log</code> (action <code>config_import</code>).
+</p>
 
 <div class="js-note">
   <div class="js-note-head">

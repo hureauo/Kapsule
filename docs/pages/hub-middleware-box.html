@@ -62,15 +62,17 @@ export function requireBox(req, res, next) {
 </div>
 
 <div class="callout danger">
-  <div class="callout-title">⛔ On stocke le hash du jeton, jamais le jeton en clair</div>
+  <div class="callout-title">⛔ L'auth ne s'appuie que sur le hash du jeton</div>
   <p>
-    La table <code>box_tokens</code> ne contient que <code>token_hash</code>, pas le jeton lui-même.
-    À la génération d'un token (<a href="#/hub-routes-admin">routes/admin.js</a>), le jeton en clair
-    est renvoyé <strong>une seule fois</strong> à l'admin (pour le configurer sur la Borne), puis
-    seul son hash est conservé. Si la base fuite, les jetons restent inutilisables (on ne peut pas
-    inverser un SHA-256). C'est le même principe que le hachage des mots de passe — sauf qu'ici on
-    utilise un simple SHA-256 (et non argon2) car le jeton est déjà une chaîne aléatoire de 256
-    bits, non « devinable » par force brute.
+    <code>requireBox</code> ne compare <strong>jamais</strong> le clair : il hache l'en-tête reçu et
+    cherche le <code>token_hash</code> correspondant. La table <code>box_tokens</code> stocke aussi
+    le clair (<code>token_clear</code>, pour la re-consultation admin — décision Phase 6E, §11.13b),
+    mais ce clair n'intervient pas dans cette vérification et n'est exposé qu'aux routes admin.
+    Côté authentification, ce qui compte est que le hash SHA-256 reste le pivot : on ne peut pas
+    inverser un SHA-256, et le jeton est déjà une chaîne aléatoire de 256 bits non « devinable » par
+    force brute — d'où un simple SHA-256 (et non argon2 comme pour les mots de passe). À la
+    génération (<a href="#/hub-routes-admin">routes/admin.js</a>), le clair est renvoyé à l'admin pour
+    configurer la Borne ; il reste ensuite consultable via les routes admin (jamais via la synchro).
   </p>
 </div>
 

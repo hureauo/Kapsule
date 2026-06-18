@@ -101,7 +101,8 @@ export function closeRegistry() {
 <pre><code class="js">CREATE TABLE IF NOT EXISTS box_tokens (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id     TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-  token_hash   TEXT UNIQUE NOT NULL,
+  token_hash   TEXT UNIQUE NOT NULL,                  -- sha256(token) : sert à l'auth (X-Box-Token)
+  token_clear  TEXT UNIQUE NOT NULL DEFAULT '',       -- token en clair : ré-consultable par l'admin
   label        TEXT,
   location     TEXT,
   is_preview   INTEGER NOT NULL DEFAULT 0,
@@ -121,14 +122,36 @@ export function closeRegistry() {
       (supprimé). Le lien Borne↔événement se crée en générant le token.</li>
   <li>Plusieurs tokens peuvent pointer le même événement (un réel + un d'essai), d'où une <em>table</em>
       plutôt qu'une colonne sur <code>events</code> — chacun révocable indépendamment.</li>
-  <li><code>is_preview = 1</code> marque un token d'essai (borne de démo, §11.21 — à venir) ;
+  <li><code>is_preview = 1</code> marque un token d'essai (borne de démo, §11.21) ;
       <code>label</code>/<code>location</code> sont purement descriptifs (affichés à l'admin).</li>
-  <li>Comme pour les autres jetons, seul <code>token_hash</code> (SHA-256) est stocké, jamais le
-      clair (voir <a href="#/hub-routes-admin">routes/admin.js</a>).</li>
+  <li>Le token est stocké <strong>en double</strong> : <code>token_hash</code> (SHA-256) sert à
+      l'authentification de la Borne (<a href="#/hub-middleware-box">requireBox</a>), tandis que
+      <code>token_clear</code> permet à l'admin de <em>re-consulter</em> et copier le token plus tard
+      (décision Phase 6E — voir <a href="#/hub-routes-admin">routes/admin.js</a> et l'invariant §11.13b).
+      Le clair n'est jamais exposé aux routes synchro ni aux clients, uniquement aux routes admin.</li>
 </ul>
 <p>
   La table <code>sync_log</code> a aussi perdu sa colonne <code>box_id</code> : avec un token par
   événement, <code>event_id</code> suffit à tracer qui a fait quoi.
+</p>
+
+<h2>La migration douce de <code>token_clear</code></h2>
+<p>
+  <code>box_tokens</code> a d'abord existé <em>sans</em> <code>token_clear</code> (le clair n'était
+  montré qu'une fois). Pour ne pas perdre les bases déjà en place, l'ajout de la colonne se fait par
+  une <strong>migration douce</strong> au lieu d'un simple <code>CREATE TABLE</code> (qui ne
+  s'applique pas à une table existante) :
+</p>
+<pre><code class="js">// Migration: add 'token_clear' to box_tokens if the table predates this change
+const boxCols = db.pragma('table_info(box_tokens)').map((c) => c.name);
+if (!boxCols.includes('token_clear')) {
+  db.exec("ALTER TABLE box_tokens ADD COLUMN token_clear TEXT NOT NULL DEFAULT ''");
+}</code></pre>
+<p>
+  On interroge le schéma réel via <code>pragma('table_info(...)')</code>, et on n'ajoute la colonne
+  que si elle manque — idempotent, rejouable à chaque démarrage. Le <code>DEFAULT ''</code> couvre
+  les lignes anciennes (tokens générés avant la migration : leur clair n'a pas été conservé). C'est le
+  même motif que les migrations <code>active</code> sur <code>users</code> plus haut dans le fichier.
 </p>
 
 <h2>Les fonctions d'accès : <code>db</code> passé en argument</h2>
@@ -209,7 +232,7 @@ export function insertEvent(db, { id, owner_id, name, event_date = null }) {
   <tr><td>Cycle de vie</td><td><code>openRegistry</code>, <code>getDb</code>, <code>closeRegistry</code></td></tr>
   <tr><td>users</td><td><code>insertUser</code>, <code>getUserByEmail</code>, <code>getUserById</code></td></tr>
   <tr><td>events</td><td><code>listEvents</code>, <code>getEvent</code>, <code>insertEvent</code>, <code>updateEvent</code>, <code>deleteEvent</code></td></tr>
-  <tr><td>box_tokens</td><td><code>insertBoxToken</code>, <code>listBoxTokensByEvent</code>, <code>getBoxTokenById</code>, <code>getBoxTokenByHash</code>, <code>updateBoxToken</code>, <code>updateBoxTokenSeen</code>, <code>deleteBoxToken</code></td></tr>
+  <tr><td>box_tokens</td><td><code>insertBoxToken</code>, <code>listBoxTokensByEvent</code>, <code>listAllBoxTokens</code> (JOIN events → ajoute <code>event_name</code>, vue globale onglet Tokens), <code>getBoxTokenById</code>, <code>getBoxTokenByHash</code>, <code>updateBoxToken</code>, <code>updateBoxTokenSeen</code>, <code>deleteBoxToken</code></td></tr>
   <tr><td>sync_log</td><td><code>insertSyncLog</code></td></tr>
 </table>
 <p>

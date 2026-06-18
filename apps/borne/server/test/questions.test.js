@@ -1,29 +1,30 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
 import { createApp } from '../src/index.js';
-import { closeRegistry } from '../src/registry.js';
+import { closeRegistry, insertEvent, setActiveEvent } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
+import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 
 const TEST_CFG = { adminPassword: 'test', techPassword: 'tech-test', jwtSecret: 'secret-test', dataDir: '' };
+const EVENT_ID = 'ev-questions-test';
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-q-'));
+  // Crée l'événement hub directement (POST /api/events supprimé)
+  const eventDir = join(dir, 'events', EVENT_ID);
+  mkdirSync(join(eventDir, 'videos'), { recursive: true });
+  const edb = createEventDb(join(eventDir, 'db.sqlite'));
+  edb.close();
   const app = createApp(dir, { ...TEST_CFG, dataDir: dir });
   const loginRes = await request(app).post('/api/admin/login').send({ password: 'test' });
   const token = loginRes.body.token;
-  // Crée un événement et l'active
-  const evtRes = await request(app)
-    .post('/api/events')
-    .set('Authorization', `Bearer ${token}`)
-    .send({ name: 'Evt Questions' });
-  await request(app)
-    .put(`/api/events/${evtRes.body.id}/activate`)
-    .set('Authorization', `Bearer ${token}`);
-  return { dir, app, token, eventId: evtRes.body.id };
+  insertEvent({ id: EVENT_ID, name: 'Evt Questions', origin: 'hub', status: 'loaded' });
+  setActiveEvent(EVENT_ID);
+  return { dir, app, token, eventId: EVENT_ID };
 }
 
 function teardown(dir) {

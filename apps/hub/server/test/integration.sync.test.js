@@ -141,11 +141,11 @@ before(async () => {
 
   const db = getHubDb();
   const hash = await argon2.hash('pass-client', { type: argon2.argon2id });
-  insertUser(db, { email: 'client@integ.test', password_hash: hash, role: 'client' });
+  insertUser(db, { email: 'client@integ.test', password_hash: hash, role: 'admin' });
   const loginRes = await hubAgent.post('/api/auth/login').send({ email: 'client@integ.test', password: 'pass-client' });
   tokenClient = loginRes.body.token;
 
-  // Événement Hub ready
+  // Événement Hub ready (création réservée aux admins §6E)
   const evRes = await hubAgent
     .post('/api/events')
     .set('Authorization', `Bearer ${tokenClient}`)
@@ -159,7 +159,7 @@ before(async () => {
 
   // Token de borne lié à cet événement (modèle token = événement §11.20)
   const tokenHash = createHash('sha256').update(BOX_TOKEN).digest('hex');
-  insertBoxToken(db, { event_id: eventId, token_hash: tokenHash, label: 'Borne Integ' });
+  insertBoxToken(db, { event_id: eventId, token_hash: tokenHash, token_clear: BOX_TOKEN, label: 'Borne Integ' });
 
   // Questions Hub
   await hubAgent
@@ -344,12 +344,13 @@ describe('Intégration 3.9 — coupure à mi-upload et reprise', () => {
     eventId2 = evRes.body.id;
 
     await hubAgent.put(`/api/events/${eventId2}/status`).set('Authorization', `Bearer ${tokenClient}`).send({ status: 'ready' });
-    await hubAgent.post(`/api/events/${eventId2}/questions`).set('Authorization', `Bearer ${tokenClient}`).send({ text: 'Q Coupure', max_duration: 60, countdown: 3 });
+    await hubAgent.post(`/api/events/${eventId2}/questions`).set('Authorization', `Bearer ${tokenClient}`)
+      .send({ text: 'Q Coupure', max_duration: 60, countdown: 3 });
 
     // Token de borne lié à eventId2 (token distinct — un token = un événement §11.20)
     const db = getHubDb();
     const hash2 = createHash('sha256').update(BOX_TOKEN_2).digest('hex');
-    insertBoxToken(db, { event_id: eventId2, token_hash: hash2, label: 'Borne Integ 2' });
+    insertBoxToken(db, { event_id: eventId2, token_hash: hash2, token_clear: BOX_TOKEN_2, label: 'Borne Integ 2' });
 
     // Basculer le token de la Borne sur BOX_TOKEN_2 pour ce scénario
     borneConfig.boxToken = BOX_TOKEN_2;

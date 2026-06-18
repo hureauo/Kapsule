@@ -160,20 +160,20 @@ describe('POST /api/admin/events/:id/tokens', () => {
     eventId = evRes.body.id;
   });
 
-  it('génère un token et le retourne en clair UNE SEULE FOIS (201)', async () => {
+  it('génère un token et le retourne en clair (201)', async () => {
     const res = await request.post(`/api/admin/events/${eventId}/tokens`)
       .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ label: 'Borne Salon', location: 'Entrée', is_preview: false });
     assert.equal(res.status, 201);
     assert.ok(res.body.id);
     assert.equal(res.body.event_id, eventId);
-    assert.ok(res.body.token, 'token en clair doit être présent');
-    assert.equal(res.body.token.length, 64, '32 octets hex = 64 chars');
+    assert.ok(res.body.token_clear, 'token_clear doit être présent');
+    assert.equal(res.body.token_clear.length, 64, '32 octets hex = 64 chars');
     assert.equal(res.body.label, 'Borne Salon');
 
     // Le hash du token retourné doit correspondre à ce qui est stocké
     const db = getDb();
-    const hash = createHash('sha256').update(res.body.token).digest('hex');
+    const hash = createHash('sha256').update(res.body.token_clear).digest('hex');
     const row = getBoxTokenByHash(db, hash);
     assert.ok(row, 'le token doit exister en base');
     assert.equal(row.event_id, eventId);
@@ -217,14 +217,15 @@ describe('GET /api/admin/events/:id/tokens', () => {
       .send({ label: 'T2', is_preview: true });
   });
 
-  it('liste les tokens sans token_hash (admin)', async () => {
+  it('liste les tokens avec hub_config_hash (admin)', async () => {
     const res = await request.get(`/api/admin/events/${eventId}/tokens`)
       .set('Authorization', `Bearer ${tokenAdmin}`);
     assert.equal(res.status, 200);
-    assert.ok(Array.isArray(res.body));
-    assert.equal(res.body.length, 2);
-    assert.ok(!('token_hash' in res.body[0]), 'token_hash ne doit pas être exposé');
-    assert.ok('label' in res.body[0]);
+    assert.ok(Array.isArray(res.body.tokens));
+    assert.equal(res.body.tokens.length, 2);
+    assert.ok(!('token_hash' in res.body.tokens[0]), 'token_hash ne doit pas être exposé');
+    assert.ok('label' in res.body.tokens[0]);
+    assert.ok('hub_config_hash' in res.body);
   });
 
   it('retourne 403 pour un client', async () => {
@@ -329,7 +330,7 @@ describe('boxAuth — middleware', () => {
     const tokenRes = await request.post(`/api/admin/events/${eventIdBox}/tokens`)
       .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ label: 'Borne boxAuth test' });
-    boxToken = tokenRes.body.token;
+    boxToken = tokenRes.body.token_clear;
   });
 
   it('token valide → GET /api/sync/event retourne 200', async () => {
@@ -407,5 +408,32 @@ describe('GET /api/admin/overview', () => {
       assert.ok(typeof ev.disk_bytes === 'number', 'disk_bytes doit être un nombre');
       assert.ok(!('token_hash' in ev), 'token_hash ne doit pas fuiter');
     }
+  });
+});
+
+// ── GET /api/admin/tokens ─────────────────────────────────────────────────────
+
+describe('GET /api/admin/tokens', () => {
+  it('retourne 401 sans token', async () => {
+    const res = await request.get('/api/admin/tokens');
+    assert.equal(res.status, 401);
+  });
+
+  it('retourne 403 pour un client', async () => {
+    const res = await request.get('/api/admin/tokens')
+      .set('Authorization', `Bearer ${tokenClient}`);
+    assert.equal(res.status, 403);
+  });
+
+  it('retourne 200 avec la liste globale incluant event_name et token_clear (admin)', async () => {
+    const res = await request.get('/api/admin/tokens')
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body), 'doit être un tableau');
+    assert.ok(res.body.length >= 1, 'au moins un token (créé dans les tests précédents)');
+    const t = res.body[0];
+    assert.ok('token_clear' in t, 'token_clear doit être présent');
+    assert.ok('event_name' in t, 'event_name jointé doit être présent');
+    assert.ok(!('token_hash' in t), 'token_hash ne doit pas fuiter');
   });
 });

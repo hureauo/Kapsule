@@ -197,7 +197,7 @@ describe('box_tokens', () => {
   });
 
   it('insère et retrouve un token par hash', () => {
-    insertBoxToken(db, { event_id: evId, token_hash: 'tok-hash-1', label: 'Borne A' });
+    insertBoxToken(db, { event_id: evId, token_hash: 'tok-hash-1', token_clear: 'tok-clear-1', label: 'Borne A' });
     const row = getBoxTokenByHash(db, 'tok-hash-1');
     assert.equal(row.event_id, evId);
     assert.equal(row.label, 'Borne A');

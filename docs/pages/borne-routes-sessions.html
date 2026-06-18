@@ -76,9 +76,11 @@
 <pre><code class="js">if (sessionCount === 0 &amp;&amp; active.status === 'loaded') updateEventStatus(active.id, 'live');</code></pre>
 <p>
   C'est une transition <em>déclenchée par l'usage</em>, pas par l'admin : dès qu'un invité commence,
-  l'événement est « en cours ». Ce <code>live</code> sera ensuite remonté au Hub via les
-  <a href="#/borne-sync-autopull">heartbeats</a>. La clôture (<code>closed</code>), elle, est
-  manuelle (<a href="#/borne-routes-events">PUT /events/:id/close</a>) ou via le heartbeat.
+  l'événement est « en cours ». Ce <code>live</code> reste <strong>local</strong> à la Borne (qui est
+  typiquement hors-ligne pendant l'événement) — il n'est pas remonté au Hub. La clôture
+  (<code>closed</code>) est manuelle (<a href="#/borne-routes-events">PUT /events/:id/close</a>) ;
+  le Hub ne l'apprend qu'au début du push (<a href="#/borne-sync-push">push.js</a> signale
+  <code>closed</code> avant le manifest).
 </p>
 
 <h2>Le capability token : l'UUID de session = droit d'accès</h2>

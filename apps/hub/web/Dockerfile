@@ -18,9 +18,13 @@ RUN npm run build
 # Étape 2 : image finale légère
 FROM nginx:alpine
 
+RUN apk add --no-cache openssl
+
 COPY docker/hub-nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/hub-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 COPY --from=builder /app/apps/hub/web/dist /usr/share/nginx/html
 
 EXPOSE 80 443
 
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/entrypoint.sh"]

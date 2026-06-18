@@ -57,8 +57,11 @@ export const api = {
   getOverview: () => apiFetch('/admin/overview'),
   createBoxToken: (eventId, fields) => apiFetch(`/admin/events/${eventId}/tokens`, { method: 'POST', body: fields }),
   listBoxTokens: (eventId) => apiFetch(`/admin/events/${eventId}/tokens`),
+  listAllTokens: () => apiFetch('/admin/tokens'),
   deleteBoxToken: (tokenId) => apiFetch(`/admin/tokens/${tokenId}`, { method: 'DELETE' }),
   updateBoxToken: (tokenId, fields) => apiFetch(`/admin/tokens/${tokenId}`, { method: 'PUT', body: fields }),
+  assignEventOwner: (eventId, email) => apiFetch(`/events/${eventId}/owner`, { method: 'PUT', body: { email } }),
+  importPreviewConfig: (eventId, payload) => apiFetch(`/events/${eventId}/config`, { method: 'POST', body: payload }),
 
   // Admin : gestion des comptes clients
   listUsers: () => apiFetch('/admin/users'),

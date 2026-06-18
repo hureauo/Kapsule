@@ -23,7 +23,7 @@ before(async () => {
   const db = getDb();
   const hashA = await argon2.hash('pass-a', { type: argon2.argon2id });
   const hashB = await argon2.hash('pass-b', { type: argon2.argon2id });
-  insertUser(db, { email: 'alice@q.test', password_hash: hashA, role: 'client' });
+  insertUser(db, { email: 'alice@q.test', password_hash: hashA, role: 'admin' });
   insertUser(db, { email: 'bob@q.test',   password_hash: hashB, role: 'client' });
 
   const loginA = await request.post('/api/auth/login').send({ email: 'alice@q.test', password: 'pass-a' });

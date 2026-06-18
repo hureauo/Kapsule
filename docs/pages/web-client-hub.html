@@ -167,6 +167,6 @@ csvExportUrl: (eventId) =&gt; `/api/events/${eventId}/videos/export/csv?token=${
   <tr><td>getToken/saveToken/clearToken</td><td>Gèrent le JWT dans <code>localStorage</code> (clé <code>hub_token</code>).</td></tr>
   <tr><td>getRole()</td><td>Décode (sans vérifier) le rôle du JWT pour l'affichage/routing. Garde réelle côté serveur.</td></tr>
   <tr><td>apiFetch(path, opts)</td><td>Wrapper : jeton + JSON auto + gestion erreurs/204. Préfixe <code>/api</code>.</td></tr>
-  <tr><td>api.*</td><td>Une méthode par endpoint (login, events, questions, galerie, admin). Tokens de borne : <code>createBoxToken(eventId, fields)</code>, <code>listBoxTokens(eventId)</code>, <code>deleteBoxToken(tokenId)</code>, <code>updateBoxToken(tokenId, fields)</code> (l'ancien <code>assignBox</code> a disparu).</td></tr>
+  <tr><td>api.*</td><td>Une méthode par endpoint (login, events, questions, galerie, admin). Tokens de borne : <code>createBoxToken(eventId, fields)</code>, <code>listBoxTokens(eventId)</code>, <code>listAllTokens()</code> (vue globale onglet Tokens), <code>deleteBoxToken(tokenId)</code>, <code>updateBoxToken(tokenId, fields)</code> (l'ancien <code>assignBox</code> a disparu). Assignation : <code>assignEventOwner(eventId, email)</code> → <code>PUT /events/:id/owner</code>. Import de config depuis l'aperçu : <code>importPreviewConfig(eventId, payload)</code>.</td></tr>
   <tr><td>*Url(...)</td><td>Construisent des URLs avec <code>?token=</code> pour vidéos/CSV/archive (§11.2).</td></tr>
 </table>

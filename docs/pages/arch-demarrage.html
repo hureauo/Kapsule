@@ -124,7 +124,9 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
 
 <h2>Et la Borne ?</h2>
 <p>
-  Identique, plus une étape : au démarrage, la Borne lance aussi le <strong>pull automatique</strong>
-  (<code>startAutoPull</code>) qui interroge le Hub périodiquement. On le voit dans
-  <a href="#/borne-index">borne/index.js</a> et <a href="#/borne-sync-autopull">autoPull.js</a>.
+  Identique, plus une étape : au démarrage, la Borne fait un <strong>pull one-shot</strong>
+  (<code>pullMyEvent</code>) si un Hub et un token sont configurés — juste pour bootstrapper
+  l'événement du token. Il n'y a pas de pull périodique : les synchros suivantes sont déclenchées à la
+  main depuis l'espace technicien. On le voit dans <a href="#/borne-index">borne/index.js</a> et
+  <a href="#/borne-sync-pull">sync/pull.js</a>.
 </p>
