@@ -141,7 +141,7 @@ before(async () => {
 
   const db = getHubDb();
   const hash = await argon2.hash('pass-client', { type: argon2.argon2id });
-  insertUser(db, { email: 'client@integ.test', password_hash: hash, role: 'admin' });
+  insertUser(db, { email: 'client@integ.test', password_hash: hash, role: 'superuser' });
   const loginRes = await hubAgent.post('/api/auth/login').send({ email: 'client@integ.test', password: 'pass-client' });
   tokenClient = loginRes.body.token;
 

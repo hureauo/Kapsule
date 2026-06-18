@@ -7,7 +7,7 @@ import supertest from 'supertest';
 import argon2 from 'argon2';
 import { v4 as uuidv4 } from 'uuid';
 import { createApp } from '../src/index.js';
-import { getDb, closeRegistry, insertUser } from '../src/registry.js';
+import { getDb, closeRegistry, insertUser, upsertEventUser } from '../src/registry.js';
 import { openEventDb, closeAllEventDbs } from '../src/eventStore.js';
 
 let dir;
@@ -26,7 +26,7 @@ before(async () => {
   const db = getDb();
   const hash = await argon2.hash('pass123', { type: argon2.argon2id });
   const hashOther = await argon2.hash('other123', { type: argon2.argon2id });
-  const res = insertUser(db, { email: 'owner@gallery.test', password_hash: hash, role: 'admin' });
+  const res = insertUser(db, { email: 'owner@gallery.test', password_hash: hash, role: 'superuser' });
   insertUser(db, { email: 'other@gallery.test', password_hash: hashOther, role: 'client' });
 
   const loginRes = await supertest(app).post('/api/auth/login').send({ email: 'owner@gallery.test', password: 'pass123' });
@@ -38,9 +38,10 @@ before(async () => {
   eventId = uuidv4();
   const ownerId = res.lastInsertRowid;
   db.prepare(`
-    INSERT INTO events (id, owner_id, name, status, pushed_at)
-    VALUES (?, ?, 'Galerie Test', 'pushed', CURRENT_TIMESTAMP)
-  `).run(eventId, ownerId);
+    INSERT INTO events (id, name, status, pushed_at)
+    VALUES (?, 'Galerie Test', 'pushed', CURRENT_TIMESTAMP)
+  `).run(eventId);
+  upsertEventUser(db, { event_id: eventId, user_id: ownerId, roles: ['admin_borne'] });
 
   // Structure de fichiers
   const videosDir = join(dir, 'events', eventId, 'videos');
@@ -219,7 +220,8 @@ describe('GET /api/events/:id/archive', () => {
     // Crée un événement sans job archive
     const db = getDb();
     const evId2 = uuidv4();
-    db.prepare(`INSERT INTO events (id, owner_id, name, status) VALUES (?, 1, 'NoArchive', 'pushed')`).run(evId2);
+    db.prepare(`INSERT INTO events (id, name, status) VALUES (?, 'NoArchive', 'pushed')`).run(evId2);
+    upsertEventUser(db, { event_id: evId2, user_id: 1, roles: ['admin_borne'] });
     mkdirSync(join(dir, 'events', evId2), { recursive: true });
     openEventDb(evId2, dir);
 

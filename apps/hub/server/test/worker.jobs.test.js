@@ -25,7 +25,7 @@ before(() => {
   db = openRegistry(dataDir);
 
   db.prepare(`INSERT INTO users (id, email, password_hash) VALUES (1, 'test@test.com', 'x')`).run();
-  db.prepare(`INSERT INTO events (id, owner_id, name, status) VALUES (?, 1, 'Test', 'pushed')`)
+  db.prepare(`INSERT INTO events (id, name, status) VALUES (?, 'Test', 'pushed')`)
     .run(EVENT_ID);
 
   const videosDir = join(dataDir, 'events', EVENT_ID, 'videos');

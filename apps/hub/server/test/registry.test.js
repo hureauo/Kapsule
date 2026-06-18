@@ -9,6 +9,7 @@ import {
   createRegistrationToken, getRegistrationToken, markRegistrationTokenUsed,
   insertEvent, getEvent, listEvents, updateEvent, deleteEvent,
   insertBoxToken, listBoxTokensByEvent, getBoxTokenByHash, updateBoxTokenSeen, deleteBoxToken,
+  upsertEventUser, deleteEventUser, listEventUsers,
   insertSyncLog,
 } from '../src/registry.js';
 
@@ -44,10 +45,10 @@ describe('openRegistry', () => {
 
 describe('users', () => {
   it('insère et retrouve un user par email', () => {
-    insertUser(db, { email: 'alice@example.com', password_hash: 'hash1', name: 'Alice', role: 'admin' });
+    insertUser(db, { email: 'alice@example.com', password_hash: 'hash1', name: 'Alice', role: 'superuser' });
     const user = getUserByEmail(db, 'alice@example.com');
     assert.equal(user.email, 'alice@example.com');
-    assert.equal(user.role, 'admin');
+    assert.equal(user.role, 'superuser');
     assert.equal(user.name, 'Alice');
   });
 
@@ -67,7 +68,7 @@ describe('users', () => {
 
   it('refuse un role invalide (CHECK)', () => {
     assert.throws(() =>
-      insertUser(db, { email: 'bad@example.com', password_hash: 'h', role: 'superuser' })
+      insertUser(db, { email: 'bad@example.com', password_hash: 'h', role: 'unknown_role' })
     );
   });
 
@@ -95,9 +96,9 @@ describe('users', () => {
 
   it('updateUser ignore les champs non autorisés', () => {
     const user = getUserByEmail(db, 'alice@example.com');
-    updateUser(db, user.id, { role: 'admin', injected: 'DROP TABLE users' });
+    updateUser(db, user.id, { role: 'client', injected: 'DROP TABLE users' });
     const unchanged = getUserById(db, user.id);
-    assert.strictEqual(unchanged.role, 'admin');
+    assert.strictEqual(unchanged.role, 'superuser');
   });
 });
 
@@ -146,25 +147,26 @@ describe('events', () => {
   });
 
   it('insère et retrouve un événement', () => {
-    insertEvent(db, { id: 'evt-001', owner_id: userId, name: 'Mariage Alice', event_date: '2026-09-01' });
+    insertEvent(db, { id: 'evt-001', name: 'Mariage Alice', event_date: '2026-09-01' });
+    upsertEventUser(db, { event_id: 'evt-001', user_id: userId, roles: ['admin_borne'] });
     const ev = getEvent(db, 'evt-001');
     assert.equal(ev.name, 'Mariage Alice');
     assert.equal(ev.status, 'draft');
-    assert.equal(ev.owner_id, userId);
   });
 
-  it('listEvents retourne les événements du user', () => {
+  it('listEvents retourne les événements du user via event_users', () => {
     const evs = listEvents(db, { userId, role: 'client' });
     assert.equal(evs.length, 1);
     assert.equal(evs[0].id, 'evt-001');
   });
 
-  it('listEvents admin retourne tous les événements', () => {
+  it('listEvents superuser retourne tous les événements', () => {
     insertUser(db, { email: 'bob@example.com', password_hash: 'hashbob' });
     const bob = getUserByEmail(db, 'bob@example.com');
-    insertEvent(db, { id: 'evt-002', owner_id: bob.id, name: 'Anniversaire Bob' });
+    insertEvent(db, { id: 'evt-002', name: 'Anniversaire Bob' });
+    upsertEventUser(db, { event_id: 'evt-002', user_id: bob.id, roles: ['admin_borne'] });
 
-    const all = listEvents(db, { userId, role: 'admin' });
+    const all = listEvents(db, { userId, role: 'superuser' });
     assert.ok(all.length >= 2);
   });
 
@@ -192,7 +194,7 @@ describe('box_tokens', () => {
 
   before(() => {
     // Créer un événement pour les FK
-    insertEvent(db, { id: 'evt-box-tok', owner_id: 1, name: 'Event box token', event_date: null });
+    insertEvent(db, { id: 'evt-box-tok', name: 'Event box token', event_date: null });
     evId = 'evt-box-tok';
   });
 

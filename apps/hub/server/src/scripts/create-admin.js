@@ -26,8 +26,8 @@ async function main() {
   rl.close();
 
   const password_hash = await argon2.hash(password, { type: argon2.argon2id });
-  insertUser(db, { email, password_hash, name, role: 'admin' });
-  console.log(`\nCompte admin créé pour ${email}.`);
+  insertUser(db, { email, password_hash, name, role: 'superuser' });
+  console.log(`\nCompte superuser créé pour ${email}.`);
 }
 
 main().catch((err) => { console.error(err.message); process.exit(1); });

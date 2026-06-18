@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import supertest from 'supertest';
 import argon2 from 'argon2';
 import { createApp } from '../src/index.js';
-import { getDb, closeRegistry, insertUser, getUserByEmail, getBoxTokenByHash } from '../src/registry.js';
+import { getDb, closeRegistry, insertUser, getUserByEmail, getBoxTokenByHash, insertEvent, upsertEventUser } from '../src/registry.js';
 import { createHash } from 'node:crypto';
 
 let dir, request, tokenAdmin, tokenClient;
@@ -19,7 +19,7 @@ before(async () => {
   const db = getDb();
   const hashAdmin  = await argon2.hash('admin-pass', { type: argon2.argon2id });
   const hashClient = await argon2.hash('client-pass', { type: argon2.argon2id });
-  insertUser(db, { email: 'admin@test.com',  password_hash: hashAdmin,  role: 'admin' });
+  insertUser(db, { email: 'admin@test.com',  password_hash: hashAdmin,  role: 'superuser' });
   insertUser(db, { email: 'client@test.com', password_hash: hashClient, role: 'client' });
 
   const r1 = await request.post('/api/auth/login').send({ email: 'admin@test.com',  password: 'admin-pass' });
@@ -435,5 +435,68 @@ describe('GET /api/admin/tokens', () => {
     assert.ok('token_clear' in t, 'token_clear doit être présent');
     assert.ok('event_name' in t, 'event_name jointé doit être présent');
     assert.ok(!('token_hash' in t), 'token_hash ne doit pas fuiter');
+  });
+});
+
+// ── GET/POST/DELETE /api/admin/events/:id/users ───────────────────────────────
+
+describe('event_users — gestion des utilisateurs par événement', () => {
+  let eventId;
+  let clientUserId;
+
+  before(async () => {
+    const db = getDb();
+    // Crée un événement de test
+    const { v4: uuidv4 } = await import('uuid');
+    eventId = uuidv4();
+    insertEvent(db, { id: eventId, name: 'Événement users test' });
+    clientUserId = getUserByEmail(db, 'client@test.com').id;
+  });
+
+  it('GET retourne la liste vide (200)', async () => {
+    const res = await request.get(`/api/admin/events/${eventId}/users`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body));
+    assert.equal(res.body.length, 0);
+  });
+
+  it('POST assigne un user avec rôles (201)', async () => {
+    const res = await request.post(`/api/admin/events/${eventId}/users`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ user_id: clientUserId, roles: ['admin_borne'] });
+    assert.equal(res.status, 201);
+    assert.deepEqual(res.body.roles, ['admin_borne']);
+  });
+
+  it('GET retourne le user assigné avec ses rôles', async () => {
+    const res = await request.get(`/api/admin/events/${eventId}/users`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.length, 1);
+    assert.equal(res.body[0].user_id, clientUserId);
+    assert.deepEqual(res.body[0].roles, ['admin_borne']);
+  });
+
+  it('POST retourne 400 si roles invalide', async () => {
+    const res = await request.post(`/api/admin/events/${eventId}/users`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ user_id: clientUserId, roles: ['role_inexistant'] });
+    assert.equal(res.status, 400);
+  });
+
+  it('DELETE retire le user (204)', async () => {
+    const res = await request.delete(`/api/admin/events/${eventId}/users/${clientUserId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 204);
+    const check = await request.get(`/api/admin/events/${eventId}/users`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(check.body.length, 0);
+  });
+
+  it('retourne 403 pour un client', async () => {
+    const res = await request.get(`/api/admin/events/${eventId}/users`)
+      .set('Authorization', `Bearer ${tokenClient}`);
+    assert.equal(res.status, 403);
   });
 });

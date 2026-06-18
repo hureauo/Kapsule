@@ -7,7 +7,7 @@ import supertest from 'supertest';
 import argon2 from 'argon2';
 import { config } from '../src/config.js';
 import { createApp } from '../src/index.js';
-import { getDb, closeRegistry, insertUser, insertEvent, createRegistrationToken } from '../src/registry.js';
+import { getDb, closeRegistry, insertUser, insertEvent, upsertEventUser, createRegistrationToken } from '../src/registry.js';
 
 let dir;
 let app;
@@ -247,7 +247,8 @@ describe('requireOwner — cloisonnement 2 comptes', () => {
     const db = getDb();
     const alice = db.prepare('SELECT id FROM users WHERE email = ?').get('alice@test.com');
     eventAliceId = 'evt-alice-001';
-    insertEvent(db, { id: eventAliceId, owner_id: alice.id, name: 'Mariage Alice' });
+    insertEvent(db, { id: eventAliceId, name: 'Mariage Alice' });
+    upsertEventUser(db, { event_id: eventAliceId, user_id: alice.id, roles: ['admin_borne'] });
   });
 
   it('Alice peut accéder à son propre événement (200)', async () => {

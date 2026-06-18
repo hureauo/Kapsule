@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
-import { getDb, getEvent } from '../registry.js';
+import { getDb, getEvent, getEventUser } from '../registry.js';
 
 function extractToken(req) {
   const auth = req.headers.authorization;
@@ -20,7 +20,7 @@ export function requireUser(req, res, next) {
   }
 }
 
-// Vérifie que req.user est propriétaire de l'événement (ou admin).
+// Vérifie que req.user est assigné à l'événement (ou superuser).
 // Doit être appelé après requireUser et après avoir résolu eventId.
 export function requireOwner(req, res, next) {
   const { eventId } = req.params;
@@ -28,8 +28,9 @@ export function requireOwner(req, res, next) {
   const db = getDb();
   const event = getEvent(db, eventId);
   if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-  if (req.user.role !== 'admin' && event.owner_id !== req.user.sub) {
-    return res.status(403).json({ error: 'Accès interdit' });
+  if (req.user.role !== 'superuser') {
+    const membership = getEventUser(db, { event_id: eventId, user_id: req.user.sub });
+    if (!membership) return res.status(403).json({ error: 'Accès interdit' });
   }
   req.event = event;
   next();

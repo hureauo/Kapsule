@@ -13,7 +13,7 @@ function RequireAuth({ children }) {
 
 function RequireAdmin({ children }) {
   if (!isAuthenticated()) return <Navigate to="/login" replace />;
-  if (getRole() !== 'admin') return <Navigate to="/events" replace />;
+  if (getRole() !== 'superuser') return <Navigate to="/events" replace />;
   return children;
 }
 
@@ -26,7 +26,7 @@ export default function App() {
         <Route path="/admin" element={<RequireAdmin><AdminPage /></RequireAdmin>} />
         <Route path="/events" element={<RequireAuth><EventsPage /></RequireAuth>} />
         <Route path="/events/:id" element={<RequireAuth><EventDetailPage /></RequireAuth>} />
-        <Route path="*" element={<Navigate to={isAuthenticated() ? (getRole() === 'admin' ? '/admin' : '/events') : '/login'} replace />} />
+        <Route path="*" element={<Navigate to={isAuthenticated() ? (getRole() === 'superuser' ? '/admin' : '/events') : '/login'} replace />} />
       </Routes>
     </BrowserRouter>
   );

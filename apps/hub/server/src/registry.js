@@ -19,7 +19,7 @@ export function openRegistry(dataDir) {
       password_hash TEXT,
       name          TEXT,
       role          TEXT NOT NULL DEFAULT 'client'
-                    CHECK(role IN ('admin','client')),
+                    CHECK(role IN ('superuser','client')),
       active        INTEGER NOT NULL DEFAULT 1,
       created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -46,7 +46,7 @@ export function openRegistry(dataDir) {
 
     CREATE TABLE IF NOT EXISTS events (
       id           TEXT PRIMARY KEY,
-      owner_id     INTEGER NOT NULL REFERENCES users(id),
+      owner_id     INTEGER REFERENCES users(id),
       name         TEXT NOT NULL,
       event_date   DATE,
       status       TEXT NOT NULL DEFAULT 'draft'
@@ -57,6 +57,13 @@ export function openRegistry(dataDir) {
       purged_at    DATETIME,
       created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS event_users (
+      event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      roles      TEXT NOT NULL DEFAULT '[]',
+      PRIMARY KEY (event_id, user_id)
     );
 
     CREATE TABLE IF NOT EXISTS jobs (
@@ -82,16 +89,67 @@ export function openRegistry(dataDir) {
     );
   `);
 
-  // Migration: add 'active' to users if the table predates 6B.1
+  // Migration 6B.1: add 'active' to users
   const userCols = db.pragma('table_info(users)').map((c) => c.name);
   if (!userCols.includes('active')) {
     db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
   }
 
-  // Migration: add 'token_clear' to box_tokens if the table predates this change
+  // Migration 6C: add 'token_clear' to box_tokens
   const boxCols = db.pragma('table_info(box_tokens)').map((c) => c.name);
   if (!boxCols.includes('token_clear')) {
     db.exec("ALTER TABLE box_tokens ADD COLUMN token_clear TEXT NOT NULL DEFAULT ''");
+  }
+
+  // Migration 7A.1: renommer role 'admin' → 'superuser' + relâcher owner_id
+  // SQLite ne supporte pas ALTER COLUMN ni DROP COLUMN de façon portable.
+  // On reconstruit les deux tables concernées si elles portent encore l'ancien schéma.
+  const usersCheck = db.pragma('table_info(users)').find(c => c.name === 'role')?.dflt_value;
+  const needsUsersMigration = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n > 0;
+  if (needsUsersMigration) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS users_new (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        email         TEXT UNIQUE NOT NULL,
+        password_hash TEXT,
+        name          TEXT,
+        role          TEXT NOT NULL DEFAULT 'client'
+                      CHECK(role IN ('superuser','client')),
+        active        INTEGER NOT NULL DEFAULT 1,
+        created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO users_new SELECT
+        id, email, password_hash, name,
+        CASE WHEN role = 'admin' THEN 'superuser' ELSE role END,
+        active, created_at
+      FROM users;
+      DROP TABLE users;
+      ALTER TABLE users_new RENAME TO users;
+    `);
+  }
+
+  // Migration 7A.1: owner_id nullable sur events (reconstruit si NOT NULL)
+  const ownerCol = db.pragma('table_info(events)').find(c => c.name === 'owner_id');
+  if (ownerCol && ownerCol.notnull === 1) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS events_new (
+        id           TEXT PRIMARY KEY,
+        owner_id     INTEGER REFERENCES users(id),
+        name         TEXT NOT NULL,
+        event_date   DATE,
+        status       TEXT NOT NULL DEFAULT 'draft'
+                     CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
+        pulled_at    DATETIME,
+        pushed_at    DATETIME,
+        processed_at DATETIME,
+        purged_at    DATETIME,
+        created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO events_new SELECT * FROM events;
+      DROP TABLE events;
+      ALTER TABLE events_new RENAME TO events;
+    `);
   }
 
   _db = db;
@@ -164,18 +222,23 @@ export function markRegistrationTokenUsed(db, token_hash) {
 // ── events ───────────────────────────────────────────────────────────────────
 
 export function listEvents(db, { userId, role }) {
-  if (role === 'admin') return db.prepare('SELECT * FROM events ORDER BY created_at DESC').all();
-  return db.prepare('SELECT * FROM events WHERE owner_id = ? ORDER BY created_at DESC').all(userId);
+  if (role === 'superuser') return db.prepare('SELECT * FROM events ORDER BY created_at DESC').all();
+  return db.prepare(`
+    SELECT e.* FROM events e
+    INNER JOIN event_users eu ON eu.event_id = e.id
+    WHERE eu.user_id = ?
+    ORDER BY e.created_at DESC
+  `).all(userId);
 }
 
 export function getEvent(db, id) {
   return db.prepare('SELECT * FROM events WHERE id = ?').get(id);
 }
 
-export function insertEvent(db, { id, owner_id, name, event_date = null }) {
+export function insertEvent(db, { id, name, event_date = null }) {
   return db
-    .prepare('INSERT INTO events (id, owner_id, name, event_date) VALUES (?, ?, ?, ?)')
-    .run(id, owner_id, name, event_date);
+    .prepare('INSERT INTO events (id, name, event_date) VALUES (?, ?, ?)')
+    .run(id, name, event_date);
 }
 
 export function updateEvent(db, id, fields) {
@@ -241,6 +304,43 @@ export function updateBoxToken(db, id, fields) {
 
 export function updateBoxTokenSeen(db, id) {
   return db.prepare('UPDATE box_tokens SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
+}
+
+// ── event_users ───────────────────────────────────────────────────────────────
+
+export function listEventUsers(db, event_id) {
+  return db.prepare(`
+    SELECT eu.user_id, eu.roles, u.email, u.name, u.active
+    FROM event_users eu
+    INNER JOIN users u ON u.id = eu.user_id
+    WHERE eu.event_id = ?
+    ORDER BY u.email
+  `).all(event_id);
+}
+
+export function listUserEvents(db, user_id) {
+  return db.prepare(`
+    SELECT e.*, eu.roles FROM events e
+    INNER JOIN event_users eu ON eu.event_id = e.id
+    WHERE eu.user_id = ?
+    ORDER BY e.created_at DESC
+  `).all(user_id);
+}
+
+export function upsertEventUser(db, { event_id, user_id, roles }) {
+  return db.prepare(`
+    INSERT INTO event_users (event_id, user_id, roles)
+    VALUES (?, ?, ?)
+    ON CONFLICT(event_id, user_id) DO UPDATE SET roles = excluded.roles
+  `).run(event_id, user_id, JSON.stringify(roles));
+}
+
+export function deleteEventUser(db, { event_id, user_id }) {
+  return db.prepare('DELETE FROM event_users WHERE event_id = ? AND user_id = ?').run(event_id, user_id);
+}
+
+export function getEventUser(db, { event_id, user_id }) {
+  return db.prepare('SELECT * FROM event_users WHERE event_id = ? AND user_id = ?').get(event_id, user_id);
 }
 
 // ── sync_log ─────────────────────────────────────────────────────────────────

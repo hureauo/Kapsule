@@ -8,7 +8,7 @@ import {
   listUsers, insertUser, getUserById, updateUser,
   createRegistrationToken,
   insertBoxToken, listBoxTokensByEvent, listAllBoxTokens, getBoxTokenById, deleteBoxToken, updateBoxToken,
-  getEvent,
+  getEvent, listEventUsers, upsertEventUser, deleteEventUser,
 } from '../registry.js';
 import { requireUser } from '../middleware/auth.js';
 import { openEventDb } from '../eventStore.js';
@@ -23,8 +23,8 @@ function configHash(questions, meta) {
   return createHash('sha256').update(JSON.stringify({ questions: q, meta: m })).digest('hex').slice(0, 8);
 }
 
-function requireAdmin(req, res, next) {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Réservé aux admins' });
+function requireSuperuser(req, res, next) {
+  if (req.user.role !== 'superuser') return res.status(403).json({ error: 'Réservé aux superusers' });
   next();
 }
 
@@ -46,7 +46,7 @@ function dirSize(dirPath) {
 
 export function makeAdminRouter(dataDir) {
   const router = Router();
-  router.use(requireUser, requireAdmin);
+  router.use(requireUser, requireSuperuser);
 
   // ── Gestion des comptes clients ─────────────────────────────────────────────
 
@@ -183,6 +183,48 @@ export function makeAdminRouter(dataDir) {
     res.json(safe);
   });
 
+  // ── Utilisateurs par événement (event_users) ────────────────────────────────
+
+  // GET /api/admin/events/:id/users — liste des users assignés à un événement
+  router.get('/events/:id/users', (req, res) => {
+    const db = getDb();
+    const event = getEvent(db, req.params.id);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    res.json(listEventUsers(db, req.params.id).map(u => ({
+      ...u,
+      roles: JSON.parse(u.roles),
+    })));
+  });
+
+  // POST /api/admin/events/:id/users — assigne un user avec ses rôles
+  router.post('/events/:id/users', (req, res) => {
+    const db = getDb();
+    const event = getEvent(db, req.params.id);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+
+    const { user_id, roles } = req.body;
+    if (!user_id) return res.status(400).json({ error: 'user_id requis' });
+    if (!Array.isArray(roles) || roles.length === 0) return res.status(400).json({ error: 'roles requis (tableau non vide)' });
+
+    const VALID_ROLES = ['admin_borne', 'tech_borne', 'general'];
+    const invalid = roles.filter(r => !VALID_ROLES.includes(r));
+    if (invalid.length > 0) return res.status(400).json({ error: `Rôles invalides : ${invalid.join(', ')}` });
+
+    const user = getUserById(db, user_id);
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
+    upsertEventUser(db, { event_id: req.params.id, user_id, roles });
+    res.status(201).json({ event_id: req.params.id, user_id, roles });
+  });
+
+  // DELETE /api/admin/events/:id/users/:userId — retire un user d'un événement
+  router.delete('/events/:id/users/:userId', (req, res) => {
+    const db = getDb();
+    const result = deleteEventUser(db, { event_id: req.params.id, user_id: req.params.userId });
+    if (result.changes === 0) return res.status(404).json({ error: 'Association introuvable' });
+    res.status(204).end();
+  });
+
   // GET /api/admin/overview
   router.get('/overview', async (req, res, next) => {
     try {
@@ -190,10 +232,8 @@ export function makeAdminRouter(dataDir) {
 
       // Tous les événements (tous clients)
       const events = db.prepare(`
-        SELECT e.id, e.name, e.status, e.owner_id, e.created_at, e.pushed_at, e.processed_at,
-               u.email AS owner_email
+        SELECT e.id, e.name, e.status, e.created_at, e.pushed_at, e.processed_at
         FROM events e
-        LEFT JOIN users u ON u.id = e.owner_id
         ORDER BY e.created_at DESC
       `).all();
 

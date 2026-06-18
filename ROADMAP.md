@@ -177,7 +177,52 @@ committé en `phase 6X.Y: …`.
 
 **Terminé quand** : le client gère sa borne sans accès tech ; un compte client se crée via lien d'enregistrement ; lancer le conteneur d'essai avec un token le rattache à son événement ; le client valide sa config à distance (≤ 1 Go, push impossible).
 
-## Phase 7 — Évolutions (au fil de l'eau)
+## Phase 7 — Refonte authentification
+
+Objectif : remplacer les mots de passe env par des comptes nominatifs. Les utilisateurs Hub
+sont assignés à des événements avec des rôles précis ; la borne reçoit la liste au pull et
+peut authentifier offline. La preview est protégée par login.
+
+Rôles : `admin_borne` (admin client borne/preview), `tech_borne` (préflight/synchro),
+`general` (parcours invité preview uniquement — borne physique reste publique).
+
+Mêmes règles : un sous-lot backend n'est terminé que **testé**, relu par `kapsule-reviewer`,
+committé en `phase 7X.Y: …`.
+
+### 7A — Schéma Hub : event_users + rôle superuser
+
+- [x] 7A.1 `registry.js` : table `event_users (event_id, user_id, roles TEXT)` ; `users.role` `'admin'` → `'superuser'` ; retirer `owner_id` sur `events` ; helpers `listEventUsers`, `upsertEventUser`, `deleteEventUser`, `listUserEvents` + migration idempotente + tests registry
+- [x] 7A.2 `routes/admin.js` : `GET/POST/DELETE /api/admin/events/:id/users` (superuser only) ; `POST` body `{ user_id, roles: ['admin_borne'|'tech_borne'|'general'] }` + tests (403 client, 404 event/user inexistant, 200 nominal)
+- [x] 7A.3 Adapter `requireOwner` / `listEvents` / `getEvent` : remplacer `owner_id` par `event_users` (un user voit ses events via `event_users`) + mettre à jour tous les tests concernés
+
+### 7B — Bundle pull : users dans le bundle
+
+- [ ] 7B.1 Hub `routes/sync.js` : `GET /api/sync/events/:id/bundle` inclut `users: [{ email, password_hash, roles }]` (uniquement les users assignés à cet event) + tests (bundle contient bien les users)
+- [ ] 7B.2 Borne `@kapsule/core` : table `event_users (email, password_hash, roles TEXT)` dans `eventDbSchema.js` (schema BD événement borne)
+- [ ] 7B.3 Borne `pull.js` : écrire `bundle.users` dans `event_users` (DELETE+INSERT au pull) + tests pull
+
+### 7C — Auth borne : comptes pullés + fallback env
+
+- [ ] 7C.1 Borne `middleware/auth.js` : login par `{ email, password }` contre `event_users` (argon2.verify) ; génère JWT `{ email, roles }` 24h ; si table vide → fallback `TECH_PASSWORD` env (JWT `{ roles: ['tech_borne'] }`) + tests (login ok, mauvais mdp 401, fallback env)
+- [ ] 7C.2 Borne : `requireRole('admin_borne')` / `requireRole('tech_borne')` remplacent `requireAdmin`/`requireTech` ; re-tagger toutes les routes borne + tests (403 si rôle insuffisant)
+- [ ] 7C.3 Borne front : `AdminLogin` adapté (formulaire email + mdp au lieu de mdp seul) ; deux espaces conservés (`/admin` = `admin_borne`, `/admin/tech` = `tech_borne`)
+
+### 7D — Preview protégée : rôle general
+
+- [ ] 7D.1 Borne `routes/sync.js` : `GET /api/sync/status` expose `isPreview` + `requiresLogin` (true si preview ET au moins un user `general` en base)
+- [ ] 7D.2 Borne front : si `isPreview && requiresLogin`, afficher un login (email + mdp) devant `/` avant le parcours invité ; JWT stocké en `sessionStorage` (pas `localStorage` — durée de session) ; route publique uniquement `/api/event` (pour savoir si login requis)
+- [ ] 7D.3 Borne `routes/sessions.js` : `POST /api/sessions` vérifie le JWT `general` si `requiresLogin` (401 sinon) + tests
+
+### 7E — Nettoyage env + Hub front
+
+- [ ] 7E.1 Supprimer `ADMIN_PASSWORD`, `ADMIN_PASSWORD_PREVIEW`, `TECH_PASSWORD_PREVIEW` de `.env.example` et `config.js` borne (garder `TECH_PASSWORD` pour mode autonome)
+- [ ] 7E.2 Hub front : onglet « Utilisateurs » dans `EventDetailPage` (visible superuser only) — liste des users assignés, ajout (select parmi users Hub), rôles checkboxes, retrait
+- [ ] 7E.3 Hub front : `AdminPage` adapté (renommer `admin` → `superuser` dans les labels)
+- [ ] 7E.4 PROJET.md : mettre à jour §6 API Borne (auth), §7 API Hub (event_users), §10 env, §11 invariants
+
+**Terminé quand** : un user `general` pullé déclenche un login devant la preview ; `admin_borne`/`tech_borne` se connectent par email+mdp sur borne et preview ; mode autonome fonctionne avec `TECH_PASSWORD` env.
+
+## Phase 8 — Évolutions (au fil de l'eau)
 
 Machine de capture dédiée, job `chromakey`, portail invités, mode point d'accès Wi-Fi (hostapd).
 

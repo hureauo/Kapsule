@@ -4,14 +4,14 @@ import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { THEMES, TEXT_FIELDS } from '@kapsule/core';
 import {
-  getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog,
+  getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog, upsertEventUser,
   getUserByEmail, insertUser, createRegistrationToken,
 } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { requireUser, requireOwner } from '../middleware/auth.js';
 
 function requireAdmin(req, res, next) {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Réservé aux admins' });
+  if (req.user.role !== 'superuser') return res.status(403).json({ error: 'Réservé aux admins' });
   next();
 }
 
@@ -62,7 +62,8 @@ export function makeEventsRouter(dataDir) {
       mkdirSync(eventDir, { recursive: true });
 
       const db = getDb();
-      insertEvent(db, { id, owner_id: req.user.sub, name: name.trim(), event_date: event_date ?? null });
+      insertEvent(db, { id, name: name.trim(), event_date: event_date ?? null });
+      upsertEventUser(db, { event_id: id, user_id: req.user.sub, roles: ['admin_borne'] });
 
       // Initialise db.sqlite avec le schéma + 4 questions par défaut
       openEventDb(id, dataDir);
@@ -257,8 +258,8 @@ export function makeEventsRouter(dataDir) {
         created = true;
       }
 
-      db.prepare('UPDATE events SET owner_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(user.id, req.params.eventId);
+      upsertEventUser(db, { event_id: req.params.eventId, user_id: user.id, roles: ['admin_borne'] });
+      db.prepare('UPDATE events SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.eventId);
 
       res.json({
         event: getEvent(db, req.params.eventId),

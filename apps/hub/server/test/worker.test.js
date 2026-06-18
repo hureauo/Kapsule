@@ -33,8 +33,8 @@ before(() => {
   // Crée un user et un événement minimal dans le registre
   db.prepare(`INSERT INTO users (id, email, password_hash) VALUES (1, 'test@test.com', 'x')`).run();
   db.prepare(`
-    INSERT INTO events (id, owner_id, name, status)
-    VALUES ('ev1', 1, 'Test Event', 'pushed')
+    INSERT INTO events (id, name, status)
+    VALUES ('ev1', 'Test Event', 'pushed')
   `).run();
 });
 

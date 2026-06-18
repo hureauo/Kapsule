@@ -16,7 +16,7 @@ async function seedAdminIfNeeded() {
   const db = getDb();
   if (getUserByEmail(db, config.adminEmail)) return;
   const password_hash = await argon2.hash(config.adminPassword, { type: argon2.argon2id });
-  insertUser(db, { email: config.adminEmail, password_hash, role: 'admin' });
+  insertUser(db, { email: config.adminEmail, password_hash, role: 'superuser' });
   console.log(`[hub] compte admin créé : ${config.adminEmail}`);
 }
 

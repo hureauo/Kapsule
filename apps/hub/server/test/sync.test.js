@@ -28,7 +28,7 @@ before(async () => {
   // Utilisateurs
   const hashAdmin  = await argon2.hash('admin-pass', { type: argon2.argon2id });
   const hashClient = await argon2.hash('client-pass', { type: argon2.argon2id });
-  insertUser(db, { email: 'admin@sync.test', password_hash: hashAdmin,  role: 'admin' });
+  insertUser(db, { email: 'admin@sync.test', password_hash: hashAdmin,  role: 'superuser' });
   insertUser(db, { email: 'client@sync.test', password_hash: hashClient, role: 'client' });
 
   const r1 = await request.post('/api/auth/login').send({ email: 'admin@sync.test',  password: 'admin-pass' });

@@ -16,7 +16,7 @@ export default function LoginPage() {
     try {
       const data = await api.login(email, password);
       saveToken(data.token);
-      navigate(getRole() === 'admin' ? '/admin' : '/events', { replace: true });
+      navigate(getRole() === 'superuser' ? '/admin' : '/events', { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {
