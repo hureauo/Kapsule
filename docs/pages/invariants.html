@@ -48,12 +48,18 @@ côté front <a href="#/web-client-hub">les *Url()</a>.</p>
 positionner dans une vidéo (re-téléchargement depuis 0). Code :
 <a href="#/hub-routes-gallery">streamFile (gallery)</a>, <a href="#/borne-routes-videos">streamFile (videos)</a>.</p>
 
-<label class="inv"><input type="checkbox"> <strong>§11.19 — admin Borne à deux niveaux : <code>requireAdmin</code> (client) ≠ <code>requireTech</code></strong></label>
-<p>Le technicien peut tout faire (sur-ensemble), mais un jeton client doit recevoir
-<strong>403</strong> sur le préflight, la clôture et toute la synchro. Le contrôle se fait route par
-route <em>côté serveur</em> — pas en cachant l'onglet côté front (un <code>fetch</code> direct avec
-un jeton client contournerait l'UI). Casse : un client déclenche un push/une clôture, ou accède aux
-outils de déploiement. Code : <a href="#/borne-middleware-auth">requireTech</a>,
+<label class="inv"><input type="checkbox"> <strong>§11.19 — auth Borne à deux niveaux : <code>requireAdmin</code> (rôle <code>admin_borne</code>) ≠ <code>requireTech</code> (rôle <code>tech_borne</code>)</strong></label>
+<p>Le technicien est un sur-ensemble : un jeton <code>tech_borne</code> est accepté par
+<code>requireAdmin</code>. Mais un jeton <code>admin_borne</code> doit recevoir <strong>403</strong> sur
+le préflight, la clôture et toute la synchro. Le contrôle se fait route par route <em>côté serveur</em>
+— pas en cachant l'onglet côté front (un <code>fetch</code> direct avec un jeton <code>admin_borne</code>
+contournerait l'UI). L'auth elle-même a deux modes : <strong>nominative</strong> (email + argon2 contre
+les comptes <code>event_users</code> pullés du Hub, JWT <code>roles: [...]</code>) quand la borne est
+appairée, ou <strong>fallback <code>TECH_PASSWORD</code></strong> en mode autonome (JWT
+<code>roles: ['tech_borne']</code> — le tech a alors accès à tout). Casse : un admin_borne déclenche un
+push/une clôture, ou accède aux outils de déploiement. Code :
+<a href="#/borne-config">config (fallback TECH_PASSWORD)</a>,
+<a href="#/borne-middleware-auth">requireTech</a>,
 <a href="#/borne-routes-events">events (close/preflight)</a>,
 <a href="#/borne-routes-sync">sync.js (toutes les routes)</a>, côté front les wrappers
 <a href="#/web-client-borne">apiFetch / techApiFetch</a>.</p>

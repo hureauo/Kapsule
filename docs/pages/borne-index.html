@@ -46,7 +46,7 @@
     les middlewares d'auth déjà « armés » avec cette config (rappel :
     <a href="#/borne-middleware-auth">requireAdmin(cfg)</a> et <code>requireTech(cfg)</code> sont des
     factories). Chaque routeur reçoit donc <code>routerCfg</code> et y trouve à la fois les
-    réglages (<code>hubUrl</code>, <code>adminPassword</code>…) et les deux gardes prêtes à l'emploi —
+    réglages (<code>hubUrl</code>, <code>techPassword</code>…) et les deux gardes prêtes à l'emploi —
     il choisit <code>cfg.requireAdmin</code> ou <code>cfg.requireTech</code> selon la route (§11.19),
     sans réimporter la config ni recréer le middleware. C'est de l'injection de dépendances « à la
     main », légère et explicite.

@@ -37,7 +37,7 @@ export function getRole() {
   <div class="js-deep">
     <p>
       Important : ce décodage <strong>n'authentifie rien</strong> — le navigateur ne vérifie pas la
-      signature, donc un utilisateur pourrait forger un token avec <code>role: "admin"</code>. C'est
+      signature, donc un utilisateur pourrait forger un token avec <code>role: "superuser"</code>. C'est
       acceptable parce que <code>getRole()</code> ne sert qu'à l'<em>affichage</em> (router vers
       <code>/admin</code> ou non, <a href="#/web-client-hub">RequireAdmin</a> côté front). La
       <strong>vraie</strong> garde est côté serveur : <a href="#/hub-routes-admin">requireAdmin</a>
@@ -168,5 +168,6 @@ csvExportUrl: (eventId) =&gt; `/api/events/${eventId}/videos/export/csv?token=${
   <tr><td>getRole()</td><td>Décode (sans vérifier) le rôle du JWT pour l'affichage/routing. Garde réelle côté serveur.</td></tr>
   <tr><td>apiFetch(path, opts)</td><td>Wrapper : jeton + JSON auto + gestion erreurs/204. Préfixe <code>/api</code>.</td></tr>
   <tr><td>api.*</td><td>Une méthode par endpoint (login, events, questions, galerie, admin). Tokens de borne : <code>createBoxToken(eventId, fields)</code>, <code>listBoxTokens(eventId)</code>, <code>listAllTokens()</code> (vue globale onglet Tokens), <code>deleteBoxToken(tokenId)</code>, <code>updateBoxToken(tokenId, fields)</code> (l'ancien <code>assignBox</code> a disparu). Assignation : <code>assignEventOwner(eventId, email)</code> → <code>PUT /events/:id/owner</code>. Import de config depuis l'aperçu : <code>importPreviewConfig(eventId, payload)</code>.</td></tr>
+  <tr><td>api (event_users)</td><td>Comptes assignés à un événement (onglet « Utilisateurs », superuser only) : <code>listEventUsers(eventId)</code> → <code>GET /admin/events/:id/users</code>, <code>addEventUser(eventId, userId, roles)</code> → <code>POST</code> (upsert des rôles borne <code>admin_borne</code>/<code>tech_borne</code>/<code>general</code>), <code>removeEventUser(eventId, userId)</code> → <code>DELETE</code>. Ces comptes sont pullés dans la borne pour l'auth nominative (§11.23).</td></tr>
   <tr><td>*Url(...)</td><td>Construisent des URLs avec <code>?token=</code> pour vidéos/CSV/archive (§11.2).</td></tr>
 </table>

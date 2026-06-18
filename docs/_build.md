@@ -448,3 +448,21 @@ Refresh LRU : delete + re-insert en fin de Map.
 7. **JWT ?token=** → `<video src="...?token=xxx">` : le navigateur ne peut pas ajouter un header Authorization sur une balise `<video src>`, donc le token passe en query param
 8. **timingSafeEqual pour login Borne** → mot de passe unique en clair comparé, vulnérable aux timing attacks sans ça
 9. **algorithms: ['HS256'] dans jwt.verify** → défense contre l'attaque alg:none (JWT sans signature accepté par des implémentations naïves)
+
+---
+
+## Journal de synchro incrémentale
+
+### 2026-06-18 — Phase 7E (nettoyage env + Hub front Utilisateurs)
+Diff source : `.env.example`, `apps/borne/server/src/config.js`, `apps/hub/web/src/api/client.js`, `apps/hub/web/src/pages/EventDetailPage.jsx` (+ PROJET/ROADMAP source de vérité).
+
+- `borne-config.html` : retrait du champ/ligne `adminPassword`/`ADMIN_PASSWORD` (supprimé du code) ; `techPassword` redocumenté comme fallback mode autonome ; callout « deux mots de passe » remplacé par « auth nominative (event_users) + fallback TECH_PASSWORD », §11.19.
+- `web-client-hub.html` : ajout des méthodes `listEventUsers`/`addEventUser`/`removeEventUser` (onglet Utilisateurs, superuser only) dans le tableau d'API ; exemple `getRole()` aligné sur `role: "superuser"`.
+- `invariants.html` : §11.19 réécrit (rôles `admin_borne`/`tech_borne`, deux modes d'auth, renvoi config).
+- `borne-index.html` : exemple de config `adminPassword` → `techPassword`.
+- `hub-config.html` : justification du suffixe `_HUB` mise à jour (Borne n'a plus `ADMIN_PASSWORD`).
+
+Non traité (hors diff, debt antérieure phase 7C — à reprendre lors d'une passe dédiée) :
+- `borne-middleware-auth.html` décrit encore le modèle `timingSafeEqual` + deux mots de passe statiques + factories `requireAdmin(cfg)`, alors que le code (commit b86fbdf) utilise argon2 + `event_users` + `requireRole`. Réécriture > incrémental.
+- `arch-docker.html` cite `ADMIN_PASSWORD` et `PULL_INTERVAL_MS` du `docker-compose.borne.yml` — fidèle au fichier ACTUEL (non modifié par ce diff) ; à resynchroniser quand le compose passera à `TECH_PASSWORD`.
+- §11.23 (event_users RGPD) et §11.24 (preview requiresLogin) de PROJET.md pas encore détaillés dans `invariants.html` (code des phases auth/kiosk, hors diff courant).

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { api, clearToken } from '../api/client.js';
+import { api, clearToken, getRole } from '../api/client.js';
 import { DEFAULTS, THEMES, TEXT_FIELDS } from '@kapsule/core';
 import QuestionEditor from '../components/QuestionEditor.jsx';
 import SyncStatus from '../components/SyncStatus.jsx';
@@ -287,6 +287,137 @@ function ApercuTab({ event, previewTokens, onConfigImported }) {
   );
 }
 
+// ── Onglet Utilisateurs ───────────────────────────────────────────────────────
+const BORNE_ROLES = ['admin_borne', 'tech_borne', 'general'];
+const BORNE_ROLE_LABELS = { admin_borne: 'Admin borne', tech_borne: 'Technicien', general: 'Invité (general)' };
+
+function UtilisateursTab({ eventId }) {
+  const [eventUsers, setEventUsers] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState('');
+  const [selectedRoles, setSelectedRoles] = useState([]);
+  const [adding, setAdding] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const [eu, all] = await Promise.all([api.listEventUsers(eventId), api.listUsers()]);
+      setEventUsers(eu);
+      setAllUsers(all);
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [eventId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const assignedIds = new Set(eventUsers.map(u => String(u.user_id)));
+  const available = allUsers.filter(u => !assignedIds.has(String(u.id)) && u.has_password && u.active);
+
+  function toggleRole(role) {
+    setSelectedRoles(prev =>
+      prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role]
+    );
+  }
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    if (!selectedUserId || selectedRoles.length === 0) return;
+    setAdding(true);
+    setMsg('');
+    setError('');
+    try {
+      await api.addEventUser(eventId, Number(selectedUserId), selectedRoles);
+      setSelectedUserId('');
+      setSelectedRoles([]);
+      setMsg('Utilisateur ajouté.');
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function handleRemove(userId) {
+    setMsg('');
+    setError('');
+    try {
+      await api.removeEventUser(eventId, userId);
+      setMsg('Utilisateur retiré.');
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <div className="tab-content">
+      <section className="panel-section">
+        <h3 className="panel-section__title">Utilisateurs assignés</h3>
+        {eventUsers.length === 0 && <p className="text--muted">Aucun utilisateur assigné.</p>}
+        {eventUsers.map(u => (
+          <div key={u.user_id} className="user-row" style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+            <div style={{ flex: 1 }}>
+              <strong>{u.email}</strong>
+              {u.name && <span className="text--muted"> ({u.name})</span>}
+              <span style={{ marginLeft: '8px', fontSize: '0.8rem', color: 'var(--color-muted)' }}>
+                {u.roles.map(r => BORNE_ROLE_LABELS[r] ?? r).join(', ')}
+              </span>
+            </div>
+            <button className="btn btn--ghost" onClick={() => handleRemove(u.user_id)}>
+              Retirer
+            </button>
+          </div>
+        ))}
+      </section>
+
+      <section className="panel-section">
+        <h3 className="panel-section__title">Ajouter un utilisateur</h3>
+        {available.length === 0 ? (
+          <p className="text--muted">Tous les comptes actifs avec mot de passe sont déjà assignés.</p>
+        ) : (
+          <form onSubmit={handleAdd} style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxWidth: '480px' }}>
+            <label className="field-label">
+              Compte
+              <select
+                className="hub-input"
+                value={selectedUserId}
+                onChange={e => setSelectedUserId(e.target.value)}
+                required
+              >
+                <option value="">— choisir —</option>
+                {available.map(u => (
+                  <option key={u.id} value={u.id}>{u.email}{u.name ? ` (${u.name})` : ''}</option>
+                ))}
+              </select>
+            </label>
+            <fieldset style={{ border: '1px solid var(--color-border)', borderRadius: '6px', padding: '12px' }}>
+              <legend style={{ padding: '0 6px', fontSize: '0.85rem' }}>Rôles sur la borne</legend>
+              {BORNE_ROLES.map(role => (
+                <label key={role} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedRoles.includes(role)}
+                    onChange={() => toggleRole(role)}
+                  />
+                  {BORNE_ROLE_LABELS[role]}
+                </label>
+              ))}
+            </fieldset>
+            <button type="submit" className="btn btn--primary" disabled={adding || !selectedUserId || selectedRoles.length === 0}>
+              {adding ? 'Ajout…' : 'Assigner'}
+            </button>
+          </form>
+        )}
+        {msg && <p className="text--muted" style={{ marginTop: '8px' }}>{msg}</p>}
+        {error && <p className="text--error" style={{ marginTop: '8px' }}>{error}</p>}
+      </section>
+    </div>
+  );
+}
+
 // ── Page principale ───────────────────────────────────────────────────────────
 export default function EventDetailPage() {
   const { id } = useParams();
@@ -327,7 +458,12 @@ export default function EventDetailPage() {
   const frozen = FROZEN_STATUSES.has(event.status);
   const notYetPulled = event.pulled_at && event.updated_at > event.pulled_at;
   const previewTokens = tokens.filter(t => t.is_preview);
-  const TABS = ['Questions', 'Design', 'Synchro', 'Galerie', ...(previewTokens.length > 0 ? ['Aperçu'] : [])];
+  const isSuperuser = getRole() === 'superuser';
+  const TABS = [
+    'Questions', 'Design', 'Synchro', 'Galerie',
+    ...(previewTokens.length > 0 ? ['Aperçu'] : []),
+    ...(isSuperuser ? ['Utilisateurs'] : []),
+  ];
 
   return (
     <div className="hub-page">
@@ -419,6 +555,10 @@ export default function EventDetailPage() {
             previewTokens={previewTokens}
             onConfigImported={loadEvent}
           />
+        )}
+
+        {tab === 'Utilisateurs' && isSuperuser && (
+          <UtilisateursTab eventId={id} />
         )}
       </main>
     </div>

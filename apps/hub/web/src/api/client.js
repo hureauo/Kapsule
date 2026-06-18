@@ -69,6 +69,11 @@ export const api = {
   updateUser: (id, fields) => apiFetch(`/admin/users/${id}`, { method: 'PUT', body: fields }),
   createRegistrationLink: (id) => apiFetch(`/admin/users/${id}/registration-link`, { method: 'POST' }),
 
+  // Admin : utilisateurs assignés à un événement
+  listEventUsers: (eventId) => apiFetch(`/admin/events/${eventId}/users`),
+  addEventUser: (eventId, userId, roles) => apiFetch(`/admin/events/${eventId}/users`, { method: 'POST', body: { user_id: userId, roles } }),
+  removeEventUser: (eventId, userId) => apiFetch(`/admin/events/${eventId}/users/${userId}`, { method: 'DELETE' }),
+
   // Auth : poser le mot de passe via lien d'enregistrement
   setPassword: (token, password) => apiFetch('/auth/set-password', { method: 'POST', body: { token, password } }),
 

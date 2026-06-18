@@ -344,8 +344,11 @@ push_state (                                   -- permet la reprise d'un push in
 Base `/api`. JSON partout sauf flux de fichiers. Gestionnaire d'erreurs global → `{ error }` + status. `GET /api/health` → `{ ok: true, activeEvent: <id|null>, disk: { free_bytes, total_bytes } }` (via `fs.statfs` sur `DATA_DIR` — l'admin affiche une alerte rouge sous 10 Go).
 
 **Auth admin local** (`middleware/auth.js`) :
-- `POST /api/admin/login` `{ password }` vs env `ADMIN_PASSWORD` → `{ token }` JWT (`JWT_SECRET`, `{ role:'admin' }`, 24h).
-- `requireAdmin` : accepte `Authorization: Bearer` **ou** `?token=` (indispensable pour `<video src>`, downloads, CSV).
+- `POST /api/admin/login` `{ email, password }` — deux modes :
+  1. **Comptes nominatifs (mode appairé)** : si un événement actif a des entrées dans `event_users` (pullées depuis le bundle Hub), l'auth se fait par email + argon2 contre ces comptes ; le JWT contient `{ email, roles: ['admin_borne'|'tech_borne'|'general'] }`.
+  2. **Fallback TECH_PASSWORD (mode autonome)** : si aucun `event_users` n'existe, `email` est ignoré et on compare `password` à `TECH_PASSWORD` → JWT `{ roles: ['tech_borne'] }`.
+- `requireAdmin = requireRole('admin_borne')` — accepte `admin_borne` **ou** `tech_borne` (sur-ensemble). Accepte `Authorization: Bearer` **ou** `?token=` (indispensable pour `<video src>`, downloads, CSV).
+- `requireTech = requireRole('tech_borne')` — réservé préflight, synchro, clôture.
 
 **Événements locaux** (`routes/events.js`) — admin :
 - `GET /api/events` — liste du registre local.
@@ -393,7 +396,7 @@ Base `/api`. `GET /api/health`.
 **Auth utilisateurs** (`routes/auth.js`, `middleware/auth.js`) :
 - `POST /api/auth/login` `{ email, password }` → `{ token }` JWT 24h `{ sub: user.id, role }`. Vérif argon2. **`express-rate-limit` : 10 essais / 15 min / IP** (le Hub est exposé sur Internet).
 - `POST /api/auth/register` — **désactivé par défaut** (`ALLOW_REGISTER=false`) ; le premier compte se crée via script `npm run create-admin` (prompt email/mdp).
-- `requireUser` : JWT header ou `?token=`. `requireOwner(eventId)` : 403 si `events.owner_id != user.id` (sauf `role='admin'`). **Toutes les routes événement passent par ce contrôle — c'est le cloisonnement client.**
+- `requireUser` : JWT header ou `?token=`. `requireOwner(eventId)` : 403 si l'événement n'appartient pas au user (sauf `role='superuser'`). **Toutes les routes événement passent par ce contrôle — c'est le cloisonnement client.**
 
 **Événements** (`routes/events.js`) — user :
 - `GET /api/events` — ceux du user (tous si admin).
@@ -416,11 +419,15 @@ Base `/api`. `GET /api/health`.
 - `GET /api/events/:id/archive` — télécharge le **ZIP de toutes les vidéos** généré par le job `archive` (Range-aware, donc reprenable par le navigateur). `202 { pending: true }` si le job n'est pas encore terminé.
 - `DELETE /api/events/:id/videos/:videoId` — invalide l'archive (ré-enfile un job `archive`).
 
-**Super-admin** (`routes/admin.js`) — rôle `admin` uniquement (l'opérateur ; les clients n'y ont pas accès) :
+**Super-admin** (`routes/admin.js`) — rôle `superuser` uniquement (l'opérateur ; les clients `client` n'y ont pas accès) :
 - **Comptes clients** (pas de SMTP → l'URL d'enregistrement est renvoyée à l'admin) :
   - `POST /api/admin/users` `{ email, name? }` → crée un compte `client` **sans mot de passe** (`password_hash` NULL), génère un `registration_token` (expire +7 j, usage unique), **retourne `{ user, registration_url }`** — l'URL `…/register?token=<clair>` est affichée à l'admin qui la transmet au client.
   - `GET /api/admin/users` — liste (email, name, role, active, a-un-mot-de-passe).
   - `PUT /api/admin/users/:id` `{ active?, name? }` — désactive/réactive (login refusé si `active=0`), renomme. Régénération d'un lien d'enregistrement : `POST /api/admin/users/:id/registration-link` → nouveau token + URL.
+- **Utilisateurs par événement** (`event_users`) — orchestre quels comptes ont accès à quelle borne :
+  - `GET /api/admin/events/:id/users` — liste des users assignés avec leurs rôles borne (`roles: ['admin_borne'|'tech_borne'|'general']`).
+  - `POST /api/admin/events/:id/users` `{ user_id, roles }` — assigne ou met à jour les rôles (upsert). Valide les rôles : seuls `admin_borne`, `tech_borne`, `general` sont acceptés.
+  - `DELETE /api/admin/events/:id/users/:userId` — retire l'association.
 - **Tokens de borne, par événement** (token = événement, §1) :
   - `POST /api/admin/events/:id/tokens` `{ label?, location?, is_preview? }` → génère token (32 octets hex), stocke `sha256(token)` + `token_clear` dans `box_tokens` lié à `:id`, retourne `token_clear` (consultable à tout moment via `GET /api/admin/tokens`).
   - `GET /api/admin/events/:id/tokens` (sans le hash), `DELETE /api/admin/tokens/:tokenId` (révocation), `PUT /api/admin/tokens/:tokenId` `{ label?, location? }`.
@@ -428,7 +435,7 @@ Base `/api`. `GET /api/health`.
 
 **Synchro** (`routes/sync.js`) — `requireBox` (header `X-Box-Token`) résout le token via `box_tokens`, met à jour `box_tokens.last_seen_at`, écrit `sync_log`, et **expose `req.box = { token_id, event_id, is_preview }`** (le token désigne directement l'événement, §1) :
 - `GET /api/sync/event` — l'**unique** événement de ce token s'il est `status IN ('ready','loaded')` : `{ id, name, event_date, status, updated_at, is_preview }`. **404** si l'événement n'est plus pullable (purgé, ou déjà ≥ `live`). Remplace l'ancien `GET /assigned` (liste) — une borne = un événement.
-- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […] }`. **403 si `:id` ≠ `req.box.event_id`** (un token ne peut tirer que son propre événement). Passe `ready→loaded`, set `pulled_at`.
+- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […], users: [{email, password_hash, roles}] }`. **403 si `:id` ≠ `req.box.event_id`** (un token ne peut tirer que son propre événement). Passe `ready→loaded`, set `pulled_at`. `users` contient les comptes Hub ayant un mot de passe défini et assignés à l'événement — la Borne les stocke dans `event_users` de sa BD événement et les utilise pour l'auth nominative (§6).
 - `POST /api/sync/events/:id/status` `{ status: 'live'|'closed' }` — envoyé par la Borne au moment du push (transitions avant uniquement, jamais de retour en arrière) ; met à jour le statut dans le registre Hub pour déclencher le gel d'édition.
 - `POST /api/sync/events/:id/manifest` — body `{ files: [{ video_id, filename, size, checksum }], db: { size, checksum } }`. Réponse : `{ missing: [video_id…] }` (ceux non encore reçus ou de checksum différent) → **c'est ce qui rend le push reprenable et idempotent**.
 - `PUT /api/sync/events/:id/files/:videoId` — upload multipart d'UN fichier ; le Hub recalcule le sha256, 422 si mismatch (la Borne retentera).
@@ -500,7 +507,7 @@ Base `/api`. `GET /api/health`.
 ## 10. Docker / Nginx / TLS / Environnement
 
 ### docker-compose.borne.yml (déployé sur le Raspberry, arm64)
-- `backend` : build `apps/borne/server`, env `ADMIN_PASSWORD JWT_SECRET HUB_URL BOX_TOKEN DATA_DIR=/app/data PORT=3001`, volume `borne_data:/app/data`, réseau interne seulement, `restart: unless-stopped`.
+- `backend` : build `apps/borne/server`, env `TECH_PASSWORD JWT_SECRET HUB_URL BOX_TOKEN DATA_DIR=/app/data PORT=3001`, volume `borne_data:/app/data`, réseau interne seulement, `restart: unless-stopped`.
 - `frontend` : build `apps/borne/web` (multi-stage Vite → `nginx:alpine` + openssl), ports `80:80` `443:443`, `depends_on: backend`, volume `borne_certs:/etc/nginx/certs`.
 - `borne-entrypoint.sh` : génère un cert auto-signé si absent (`openssl req -x509 -nodes -days 730 -newkey rsa:2048`, CN `borne.local`) puis `nginx -g 'daemon off;'`.
 - `borne-nginx.conf` : `client_max_body_size 600M` ; 80 → redirect 443 ; `/api/` → `proxy_pass http://backend:3001` avec headers forwardés, timeouts read/send **600s**, `proxy_request_buffering off` ; `/` → SPA fallback `try_files $uri $uri/ /index.html`.
@@ -516,8 +523,7 @@ Base `/api`. `GET /api/health`.
 
 | Variable | App | Défaut | Rôle |
 |---|---|---|---|
-| `ADMIN_PASSWORD` | Borne | `admin123` | Admin **client** (questions, textes, vidéos, design) |
-| `TECH_PASSWORD` | Borne | `tech123` | Admin **technicien** (préflight, synchro, clôture) — `/admin/tech` |
+| `TECH_PASSWORD` | Borne | `tech123` | Fallback **technicien** (mode autonome sans Hub) — ignoré si `event_users` pullés |
 | `JWT_SECRET` | Borne+Hub | `change-me` | Signature JWT |
 | `DATA_DIR` | Borne+Hub | `/app/data` | Racine stockage |
 | `PORT` | Borne+Hub | `3001` | Port backend |
@@ -551,10 +557,12 @@ Base `/api`. `GET /api/health`.
 16. **Le Raspberry n'a pas d'horloge RTC** : sans Internet, l'heure dérive ou repart du dernier arrêt — or `consent_at` est la **preuve légale RGPD** et tous les timestamps en dépendent. Matériel requis : module **RTC DS3231** (~5 €, I2C) + chrony ; le Préflight vérifie l'écart d'horloge avec l'appareil admin.
 17. Le ZIP d'archive se génère **sans compression** (mode store) : la vidéo est déjà compressée, recompresser brûle du CPU sur le VPS pour 0 % de gain.
 18. Progression d'upload côté kiosque : `fetch` n'expose pas la progression d'envoi — utiliser `XMLHttpRequest` (`xhr.upload.onprogress`).
-19. **Admin Borne à deux niveaux** : `requireAdmin` (client) ≠ `requireTech`. Le tech peut tout faire (sur-ensemble), mais un token client doit recevoir **403** sur préflight, clôture et toute la synchro — re-tagger chaque route, ne pas se contenter de cacher l'onglet côté front.
+19. **Auth Borne à deux niveaux** : `requireAdmin` (rôle `admin_borne`) ≠ `requireTech` (rôle `tech_borne`). Le tech est sur-ensemble : un token `tech_borne` est accepté par `requireAdmin`. Mais un token `admin_borne` doit recevoir **403** sur préflight, clôture et toute la synchro — re-tagger chaque route, ne pas se contenter de cacher l'onglet côté front. En mode autonome (fallback `TECH_PASSWORD`), le JWT contient `roles: ['tech_borne']` — le tech a accès à tout.
 20. **Token = événement** : `requireBox` doit exposer `event_id` et **rejeter (403) toute route `…/events/:id/…` où `:id` ≠ l'événement du token**. Un token ne tire/pousse que son propre événement. `GET /sync/event` (singulier) remplace `/assigned`.
 21. **Borne d'essai** : une borne dont le token est `is_preview=1` (ou `PREVIEW_MODE=true`) **ne doit jamais pouvoir push** (409) — ce sont des données jetables. Quota `MAX_DATA_BYTES` vérifié **avant** d'écrire le fichier d'upload invité (507 si plein), sinon un client peut saturer le disque du VPS via l'aperçu.
 22. **Compte client sans mot de passe** : `users.password_hash` est NULL tant que le client n'a pas suivi le lien d'enregistrement. Le login (argon2) doit gérer ce cas **avant** d'appeler `argon2.verify(null, …)` (sinon exception) ; un compte `active=0` ou sans hash → 401 « identifiants invalides » (ne pas divulguer lequel).
+23. **`event_users` Borne** : les comptes pullés dans `event_users` de la BD événement (`events/<id>/db.sqlite`) ne contiennent que `email`, `password_hash`, `roles` — **RGPD : pas de nom ni d'autre PII** (le nom reste sur le Hub). Ces données sont **écrasées à chaque pull** (DELETE+INSERT en transaction).
+24. **Preview requiresLogin** : si `GET /api/event` retourne `requiresLogin: true` (preview + au moins un user avec rôle `general`), le kiosque doit exiger un login général avant toute session. Le token `general` (JWT `roles: ['general']`) est stocké en `sessionStorage` (durée de la session navigateur uniquement) et envoyé comme Bearer à `POST /api/sessions`.
 
 ---
 

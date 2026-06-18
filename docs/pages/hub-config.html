@@ -33,7 +33,7 @@ export const config = {
   <tr><td>dataDir</td><td>DATA_DIR</td><td>'/app/data'</td><td>Racine de stockage (registry + events). Surchargé en test par un dossier temporaire.</td></tr>
   <tr><td>allowRegister</td><td>ALLOW_REGISTER</td><td>false</td><td>Autorise (ou non) l'inscription publique via l'API. Voir <a href="#/hub-routes-auth">routes/auth</a>.</td></tr>
   <tr><td>adminEmail</td><td>ADMIN_EMAIL</td><td>'' (vide)</td><td>E-mail du compte admin <em>seedé</em> au démarrage. Vide = pas de seed.</td></tr>
-  <tr><td>adminPassword</td><td>ADMIN_PASSWORD_HUB</td><td>'' (vide)</td><td>Mot de passe du compte admin seedé. Vide = pas de seed. Suffixé <code>_HUB</code> pour ne pas entrer en collision avec le <code>ADMIN_PASSWORD</code> de la Borne.</td></tr>
+  <tr><td>adminPassword</td><td>ADMIN_PASSWORD_HUB</td><td>'' (vide)</td><td>Mot de passe du compte admin seedé. Vide = pas de seed. Suffixé <code>_HUB</code> (héritage : le nom court <code>ADMIN_PASSWORD</code> servait historiquement à la Borne, désormais retiré au profit d'une auth nominative).</td></tr>
 </table>
 <p>
   Les deux derniers alimentent le <em>seed</em> d'un compte admin au démarrage du serveur — détaillé

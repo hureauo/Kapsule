@@ -12,7 +12,6 @@
 
 export const config = {
   port: parseInt(env.PORT ?? '3001', 10),
-  adminPassword: env.ADMIN_PASSWORD ?? 'admin123',
   techPassword: env.TECH_PASSWORD ?? 'tech123',
   jwtSecret: env.JWT_SECRET ?? 'change-me',
   dataDir: env.DATA_DIR ?? '/app/data',
@@ -28,8 +27,7 @@ export const config = {
 <h2>Les réglages spécifiques à la Borne</h2>
 <table class="api-table">
   <tr><th>Champ</th><th>Variable</th><th>Défaut</th><th>Rôle</th></tr>
-  <tr><td>adminPassword</td><td>ADMIN_PASSWORD</td><td>'admin123'</td><td>Mot de passe de l'admin <strong>client</strong> (questions, vidéos, textes, design). Espace <code>/admin</code>.</td></tr>
-  <tr><td>techPassword</td><td>TECH_PASSWORD</td><td>'tech123'</td><td>Mot de passe de l'admin <strong>technicien</strong> (préflight, synchro, clôture). Espace <code>/admin/tech</code> (§11.19).</td></tr>
+  <tr><td>techPassword</td><td>TECH_PASSWORD</td><td>'tech123'</td><td>Mot de passe technicien de <strong>secours</strong>, utilisé <strong>uniquement en mode autonome</strong> (sans <code>HUB_URL</code>). Quand la borne est appairée au Hub, l'auth devient nominative (email + argon2) via les comptes pullés dans <code>event_users</code> — voir l'encadré ci-dessous (§11.19).</td></tr>
   <tr><td>hubUrl</td><td>HUB_URL</td><td>'' (vide)</td><td>URL du Hub. <strong>Vide = mode autonome</strong> (pas de synchro).</td></tr>
   <tr><td>boxToken</td><td>BOX_TOKEN</td><td>'' (vide)</td><td>Jeton d'identification auprès du Hub (en-tête <code>X-Box-Token</code>). Modifiable à chaud via <a href="#/borne-routes-sync">POST /sync/token</a>.</td></tr>
   <tr><td>maxDataBytes</td><td>MAX_DATA_BYTES</td><td>0 (illimité)</td><td>Quota de stockage des vidéos. <code>0</code> = pas de limite ; sinon l'upload invité est refusé (<code>507</code>) dès que <span class="path">events/</span> dépasse ce seuil (§11.21). Mis à <code>1 Go</code> sur la borne d'essai.</td></tr>
@@ -55,17 +53,27 @@ export const config = {
 </div>
 
 <div class="callout info">
-  <div class="callout-title">ℹ Différence clé avec le Hub : pas de table d'utilisateurs, deux mots de passe par rôle</div>
+  <div class="callout-title">ℹ Auth Borne : nominative quand appairée, <code>TECH_PASSWORD</code> en secours</div>
   <p>
-    Le Hub a une table <code>users</code> avec emails et comptes. La Borne, elle, n'a
-    <strong>pas de base d'utilisateurs</strong> : juste deux mots de passe statiques qui distinguent
-    <strong>deux rôles</strong> (§11.19). <code>ADMIN_PASSWORD</code> ouvre l'espace
-    <strong>client</strong> (<code>/admin</code> : questions, vidéos, textes, design) ;
-    <code>TECH_PASSWORD</code> ouvre l'espace <strong>technicien</strong> (<code>/admin/tech</code> :
-    préflight, synchro, clôture). C'est cohérent avec l'usage : le client gère le contenu sans voir
-    les outils de déploiement réservés à l'installateur. Pas d'inscription. La page
+    La Borne n'a pas sa propre table <code>users</code>. Elle reçoit dans le bundle de pull les comptes
+    Hub assignés à l'événement et les stocke dans <code>event_users</code> de la BD événement
+    (<code>email</code>, <code>password_hash</code>, <code>roles</code> — <strong>jamais le nom, RGPD</strong>,
+    §11.23). <code>POST /api/admin/login</code> a donc deux modes (§11.19) :
+  </p>
+  <ul>
+    <li><strong>Mode appairé</strong> : si l'événement actif a des entrées <code>event_users</code>, l'auth
+      se fait par <strong>email + mot de passe</strong> (argon2) contre ces comptes ; le JWT porte
+      <code>roles: ['admin_borne'|'tech_borne'|'general']</code>.</li>
+    <li><strong>Mode autonome (fallback)</strong> : si aucun <code>event_users</code> n'existe,
+      <code>email</code> est ignoré et <code>password</code> est comparé à <code>TECH_PASSWORD</code> →
+      JWT <code>roles: ['tech_borne']</code> (le tech a accès à tout).</li>
+  </ul>
+  <p>
+    Côté autorisation, <code>requireAdmin</code> (rôle <code>admin_borne</code>) accepte aussi
+    <code>tech_borne</code> (sur-ensemble), tandis que <code>requireTech</code> est réservé au préflight,
+    à la synchro et à la clôture. La page
     <a href="#/borne-middleware-auth">borne/middleware/auth.js</a> montre comment le mot de passe est
-    comparé de façon sûre et comment le rôle est inscrit dans le JWT.
+    comparé de façon sûre et comment les rôles sont inscrits dans le JWT.
   </p>
 </div>
 

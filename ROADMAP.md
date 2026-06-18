@@ -215,10 +215,10 @@ committé en `phase 7X.Y: …`.
 
 ### 7E — Nettoyage env + Hub front
 
-- [ ] 7E.1 Supprimer `ADMIN_PASSWORD`, `ADMIN_PASSWORD_PREVIEW`, `TECH_PASSWORD_PREVIEW` de `.env.example` et `config.js` borne (garder `TECH_PASSWORD` pour mode autonome)
-- [ ] 7E.2 Hub front : onglet « Utilisateurs » dans `EventDetailPage` (visible superuser only) — liste des users assignés, ajout (select parmi users Hub), rôles checkboxes, retrait
-- [ ] 7E.3 Hub front : `AdminPage` adapté (renommer `admin` → `superuser` dans les labels)
-- [ ] 7E.4 PROJET.md : mettre à jour §6 API Borne (auth), §7 API Hub (event_users), §10 env, §11 invariants
+- [x] 7E.1 Supprimer `ADMIN_PASSWORD`, `ADMIN_PASSWORD_PREVIEW`, `TECH_PASSWORD_PREVIEW` de `.env.example` et `config.js` borne (garder `TECH_PASSWORD` pour mode autonome)
+- [x] 7E.2 Hub front : onglet « Utilisateurs » dans `EventDetailPage` (visible superuser only) — liste des users assignés, ajout (select parmi users Hub), rôles checkboxes, retrait
+- [x] 7E.3 Hub front : `AdminPage` adapté (renommer `admin` → `superuser` dans les labels)
+- [x] 7E.4 PROJET.md : mettre à jour §6 API Borne (auth), §7 API Hub (event_users), §10 env, §11 invariants
 
 **Terminé quand** : un user `general` pullé déclenche un login devant la preview ; `admin_borne`/`tech_borne` se connectent par email+mdp sur borne et preview ; mode autonome fonctionne avec `TECH_PASSWORD` env.
 
