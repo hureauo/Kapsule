@@ -186,9 +186,18 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const metaRows = edb.prepare('SELECT key, value FROM event_meta').all();
       const meta = Object.fromEntries(metaRows.map(r => [r.key, r.value]));
 
+      // Bundle users : uniquement ceux avec un hash (comptes enregistrés)
+      const usersWithHash = db.prepare(`
+        SELECT u.email, u.password_hash, eu.roles
+        FROM event_users eu
+        INNER JOIN users u ON u.id = eu.user_id
+        WHERE eu.event_id = ? AND u.password_hash IS NOT NULL
+        ORDER BY u.email
+      `).all(event.id).map(u => ({ email: u.email, password_hash: u.password_hash, roles: JSON.parse(u.roles) }));
+
       const freshEvent = getEvent(db, event.id);
-      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  status=${freshEvent.status}`);
-      res.json({ event: { ...freshEvent, meta }, questions });
+      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  users=${usersWithHash.length}  status=${freshEvent.status}`);
+      res.json({ event: { ...freshEvent, meta }, questions, users: usersWithHash });
     } catch (err) {
       next(err);
     }

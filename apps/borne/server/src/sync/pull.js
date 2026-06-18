@@ -69,6 +69,19 @@ export async function pullEvent(hubEventId, dataDir) {
         }
       }
     })();
+
+    // Écrase event_users depuis le Hub (source de vérité) — DELETE + INSERT
+    edb.transaction(() => {
+      edb.prepare('DELETE FROM event_users').run();
+      if (Array.isArray(bundle.users) && bundle.users.length > 0) {
+        const insUser = edb.prepare(
+          'INSERT INTO event_users (email, password_hash, roles) VALUES (?, ?, ?)'
+        );
+        for (const u of bundle.users) {
+          insUser.run(u.email, u.password_hash, JSON.stringify(u.roles));
+        }
+      }
+    })();
   } finally {
     edb.close();
   }

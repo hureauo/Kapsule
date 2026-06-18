@@ -63,6 +63,12 @@ export function createEventDb(filePath) {
       height     INTEGER,
       probed_at  DATETIME
     );
+
+    CREATE TABLE IF NOT EXISTS event_users (
+      email         TEXT PRIMARY KEY,
+      password_hash TEXT,
+      roles         TEXT NOT NULL DEFAULT '[]'
+    );
   `);
 
   // Seed 4 questions par défaut si la table est vide
