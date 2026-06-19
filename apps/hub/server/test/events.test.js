@@ -504,3 +504,135 @@ describe('POST /api/events/:eventId/config', () => {
     assert.equal(res.status, 401);
   });
 });
+
+// ── preview/status, preview/start, preview/stop ───────────────────────────────
+// Docker CLI mocké pour ne pas dépendre d'un daemon réel en test.
+
+describe('GET /api/events/:eventId/preview/status', () => {
+  let req2, tokenAdmin, eventId;
+
+  before(async () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'kapsule-preview-status-'));
+    const mockDocker = {
+      async exists() { return true; },
+      async running() { return true; },
+      async start() {},
+      async stop() {},
+    };
+    const app2 = createApp(dir2, {}, { docker: mockDocker });
+    req2 = supertest(app2);
+    const db2 = getDb();
+    const hash = await argon2.hash('pass-admin', { type: argon2.argon2id });
+    insertUser(db2, { email: 'admin-ps@test.com', password_hash: hash, role: 'superuser' });
+    tokenAdmin = (await req2.post('/api/auth/login').send({ email: 'admin-ps@test.com', password: 'pass-admin' })).body.token;
+    eventId = (await req2.post('/api/events').set('Authorization', `Bearer ${tokenAdmin}`).send({ name: 'Ev preview' })).body.id;
+  });
+
+  it('retourne up:true et preview_url quand container running', async () => {
+    const res = await req2.get(`/api/events/${eventId}/preview/status`).set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.up, true);
+    assert.match(res.body.preview_url, /^https:\/\/essai-/);
+  });
+
+  it('retourne 401 sans token', async () => {
+    const res = await req2.get(`/api/events/${eventId}/preview/status`);
+    assert.equal(res.status, 401);
+  });
+});
+
+describe('POST /api/events/:eventId/preview/start', () => {
+  let req2, tokenAdmin, eventId;
+
+  before(async () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'kapsule-preview-start-'));
+    const mockDocker = {
+      async exists() { return true; },
+      async running() { return false; },
+      async start() {},
+      async stop() {},
+    };
+    const app2 = createApp(dir2, {}, { docker: mockDocker });
+    req2 = supertest(app2);
+    const db2 = getDb();
+    const hash = await argon2.hash('pass-admin', { type: argon2.argon2id });
+    insertUser(db2, { email: 'admin-pstart@test.com', password_hash: hash, role: 'superuser' });
+    tokenAdmin = (await req2.post('/api/auth/login').send({ email: 'admin-pstart@test.com', password: 'pass-admin' })).body.token;
+    eventId = (await req2.post('/api/events').set('Authorization', `Bearer ${tokenAdmin}`).send({ name: 'Ev start' })).body.id;
+  });
+
+  it('démarre le container et retourne up:true', async () => {
+    const res = await req2.post(`/api/events/${eventId}/preview/start`).set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.up, true);
+  });
+
+  it('retourne 404 si container inexistant', async () => {
+    const dir3 = mkdtempSync(join(tmpdir(), 'kapsule-preview-start-404-'));
+    const mockDocker = { async exists() { return false; }, async running() { return false; }, async start() {}, async stop() {} };
+    const app3 = createApp(dir3, {}, { docker: mockDocker });
+    const req3 = supertest(app3);
+    const db3 = getDb();
+    const hash = await argon2.hash('pass-admin', { type: argon2.argon2id });
+    insertUser(db3, { email: 'admin-p404@test.com', password_hash: hash, role: 'superuser' });
+    const tok = (await req3.post('/api/auth/login').send({ email: 'admin-p404@test.com', password: 'pass-admin' })).body.token;
+    const evId = (await req3.post('/api/events').set('Authorization', `Bearer ${tok}`).send({ name: 'Ev 404' })).body.id;
+    const res = await req3.post(`/api/events/${evId}/preview/start`).set('Authorization', `Bearer ${tok}`);
+    assert.equal(res.status, 404);
+  });
+
+  it('retourne 403 pour un client non superuser', async () => {
+    const dir4 = mkdtempSync(join(tmpdir(), 'kapsule-preview-start-403-'));
+    const mockDocker = { async exists() { return true; }, async running() { return false; }, async start() {}, async stop() {} };
+    const app4 = createApp(dir4, {}, { docker: mockDocker });
+    const req4 = supertest(app4);
+    const db4 = getDb();
+    const hashA = await argon2.hash('pass-su', { type: argon2.argon2id });
+    const hashB = await argon2.hash('pass-cli', { type: argon2.argon2id });
+    insertUser(db4, { email: 'su-403@test.com', password_hash: hashA, role: 'superuser' });
+    insertUser(db4, { email: 'cli-403@test.com', password_hash: hashB, role: 'client' });
+    const tokSu  = (await req4.post('/api/auth/login').send({ email: 'su-403@test.com',  password: 'pass-su' })).body.token;
+    const tokCli = (await req4.post('/api/auth/login').send({ email: 'cli-403@test.com', password: 'pass-cli' })).body.token;
+    const evId = (await req4.post('/api/events').set('Authorization', `Bearer ${tokSu}`).send({ name: 'Ev 403' })).body.id;
+    const res = await req4.post(`/api/events/${evId}/preview/start`).set('Authorization', `Bearer ${tokCli}`);
+    assert.equal(res.status, 403);
+  });
+});
+
+describe('POST /api/events/:eventId/preview/stop', () => {
+  let req2, tokenAdmin, eventId;
+
+  before(async () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'kapsule-preview-stop-'));
+    const mockDocker = {
+      async exists() { return true; },
+      async running() { return true; },
+      async start() {},
+      async stop() {},
+    };
+    const app2 = createApp(dir2, {}, { docker: mockDocker });
+    req2 = supertest(app2);
+    const db2 = getDb();
+    const hash = await argon2.hash('pass-admin', { type: argon2.argon2id });
+    insertUser(db2, { email: 'admin-pstop@test.com', password_hash: hash, role: 'superuser' });
+    tokenAdmin = (await req2.post('/api/auth/login').send({ email: 'admin-pstop@test.com', password: 'pass-admin' })).body.token;
+    eventId = (await req2.post('/api/events').set('Authorization', `Bearer ${tokenAdmin}`).send({ name: 'Ev stop' })).body.id;
+  });
+
+  it('arrête le container et retourne up:false', async () => {
+    const res = await req2.post(`/api/events/${eventId}/preview/stop`).set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.up, false);
+  });
+
+  it('retourne 401 sans token', async () => {
+    const res = await req2.post(`/api/events/${eventId}/preview/stop`);
+    assert.equal(res.status, 401);
+  });
+
+  it('retourne 403 pour un client non superuser', async () => {
+    const res = await req2.post(`/api/events/${eventId}/preview/stop`).set('Authorization', `Bearer ${tokenBob}`);
+    assert.equal(res.status, 403);
+  });
+});
+});

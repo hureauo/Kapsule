@@ -22,7 +22,7 @@ async function seedAdminIfNeeded() {
   console.log(`[hub] compte admin créé : ${config.adminEmail}`);
 }
 
-export function createApp(dataDir, opts = {}) {
+export function createApp(dataDir, opts = {}, { docker } = {}) {
   openRegistry(dataDir);
 
   const app = express();
@@ -30,7 +30,7 @@ export function createApp(dataDir, opts = {}) {
   app.use(express.json({ limit: '1mb' }));
 
   app.use('/api/auth', makeAuthRouter());
-  app.use('/api/events', makeEventsRouter(dataDir));
+  app.use('/api/events', makeEventsRouter(dataDir, { docker }));
   app.use('/api/events/:eventId/questions', makeQuestionsRouter(dataDir));
   app.use('/api/admin', makeAdminRouter(dataDir));
   app.use('/api/sync', makeSyncRouter(dataDir, opts.sync));

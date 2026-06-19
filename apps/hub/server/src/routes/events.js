@@ -46,7 +46,7 @@ function withMeta(event, dataDir) {
   }
 }
 
-export function makeEventsRouter(dataDir) {
+export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
   const router = Router();
 
   // ── GET /api/events ────────────────────────────────────────────────────────
@@ -285,8 +285,35 @@ export function makeEventsRouter(dataDir) {
       const slug = slugFor(req.event.id);
       const domain = process.env.EDGE_DOMAIN ?? 'kapsule.hureau.com';
       const preview_url = `https://essai-${slug}.${domain}`;
-      const up = await dockerCli.exists(`preview-${slug}`);
+      const up = await docker.running(`preview-${slug}`);
       res.json({ up, preview_url, slug });
+    } catch (err) { next(err); }
+  });
+
+  // ── POST /api/events/:eventId/preview/start ───────────────────────────────
+  router.post('/:eventId/preview/start', requireUser, requireAdmin, requireOwner, async (req, res, next) => {
+    try {
+      const slug = slugFor(req.event.id);
+      const frontend = `preview-${slug}`;
+      const backend  = `preview-backend-${slug}`;
+      if (!await docker.exists(frontend)) {
+        return res.status(404).json({ error: 'Container preview introuvable — recréer l\'événement.' });
+      }
+      if (!await docker.running(frontend)) await docker.start(frontend);
+      if (await docker.exists(backend) && !await docker.running(backend)) await docker.start(backend);
+      res.json({ up: true });
+    } catch (err) { next(err); }
+  });
+
+  // ── POST /api/events/:eventId/preview/stop ────────────────────────────────
+  router.post('/:eventId/preview/stop', requireUser, requireAdmin, requireOwner, async (req, res, next) => {
+    try {
+      const slug = slugFor(req.event.id);
+      const frontend = `preview-${slug}`;
+      const backend  = `preview-backend-${slug}`;
+      if (await docker.running(frontend)) await docker.stop(frontend);
+      if (await docker.exists(backend) && await docker.running(backend)) await docker.stop(backend);
+      res.json({ up: false });
     } catch (err) { next(err); }
   });
 

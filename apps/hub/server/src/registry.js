@@ -164,6 +164,18 @@ export function openRegistry(dataDir) {
     `);
   }
 
+  // Migration : corriger les author stockés comme id numérique (ex. "2.0")
+  // dans event_versions — résout en email depuis users.
+  const badAuthors = db.prepare(
+    "SELECT DISTINCT author FROM event_versions WHERE author GLOB '[0-9]*'"
+  ).all();
+  if (badAuthors.length > 0) {
+    const fix = db.prepare(
+      'UPDATE event_versions SET author = (SELECT email FROM users WHERE id = CAST(? AS INTEGER)) WHERE author = ?'
+    );
+    for (const { author } of badAuthors) fix.run(author, author);
+  }
+
   _db = db;
   return db;
 }

@@ -61,7 +61,12 @@ export const api = {
   assignEventOwner: (eventId, email) => apiFetch(`/events/${eventId}/owner`, { method: 'PUT', body: { email } }),
   importPreviewConfig: (eventId, payload) => apiFetch(`/events/${eventId}/config`, { method: 'POST', body: payload }),
   previewStatus: (eventId) => apiFetch(`/events/${eventId}/preview/status`),
+  previewStart:  (eventId) => apiFetch(`/events/${eventId}/preview/start`, { method: 'POST' }),
+  previewStop:   (eventId) => apiFetch(`/events/${eventId}/preview/stop`,  { method: 'POST' }),
   generatePreviewToken: (eventId, expires_in) => apiFetch(`/events/${eventId}/preview/token`, { method: 'POST', body: { expires_in } }),
+  listVersions:   (eventId) => apiFetch(`/events/${eventId}/versions`),
+  getVersion:     (eventId, versionId) => apiFetch(`/events/${eventId}/versions/${versionId}`),
+  restoreVersion: (eventId, versionId) => apiFetch(`/events/${eventId}/versions/${versionId}/restore`, { method: 'POST' }),
 
   // Admin : gestion des comptes clients
   listUsers: () => apiFetch('/admin/users'),

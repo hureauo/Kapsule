@@ -197,6 +197,20 @@ function EventPanel({ event, onRefresh }) {
     catch { setPreviewStatus({ up: false, preview_url: null }); }
   }, [event.id]);
 
+  const [toggling, setToggling] = useState(false);
+  async function handleTogglePreview() {
+    setToggling(true);
+    try {
+      if (previewStatus?.up) {
+        await api.previewStop(event.id);
+      } else {
+        await api.previewStart(event.id);
+      }
+      await loadPreviewStatus();
+    } catch (err) { alert(`Erreur : ${err.message}`); }
+    finally { setToggling(false); }
+  }
+
   useEffect(() => { loadTokens(); loadUsers(); loadPreviewStatus(); }, [loadTokens, loadUsers, loadPreviewStatus]);
 
   async function handleGenerateLink() {
@@ -332,7 +346,10 @@ function EventPanel({ event, onRefresh }) {
             <>
               <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: previewStatus.up ? '#22c55e' : '#ef4444' }} />
               <span className="text--muted">{previewStatus.up ? 'En ligne' : 'Hors ligne'}</span>
-              {previewStatus.preview_url && (
+              <button className="btn btn--ghost btn--sm" onClick={handleTogglePreview} disabled={toggling}>
+                {toggling ? '…' : previewStatus.up ? 'Éteindre' : 'Démarrer'}
+              </button>
+              {previewStatus.up && previewStatus.preview_url && (
                 <a href={previewStatus.preview_url} target="_blank" rel="noopener noreferrer" className="btn btn--ghost btn--sm">Ouvrir ↗</a>
               )}
             </>

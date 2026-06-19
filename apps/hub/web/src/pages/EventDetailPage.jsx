@@ -394,6 +394,120 @@ function UtilisateursTab({ eventId }) {
   );
 }
 
+// ── Onglet Historique ─────────────────────────────────────────────────────────
+
+const DIFF_TYPE_LABELS = {
+  questions_added:     (d) => `+ ${d.items.length} question(s) ajoutée(s)`,
+  questions_removed:   (d) => `- ${d.items.length} question(s) supprimée(s)`,
+  questions_modified:  (d) => `${d.items.length} question(s) modifiée(s)`,
+  questions_reordered: ()  => 'Questions réordonnées',
+  meta_changed: (d) => {
+    const labels = { theme: 'Thème', idle_timeout: "Délai d'inactivité", welcome_title: "Titre d'accueil", welcome_subtitle: 'Sous-titre', name_prompt: 'Invite nom', consent_text: 'Texte consentement', consent_details: 'Détails consentement', thanks_text: 'Message de remerciement' };
+    return `${labels[d.key] ?? d.key} : ${d.before ?? '∅'} → ${d.after ?? '∅'}`;
+  },
+};
+
+function VersionBlock({ version, eventId, isSuperuser, onRestored }) {
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [restoring, setRestoring] = useState(false);
+
+  async function load() {
+    if (detail) { setOpen(o => !o); return; }
+    const data = await api.getVersion(eventId, version.id);
+    setDetail(data);
+    setOpen(true);
+  }
+
+  async function restore() {
+    if (!confirm('Restaurer cette version ? L\'état actuel sera remplacé.')) return;
+    setRestoring(true);
+    try {
+      await api.restoreVersion(eventId, version.id);
+      onRestored();
+    } catch (err) {
+      alert(`Erreur : ${err.message}`);
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  const date = new Date(version.created_at.endsWith('Z') ? version.created_at : version.created_at + 'Z');
+  const dateStr = `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')} ${date.getHours().toString().padStart(2,'0')}h${date.getMinutes().toString().padStart(2,'0')}`;
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 6, marginBottom: 8, overflow: 'hidden' }}>
+      <button
+        onClick={load}
+        style={{ width: '100%', background: 'none', border: 'none', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', textAlign: 'left' }}
+      >
+        <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>{dateStr}</span>
+        <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}>{version.summary}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && detail && (
+        <div style={{ padding: '0 14px 12px', borderTop: '1px solid var(--border)' }}>
+          {version.author && (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+              Par : <strong>{version.author}</strong>
+            </p>
+          )}
+          {detail.diff.length === 0
+            ? <p className="text--muted" style={{ fontSize: 13, marginTop: 8 }}>Aucun changement détecté.</p>
+            : (
+              <ul style={{ margin: '8px 0 0', padding: '0 0 0 16px', fontSize: 13 }}>
+                {detail.diff.map((d, i) => (
+                  <li key={i} style={{ marginBottom: 4, color: d.type === 'questions_added' ? '#16a34a' : d.type === 'questions_removed' ? '#dc2626' : 'inherit' }}>
+                    {DIFF_TYPE_LABELS[d.type]?.(d) ?? d.type}
+                    {(d.type === 'questions_added' || d.type === 'questions_removed' || d.type === 'questions_modified') && d.items && (
+                      <ul style={{ marginTop: 2, paddingLeft: 14, color: 'var(--text-muted)' }}>
+                        {d.items.map((item, j) => <li key={j} style={{ fontSize: 12 }}>{item}</li>)}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+          {isSuperuser && (
+            <button className="btn btn--ghost btn--sm" style={{ marginTop: 10 }} onClick={restore} disabled={restoring}>
+              {restoring ? 'Restauration…' : 'Restaurer cette version'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HistoriqueTab({ event, isSuperuser, onRestored }) {
+  const [versions, setVersions] = useState(null);
+
+  useEffect(() => {
+    api.listVersions(event.id).then(setVersions).catch(() => setVersions([]));
+  }, [event.id]);
+
+  return (
+    <div className="tab-content">
+      <section className="panel-section">
+        <h3 className="panel-section__title">Historique des modifications</h3>
+        {versions === null && <p className="text--muted">Chargement…</p>}
+        {versions?.length === 0 && <p className="text--muted">Aucune modification enregistrée.</p>}
+        {versions?.map(v => (
+          <VersionBlock
+            key={v.id}
+            version={v}
+            eventId={event.id}
+            isSuperuser={isSuperuser}
+            onRestored={onRestored}
+          />
+        ))}
+      </section>
+    </div>
+  );
+}
+
 // ── Page principale ───────────────────────────────────────────────────────────
 export default function EventDetailPage() {
   const { id } = useParams();
@@ -437,7 +551,7 @@ export default function EventDetailPage() {
   const isSuperuser = getRole() === 'superuser';
   const TABS = [
     'Questions', 'Design', 'Synchro', 'Galerie',
-    'Aperçu',
+    'Aperçu', 'Historique',
     ...(isSuperuser ? ['Utilisateurs'] : []),
   ];
 
@@ -531,6 +645,10 @@ export default function EventDetailPage() {
             previewTokens={previewTokens}
             onConfigImported={loadEvent}
           />
+        )}
+
+        {tab === 'Historique' && (
+          <HistoriqueTab event={event} isSuperuser={isSuperuser} onRestored={loadEvent} />
         )}
 
         {tab === 'Utilisateurs' && isSuperuser && (
