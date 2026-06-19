@@ -325,15 +325,6 @@ export function listEventUsers(db, event_id) {
   `).all(event_id);
 }
 
-export function listUserEvents(db, user_id) {
-  return db.prepare(`
-    SELECT e.*, eu.roles FROM events e
-    INNER JOIN event_users eu ON eu.event_id = e.id
-    WHERE eu.user_id = ?
-    ORDER BY e.created_at DESC
-  `).all(user_id);
-}
-
 export function upsertEventUser(db, { event_id, user_id, roles }) {
   return db.prepare(`
     INSERT INTO event_users (event_id, user_id, roles)

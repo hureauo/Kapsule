@@ -244,7 +244,7 @@ Priorité : les 🔴 sécurité sont **bloquants** pour exposer le Hub/preview s
 
 ### 8D — Nettoyage code mort
 
-- [ ] 8D.1 Supprimer `clearGeneralToken` (`apps/borne/web/src/api/client.js`) et `listUserEvents` (`apps/hub/server/src/registry.js`) ; tests verts
+- [x] 8D.1 Supprimer `clearGeneralToken` (`apps/borne/web/src/api/client.js`) et `listUserEvents` (`apps/hub/server/src/registry.js`) ; tests verts
 
 **Terminé quand** : aucun secret par défaut exploitable en prod ; surface publique limitée (body-limit + rate-limit + health réduit) ; en-têtes de sécurité posés ; bloc d'import config dédupliqué ; code mort retiré.
 

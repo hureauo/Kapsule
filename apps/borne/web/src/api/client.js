@@ -27,7 +27,6 @@ export function isTechAuthenticated() { return Boolean(getTechToken()) && hasTec
 // general_token : sessionStorage (durée d'onglet, pas de persistance) — preview seulement
 export function getGeneralToken() { return sessionStorage.getItem(GENERAL_TOKEN_KEY); }
 export function saveGeneralToken(token) { sessionStorage.setItem(GENERAL_TOKEN_KEY, token); }
-export function clearGeneralToken() { sessionStorage.removeItem(GENERAL_TOKEN_KEY); }
 
 // ── Wrappers fetch ────────────────────────────────────────────────────────────
 
