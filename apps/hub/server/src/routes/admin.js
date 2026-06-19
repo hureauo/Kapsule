@@ -13,8 +13,9 @@ import {
 } from '../registry.js';
 import { requireUser } from '../middleware/auth.js';
 import { openEventDb } from '../eventStore.js';
+import { META_KEYS } from '../eventConfig.js';
 
-const META_HASH_KEYS = ['theme', 'idle_timeout', 'welcome_title', 'welcome_subtitle', 'name_prompt', 'consent_text', 'consent_details', 'thanks_text'];
+const META_HASH_KEYS = META_KEYS;
 
 function configHash(questions, meta) {
   const q = questions.map(({ text, max_duration, countdown, order_index, enabled }) =>

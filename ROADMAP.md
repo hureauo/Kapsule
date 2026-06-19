@@ -239,8 +239,8 @@ Priorité : les 🔴 sécurité sont **bloquants** pour exposer le Hub/preview s
 
 ### 8R — Refactoring SQL
 
-- [ ] 8R.1 Extraire `applyEventConfig(edb, { mode, meta, questions })` dans `apps/hub/server/src/eventConfig.js` (corps = bloc actuel) + tests unitaires (overwrite/merge, slice 500, défauts, thème invalide)
-- [ ] 8R.2 Brancher les 3 sites dupliqués (`routes/sync.js`, `routes/events.js` ×2) sur `applyEventConfig` ; `insertSyncLog` reste dans les routes (pas de couplage) ; dériver `META_HASH_KEYS` de `META_KEYS`. Tests existants verts sans modification
+- [x] 8R.1 Extraire `applyEventConfig(edb, { mode, meta, questions })` dans `apps/hub/server/src/eventConfig.js` (corps = bloc actuel) + tests unitaires (overwrite/merge, slice 500, défauts, thème invalide)
+- [x] 8R.2 Brancher les 3 sites dupliqués (`routes/sync.js`, `routes/events.js` ×2) sur `applyEventConfig` ; `insertSyncLog` reste dans les routes (pas de couplage) ; dériver `META_HASH_KEYS` de `META_KEYS`. Tests existants verts sans modification
 
 ### 8D — Nettoyage code mort
 

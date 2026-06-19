@@ -3,9 +3,10 @@ import { existsSync, mkdirSync, renameSync, writeFileSync, readFileSync, readdir
 import { join, extname } from 'node:path';
 import multer from 'multer';
 import { sha256File } from '@kapsule/core/src/checksum.js';
-import { LIMITS, THEMES, TEXT_FIELDS } from '@kapsule/core';
+import { LIMITS } from '@kapsule/core';
 import { getDb, getEvent, updateEvent, insertSyncLog } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
+import { applyEventConfig } from '../eventConfig.js';
 import { requireBox } from '../middleware/boxAuth.js';
 import { validateUuidParams } from '../middleware/validateParams.js';
 
@@ -105,38 +106,8 @@ export function makeSyncRouter(dataDir, opts = {}) {
         return res.status(400).json({ error: 'mode doit être overwrite ou merge' });
       }
 
-      const META_KEYS = ['theme', 'idle_timeout', ...Object.keys(TEXT_FIELDS)];
       const edb = openEventDb(event.id, dataDir);
-      const upsert = edb.prepare(
-        'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'
-      );
-
-      if (meta && typeof meta === 'object') {
-        for (const key of META_KEYS) {
-          if (meta[key] === undefined) continue;
-          if (mode === 'merge') {
-            const existing = edb.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value;
-            if (existing && existing.trim() !== '') continue;
-          }
-          if (key === 'theme' && !THEMES.includes(meta[key])) continue;
-          upsert.run(key, String(meta[key]));
-        }
-      }
-
-      if (Array.isArray(questions)) {
-        if (mode === 'overwrite') edb.prepare('DELETE FROM questions').run();
-        const existingTexts = new Set(edb.prepare('SELECT text FROM questions').all().map(q => q.text));
-        const insert = edb.prepare(
-          'INSERT INTO questions (text, max_duration, countdown, order_index, enabled) VALUES (?, ?, ?, ?, ?)'
-        );
-        const maxRow = edb.prepare('SELECT MAX(order_index) as m FROM questions').get();
-        let nextOrder = (maxRow?.m ?? -1) + 1;
-        for (const q of questions) {
-          if (!q.text || typeof q.text !== 'string') continue;
-          if (mode === 'merge' && existingTexts.has(q.text)) continue;
-          insert.run(q.text.slice(0, 500), q.max_duration ?? 60, q.countdown ?? 3, nextOrder++, q.enabled !== undefined ? (q.enabled ? 1 : 0) : 1);
-        }
-      }
+      applyEventConfig(edb, { mode, meta, questions });
 
       insertSyncLog(db, { event_id: event.id, action: 'config_import', detail: { mode, questions: questions?.length ?? 0 } });
       syncLog(req, 200, `mode=${mode}  questions=${questions?.length ?? 0}`);
