@@ -25,6 +25,7 @@ Les commandes ci-dessous sont à lancer via `docker compose run` ou des scripts 
 - `docker compose up dev:borne` / `docker compose up dev:hub` — serveurs en dev
 - `docker compose -f docker-compose.hub.yml run --rm backend npm run create-admin` — crée le premier compte admin Hub (prompt interactif email/mdp)
 - `BOX_TOKEN_PREVIEW=<token> HUB_URL=https://… docker compose -f docker-compose.preview.yml up` — lance la borne d'essai (port interne uniquement, `MAX_DATA_BYTES=1 Go`, push interdit)
+- `npm run smoke` (`smoke:hub` / `smoke:borne`) — smoke tests end-to-end : démarrent le stack Docker réel et vérifient par `curl` que le SPA est servi et que chaque endpoint répond le bon code (gardes d'auth incluses). **Hors `npm test`** (dépendent de Docker), à lancer manuellement avant un déploiement.
 
 ## Outils agents (`.claude/`)
 

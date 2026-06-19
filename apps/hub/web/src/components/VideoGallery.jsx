@@ -1,19 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
-
-function formatDuration(s) {
-  if (s == null) return '—';
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}:${String(sec).padStart(2, '0')}`;
-}
-
-function formatSize(bytes) {
-  if (!bytes) return '—';
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} Ko`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
-}
+import { formatDuration, formatSize } from '../utils/format.js';
 
 // ── Modal lecture vidéo ───────────────────────────────────────────────────────
 

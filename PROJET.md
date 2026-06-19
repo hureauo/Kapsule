@@ -155,17 +155,24 @@ kapsule/
 │       │               └── archive.js       # ZIP de toutes les vidéos (mode store) → derived/
 │       └── web/
 │           ├── package.json, vite.config.js, index.html
-│           └── src/
-│               ├── main.jsx, App.jsx
-│               ├── api/client.js
-│               ├── pages/LoginPage.jsx
-│               ├── pages/EventsPage.jsx     # liste + création + statuts
-│               ├── pages/EventDetailPage.jsx# onglets : Questions | Synchro | Galerie
-│               ├── pages/AdminPage.jsx      # super-admin : bornes, stockage, jobs, tous les événements
-│               ├── components/QuestionEditor.jsx
-│               ├── components/VideoGallery.jsx
-│               ├── components/SyncStatus.jsx
-│               └── styles/app.css
+│           ├── src/
+│           │   ├── main.jsx, App.jsx
+│           │   ├── api/
+│           │   │   ├── client.js            # getToken/saveToken/getRole (ré-importe roles.js)
+│           │   │   └── roles.js             # decodeJwtPayload + getRole (scalaire) — testable seul
+│           │   ├── utils/
+│           │   │   └── format.js            # formatBytes/formatDate/formatDuration/formatSize
+│           │   ├── pages/LoginPage.jsx
+│           │   ├── pages/EventsPage.jsx     # liste + création + statuts
+│           │   ├── pages/EventDetailPage.jsx# onglets : Questions | Synchro | Galerie
+│           │   ├── pages/AdminPage.jsx      # super-admin : bornes, stockage, jobs, tous les événements
+│           │   ├── components/QuestionEditor.jsx
+│           │   ├── components/VideoGallery.jsx
+│           │   ├── components/SyncStatus.jsx
+│           │   └── styles/app.css
+│           └── test/
+│               ├── roles.test.js            # node:test — decodeJwtPayload + getRole
+│               └── format.test.js           # node:test — les 4 formateurs
 └── docker/
     ├── borne-nginx.conf, borne-entrypoint.sh   # cert auto-signé CN borne.local
     └── hub-nginx.conf

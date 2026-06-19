@@ -1,3 +1,5 @@
+import { getRole as roleFromToken } from './roles.js';
+
 const TOKEN_KEY = 'hub_token';
 
 export function getToken() { return localStorage.getItem(TOKEN_KEY); }
@@ -5,11 +7,7 @@ export function saveToken(t) { localStorage.setItem(TOKEN_KEY, t); }
 export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
 export function isAuthenticated() { return !!getToken(); }
 
-export function getRole() {
-  const token = getToken();
-  if (!token) return null;
-  try { return JSON.parse(atob(token.split('.')[1])).role; } catch { return null; }
-}
+export function getRole() { return roleFromToken(getToken()); }
 
 async function apiFetch(path, opts = {}) {
   const token = getToken();

@@ -148,8 +148,17 @@ Point d'entrée : `index.js` → `createApp(dataDir, cfg)`. Pull one-shot au dé
 ### Frontend borne (`apps/borne/web/src/`)
 
 - `api/client.js` : appels au backend borne + parcours invité.
-- `api/roles.js` : décodage des rôles du JWT.
+- `api/roles.js` : `decodeJwtPayload` + `getRole` (tableau `roles[]`). Testé isolément (`test/roles.test.js`).
 - `hooks/useMediaRecorder.js` : capture vidéo via MediaRecorder (codecs mp4 pour Safari, §11).
+
+### Frontend Hub (`apps/hub/web/src/`)
+
+- `api/client.js` : appels au backend Hub (fetch + token Bearer). Ré-importe `roles.js` pour `getRole`.
+- `api/roles.js` : `decodeJwtPayload` + `getRole` (scalaire `role` — ≠ borne qui retourne un tableau `roles`). Testé dans `test/roles.test.js`.
+- `utils/format.js` : formateurs purs (`formatBytes`, `formatDate`, `formatDuration`, `formatSize`) extraits de `AdminPage.jsx`/`VideoGallery.jsx`. Testés dans `test/format.test.js`.
+- `pages/AdminPage.jsx` et `components/VideoGallery.jsx` importent `format.js` (plus d'inline).
+
+> **Différence borne vs hub pour `roles.js`** : la borne encode un tableau `roles: ['admin_borne', 'tech_borne']` ; le Hub encode un scalaire `role: 'superuser'`. Les deux `roles.js` ont la même API (`getRole`) mais ne sont pas interchangeables.
 
 ---
 

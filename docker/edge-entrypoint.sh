@@ -12,15 +12,27 @@ sed \
   /etc/nginx/templates/edge-nginx.conf.template \
   > /etc/nginx/conf.d/default.conf
 
-# Si le certificat Let's Encrypt est absent, génère un cert auto-signé pour le dev
-CERT_DIR="/etc/letsencrypt/live/kapsule"
-if [ ! -f "${CERT_DIR}/fullchain.pem" ]; then
-  echo "[edge] Cert absent — génération d'un cert auto-signé pour ${DOMAIN}"
-  mkdir -p "${CERT_DIR}"
-  openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
-    -keyout "${CERT_DIR}/privkey.pem" \
-    -out    "${CERT_DIR}/fullchain.pem" \
-    -subj "/CN=${DOMAIN}" 2>/dev/null
+# Cert Let's Encrypt attendu en prod (volume monté en lecture seule).
+LE_CERT="/etc/letsencrypt/live/kapsule/fullchain.pem"
+LE_KEY="/etc/letsencrypt/live/kapsule/privkey.pem"
+
+# En dev/local, ce volume est absent ou vide → on génère un cert auto-signé dans
+# un répertoire ÉCRIVABLE (le mount /etc/letsencrypt est :ro, on n'y touche pas)
+# et on réécrit les chemins de cert dans la conf générée.
+if [ ! -f "$LE_CERT" ]; then
+  echo "[edge] Cert Let's Encrypt absent — cert auto-signé pour ${DOMAIN} (dev)"
+  SELF_DIR="/etc/nginx/certs"
+  mkdir -p "$SELF_DIR"
+  if [ ! -f "$SELF_DIR/fullchain.pem" ]; then
+    openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+      -keyout "$SELF_DIR/privkey.pem" \
+      -out    "$SELF_DIR/fullchain.pem" \
+      -subj "/CN=${DOMAIN}" 2>/dev/null
+  fi
+  sed -i \
+    -e "s|$LE_CERT|$SELF_DIR/fullchain.pem|g" \
+    -e "s|$LE_KEY|$SELF_DIR/privkey.pem|g" \
+    /etc/nginx/conf.d/default.conf
 fi
 
 exec nginx -g "daemon off;"

@@ -1,20 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, clearToken, getRole } from '../api/client.js';
+import { formatBytes, formatDate } from '../utils/format.js';
 
 // ── Utilitaires ───────────────────────────────────────────────────────────────
-
-function formatBytes(b) {
-  if (!b) return '0 o';
-  if (b < 1024 * 1024) return `${Math.round(b / 1024)} Ko`;
-  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} Mo`;
-  return `${(b / (1024 * 1024 * 1024)).toFixed(2)} Go`;
-}
-
-function formatDate(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleString('fr-FR');
-}
 
 function CopyButton({ text, label = 'Copier', labelDone = '✓', className = 'btn btn--ghost btn--sm' }) {
   const [done, setDone] = useState(false);
