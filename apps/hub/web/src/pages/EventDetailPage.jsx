@@ -532,7 +532,7 @@ export default function EventDetailPage() {
   const isSuperuser = getRole() === 'superuser';
   const TABS = [
     'Questions', 'Design', 'Synchro', 'Galerie',
-    ...(previewTokens.length > 0 ? ['Aperçu'] : []),
+    'Aperçu',
     ...(isSuperuser ? ['Utilisateurs'] : []),
   ];
 
