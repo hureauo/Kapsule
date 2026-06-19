@@ -2,8 +2,10 @@
 
 Borne vidéo d'événements : une **Borne** (Raspberry Pi, kiosque iPad 100% offline) + un **Hub** (VPS, interface client).
 
-**La spécification complète et auto-suffisante est [PROJET.md](PROJET.md) — c'est la source de vérité.**
+**La spécification complète et auto-suffisante est [PROJET.md](PROJET.md) — c'est la source de vérité** (l'*intention* métier).
 Ce fichier ne la duplique pas ; il fixe les règles de travail. En cas de doute sur un comportement, relire la section concernée de PROJET.md avant de coder.
+
+**Pour savoir où vit chaque responsabilité dans le code, lire [ARCHITECTURE.md](ARCHITECTURE.md)** — la carte du code *tel qu'il est* (modules, qui appelle qui, flux, pièges). À consulter avant de modifier une zone inconnue, et à régénérer (par section) lors d'un changement structurel — voir son en-tête « Quand et comment mettre à jour ».
 
 ## Profil développeur
 
