@@ -9,6 +9,7 @@ import argon2 from 'argon2';
 import { createApp } from '../src/index.js';
 import { getDb, closeRegistry, insertUser, insertBoxToken } from '../src/registry.js';
 import { closeAllEventDbs } from '../src/eventStore.js';
+import { dockerCli } from '../src/preview/provisioner.js';
 
 let dir;
 let request;
@@ -635,4 +636,18 @@ describe('POST /api/events/:eventId/preview/stop', () => {
     assert.equal(res.status, 403);
   });
 });
+
+// ── Interface réelle dockerCli ─────────────────────────────────────────────────
+// Vérifie que dockerCli expose toutes les méthodes requises par les routes preview,
+// y compris running/start/stop (régression détectée en phase 8E : manquaient en prod).
+
+describe('dockerCli — contrat d\'interface', () => {
+  const REQUIRED = ['run', 'rm', 'exists', 'running', 'start', 'stop',
+                    'networkCreate', 'networkConnect', 'networkRm', 'networkExists'];
+
+  for (const method of REQUIRED) {
+    it(`expose dockerCli.${method}()`, () => {
+      assert.equal(typeof dockerCli[method], 'function', `dockerCli.${method} manquant`);
+    });
+  }
 });

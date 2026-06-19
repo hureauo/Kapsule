@@ -16,9 +16,21 @@ export function slugFor(eventId) {
 
 // ── Client Docker (injectable pour les tests) ─────────────────────────────────
 
-// Interface : { run(args), rm(name), exists(name),
-//               networkCreate(name), networkConnect(net, container),
-//               networkRm(name), networkExists(name) }
+/**
+ * @typedef {Object} DockerClient
+ * @property {(args: string[]) => Promise<void>}            run
+ * @property {(name: string)  => Promise<void>}            rm
+ * @property {(name: string)  => Promise<boolean>}         exists
+ * @property {(name: string)  => Promise<boolean>}         running
+ * @property {(name: string)  => Promise<void>}            start
+ * @property {(name: string)  => Promise<void>}            stop
+ * @property {(name: string)  => Promise<void>}            networkCreate
+ * @property {(net: string, container: string) => Promise<void>} networkConnect
+ * @property {(name: string)  => Promise<void>}            networkRm
+ * @property {(name: string)  => Promise<boolean>}         networkExists
+ */
+
+/** @type {DockerClient} */
 export const dockerCli = {
   async run(args) {
     await execFileAsync('docker', ['run', ...args]);
@@ -33,6 +45,21 @@ export const dockerCli = {
     } catch {
       return false;
     }
+  },
+  async running(name) {
+    try {
+      const { stdout } = await execFileAsync('docker', ['inspect', '--format', '{{.State.Running}}', name]);
+      return stdout.trim() === 'true';
+    } catch {
+      // Conteneur inexistant ou daemon inaccessible → non lancé
+      return false;
+    }
+  },
+  async start(name) {
+    await execFileAsync('docker', ['start', name]);
+  },
+  async stop(name) {
+    await execFileAsync('docker', ['stop', name]);
   },
   async networkCreate(name) {
     await execFileAsync('docker', ['network', 'create', '--driver', 'bridge', name]);

@@ -279,7 +279,9 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
 
   // ── GET /api/events/:eventId/preview/status ───────────────────────────────
   // Retourne l'état du container preview (up/down) via docker inspect.
-  // Accessible au propriétaire (client) et aux superusers.
+  // Asymétrie de droits intentionnelle : status/token accessibles au propriétaire
+  // (le client peut consulter l'état et générer un lien d'essai), tandis que
+  // start/stop sont réservés aux superusers (contrôle des ressources Docker).
   router.get('/:eventId/preview/status', requireUser, requireOwner, async (req, res, next) => {
     try {
       const slug = slugFor(req.event.id);
@@ -291,21 +293,26 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
   });
 
   // ── POST /api/events/:eventId/preview/start ───────────────────────────────
+  // Réservé aux superusers : démarre les containers preview existants (pas de provision).
   router.post('/:eventId/preview/start', requireUser, requireAdmin, requireOwner, async (req, res, next) => {
     try {
       const slug = slugFor(req.event.id);
       const frontend = `preview-${slug}`;
       const backend  = `preview-backend-${slug}`;
       if (!await docker.exists(frontend)) {
-        return res.status(404).json({ error: 'Container preview introuvable — recréer l\'événement.' });
+        return res.status(404).json({ error: 'container_not_found', detail: 'Recréer l\'événement pour reprovisionner la preview.' });
       }
       if (!await docker.running(frontend)) await docker.start(frontend);
       if (await docker.exists(backend) && !await docker.running(backend)) await docker.start(backend);
       res.json({ up: true });
-    } catch (err) { next(err); }
+    } catch (err) {
+      console.error('[preview/start]', req.params.eventId, err.message);
+      next(Object.assign(err, { _docker: true }));
+    }
   });
 
   // ── POST /api/events/:eventId/preview/stop ────────────────────────────────
+  // Réservé aux superusers : arrête les containers sans les supprimer.
   router.post('/:eventId/preview/stop', requireUser, requireAdmin, requireOwner, async (req, res, next) => {
     try {
       const slug = slugFor(req.event.id);
@@ -314,7 +321,10 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       if (await docker.running(frontend)) await docker.stop(frontend);
       if (await docker.exists(backend) && await docker.running(backend)) await docker.stop(backend);
       res.json({ up: false });
-    } catch (err) { next(err); }
+    } catch (err) {
+      console.error('[preview/stop]', req.params.eventId, err.message);
+      next(Object.assign(err, { _docker: true }));
+    }
   });
 
   // ── DELETE /api/events/:eventId — purge RGPD ──────────────────────────────

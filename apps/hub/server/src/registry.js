@@ -98,86 +98,131 @@ export function openRegistry(dataDir) {
     );
   `);
 
-  // Migration 6B.1: add 'active' to users
-  const userCols = db.pragma('table_info(users)').map((c) => c.name);
-  if (!userCols.includes('active')) {
-    db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
-  }
-
-  // Migration 6C: add 'token_clear' to box_tokens
-  const boxCols = db.pragma('table_info(box_tokens)').map((c) => c.name);
-  if (!boxCols.includes('token_clear')) {
-    db.exec("ALTER TABLE box_tokens ADD COLUMN token_clear TEXT NOT NULL DEFAULT ''");
-  }
-
-  // Migration 7A.1: renommer role 'admin' → 'superuser' + relâcher owner_id
-  // SQLite ne supporte pas ALTER COLUMN ni DROP COLUMN de façon portable.
-  // On reconstruit les deux tables concernées si elles portent encore l'ancien schéma.
-  const needsUsersMigration = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n > 0;
-  if (needsUsersMigration) {
-    db.exec('PRAGMA foreign_keys = OFF');
-    db.exec(`
-      DROP TABLE IF EXISTS users_new;
-      CREATE TABLE users_new (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        email         TEXT UNIQUE NOT NULL,
-        password_hash TEXT,
-        name          TEXT,
-        role          TEXT NOT NULL DEFAULT 'client'
-                      CHECK(role IN ('superuser','client')),
-        active        INTEGER NOT NULL DEFAULT 1,
-        created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      INSERT INTO users_new SELECT
-        id, email, password_hash, name,
-        CASE WHEN role = 'admin' THEN 'superuser' ELSE role END,
-        active, created_at
-      FROM users;
-      DROP TABLE users;
-      ALTER TABLE users_new RENAME TO users;
-    `);
-    db.exec('PRAGMA foreign_keys = ON');
-  }
-
-  // Migration 7A.1: owner_id nullable sur events (reconstruit si NOT NULL)
-  const ownerCol = db.pragma('table_info(events)').find(c => c.name === 'owner_id');
-  if (ownerCol && ownerCol.notnull === 1) {
-    db.exec(`
-      DROP TABLE IF EXISTS events_new;
-      CREATE TABLE events_new (
-        id           TEXT PRIMARY KEY,
-        owner_id     INTEGER REFERENCES users(id),
-        name         TEXT NOT NULL,
-        event_date   DATE,
-        status       TEXT NOT NULL DEFAULT 'draft'
-                     CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
-        pulled_at    DATETIME,
-        pushed_at    DATETIME,
-        processed_at DATETIME,
-        purged_at    DATETIME,
-        created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      INSERT INTO events_new SELECT * FROM events;
-      DROP TABLE events;
-      ALTER TABLE events_new RENAME TO events;
-    `);
-  }
-
-  // Migration : corriger les author stockés comme id numérique (ex. "2.0")
-  // dans event_versions — résout en email depuis users.
-  const badAuthors = db.prepare(
-    "SELECT DISTINCT author FROM event_versions WHERE author GLOB '[0-9]*'"
-  ).all();
-  if (badAuthors.length > 0) {
-    const fix = db.prepare(
-      'UPDATE event_versions SET author = (SELECT email FROM users WHERE id = CAST(? AS INTEGER)) WHERE author = ?'
-    );
-    for (const { author } of badAuthors) fix.run(author, author);
-  }
+  runMigrations(db);
 
   _db = db;
   return db;
+}
+
+// ── Migrations versionées ─────────────────────────────────────────────────────
+// Chaque migration est appliquée exactement une fois, tracée dans schema_migrations.
+// L'idempotence interne est conservée : safe sur une DB qui aurait appliqué
+// ces migrations avant l'existence du tracker.
+
+const MIGRATIONS = [
+  {
+    version: 1,
+    name: '6B.1_add_active_to_users',
+    up(db) {
+      const cols = db.pragma('table_info(users)').map((c) => c.name);
+      if (!cols.includes('active')) {
+        db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+      }
+    },
+  },
+  {
+    version: 2,
+    name: '6C_add_token_clear_to_box_tokens',
+    up(db) {
+      const cols = db.pragma('table_info(box_tokens)').map((c) => c.name);
+      if (!cols.includes('token_clear')) {
+        db.exec("ALTER TABLE box_tokens ADD COLUMN token_clear TEXT NOT NULL DEFAULT ''");
+      }
+    },
+  },
+  {
+    version: 3,
+    name: '7A.1_users_superuser_role',
+    // SQLite ne supporte pas ALTER COLUMN → reconstruction de table.
+    up(db) {
+      const needs = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n > 0;
+      if (!needs) return;
+      db.exec('PRAGMA foreign_keys = OFF');
+      db.exec(`
+        DROP TABLE IF EXISTS users_new;
+        CREATE TABLE users_new (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          email         TEXT UNIQUE NOT NULL,
+          password_hash TEXT,
+          name          TEXT,
+          role          TEXT NOT NULL DEFAULT 'client'
+                        CHECK(role IN ('superuser','client')),
+          active        INTEGER NOT NULL DEFAULT 1,
+          created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO users_new SELECT
+          id, email, password_hash, name,
+          CASE WHEN role = 'admin' THEN 'superuser' ELSE role END,
+          active, created_at
+        FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+      `);
+      db.exec('PRAGMA foreign_keys = ON');
+    },
+  },
+  {
+    version: 4,
+    name: '7A.1_events_owner_nullable',
+    up(db) {
+      const ownerCol = db.pragma('table_info(events)').find((c) => c.name === 'owner_id');
+      if (!ownerCol || ownerCol.notnull !== 1) return;
+      db.exec(`
+        DROP TABLE IF EXISTS events_new;
+        CREATE TABLE events_new (
+          id           TEXT PRIMARY KEY,
+          owner_id     INTEGER REFERENCES users(id),
+          name         TEXT NOT NULL,
+          event_date   DATE,
+          status       TEXT NOT NULL DEFAULT 'draft'
+                       CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
+          pulled_at    DATETIME,
+          pushed_at    DATETIME,
+          processed_at DATETIME,
+          purged_at    DATETIME,
+          created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO events_new SELECT * FROM events;
+        DROP TABLE events;
+        ALTER TABLE events_new RENAME TO events;
+      `);
+    },
+  },
+  {
+    version: 5,
+    name: '8D_fix_numeric_event_version_authors',
+    // Corrige les author stockés comme id numérique pur (ex. "2") dans event_versions.
+    // NOT GLOB '*[^0-9]*' cible uniquement les chaînes 100 % numériques (vs '[0-9]*' qui matche "2abc").
+    up(db) {
+      const badAuthors = db.prepare(
+        "SELECT DISTINCT author FROM event_versions WHERE author IS NOT NULL AND author NOT GLOB '*[^0-9]*' AND author != ''"
+      ).all();
+      if (badAuthors.length === 0) return;
+      const fix = db.prepare(
+        'UPDATE event_versions SET author = (SELECT email FROM users WHERE id = CAST(? AS INTEGER)) WHERE author = ?'
+      );
+      for (const { author } of badAuthors) fix.run(author, author);
+    },
+  },
+];
+
+function runMigrations(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version    INTEGER PRIMARY KEY,
+      name       TEXT NOT NULL,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  const applied = new Set(
+    db.prepare('SELECT version FROM schema_migrations').all().map((r) => r.version)
+  );
+  for (const { version, name, up } of MIGRATIONS) {
+    if (applied.has(version)) continue;
+    up(db);
+    db.prepare('INSERT INTO schema_migrations (version, name) VALUES (?, ?)').run(version, name);
+  }
 }
 
 export function getDb() {

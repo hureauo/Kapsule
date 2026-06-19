@@ -76,7 +76,7 @@ Process séparé optionnel : `worker/index.js` (boucle de jobs).
 | Mount | Fichier | Auth | Contenu |
 |-------|---------|------|---------|
 | `/api/auth` | `routes/auth.js` | publique (rate-limited) | login (JWT), register (si `ALLOW_REGISTER`), set-password (via registration token) |
-| `/api/events` | `routes/events.js` | `requireUser` + `requireOwner` | CRUD événements, config (import depuis UI), owner, **preview/token + preview/status**, purge RGPD (DELETE). `POST /` réservé superuser (`requireAdmin` local). |
+| `/api/events` | `routes/events.js` | `requireUser` + `requireOwner` | CRUD événements, config (import depuis UI), owner, **preview/token + preview/status** (owner), **preview/start + preview/stop** (superuser only — `requireAdmin`), purge RGPD (DELETE). `POST /` réservé superuser (`requireAdmin` local). Le router accepte un `docker` injectable (`makeEventsRouter(dataDir, { docker })`) — défaut `dockerCli`. |
 | `/api/events/:eventId/questions` | `routes/questions.js` | `requireUser` + `requireOwner` | CRUD questions + reorder |
 | `/api/admin` | `routes/admin.js` | `requireUser` + **`requireSuperuser`** | gestion comptes clients, box_tokens (génération/liste/révocation), event_users (assignation), overview dashboard |
 | `/api/sync` | `routes/sync.js` | **`requireBox`** (token borne) | pull (event/bundle), push (manifest/files/db/finalize), heartbeat status, config push |
@@ -111,6 +111,11 @@ Auto-provisioning Docker d'une borne d'essai par événement. Contrôle le démo
   les résolve), **puis** insère le box_token (après les `docker run` → pas d'orphelin si échec).
 - `deprovisionPreview` : révoque le token, supprime les 2 containers + le réseau.
 - Appelé best-effort par `POST /api/events` (création) et `DELETE /api/events/:id` (purge).
+- **Cycle de vie start/stop** (≠ provision/deprovision) : les routes `POST .../preview/start`
+  et `.../preview/stop` démarrent/arrêtent les containers déjà provisionnés sans les recréer
+  (économie de ressources : un preview éteint ne consomme rien). `preview/status` reflète
+  l'état `running`. ⚠️ Ces routes appellent `docker.running/start/stop`, méthodes qui doivent
+  exister sur l'objet `dockerCli` injecté.
 
 ---
 
