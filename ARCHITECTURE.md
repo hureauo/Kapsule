@@ -66,6 +66,7 @@ Process séparé optionnel : `worker/index.js` (boucle de jobs).
 | `config.js` | Lecture des variables d'env (port, jwtSecret, adminEmail…) |
 | `registry.js` | **Toute** la couche d'accès à `registry.sqlite` : schéma + migrations + helpers CRUD (users, events, box_tokens, event_users, registration_tokens, jobs, sync_log). Singleton `_db`. |
 | `eventStore.js` | Cache **LRU (10)** de handles `db.sqlite` par événement. `openEventDb` / `closeEventDb` / `closeAllEventDbs`. `closeEventDb` **obligatoire** avant `rm -rf` ou écrasement (§11.11). |
+| `eventConfig.js` | Logique d'application config partagée par les 3 sites (`events.js` PUT, `events.js` import, `sync.js` push). `META_KEYS` (source unique des clés `event_meta`) + `applyEventConfig(edb, {mode, meta, questions})` (overwrite/merge). `admin.js` dérive son `META_HASH_KEYS` de `META_KEYS`. |
 | `middleware/auth.js` | `requireUser` (vérifie JWT → `req.user`), `requireOwner` (vérifie que `req.user` est superuser OU membre `event_users` → pose `req.event`). |
 | `middleware/boxAuth.js` | `requireBox` : hash le header `X-Box-Token`, résout `box_tokens` → `req.box = {token_id, event_id, is_preview}`. Met à jour `last_seen_at`. |
 | `middleware/validateParams.js` | `validateUuidParams(...names)` : 400 si un param d'URL n'est pas un UUID. |

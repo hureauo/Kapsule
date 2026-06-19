@@ -43,6 +43,7 @@ window.DOCS_PAGES = [
       { slug: "hub-config", title: "hub/config.js", js: ["process.env", "parseInt", "??", "seed admin (ADMIN_EMAIL)"] },
       { slug: "hub-registry", title: "hub/registry.js — base centrale", js: ["singleton module", "let _db = null", "fonctions exportées", "CHECK / FK SQLite", "box_tokens (token = événement)", "ON DELETE CASCADE", "token_clear (migration douce)", "registration_tokens (lien de mot de passe)", "event_users (appartenance + rôles JSON)", "migration par reconstruction de table"] },
       { slug: "hub-eventstore", title: "hub/eventStore.js — cache LRU", js: ["Map", "ordre d'insertion", "cache LRU"] },
+      { slug: "hub-eventconfig", title: "hub/eventConfig.js — config partagée", js: ["fonction recevant le handle DB", "injection de dépendance", "overwrite / merge", "META_KEYS (source unique)"] },
       { slug: "hub-middleware-auth", title: "hub/middleware/auth.js", js: ["jsonwebtoken", "jwt.verify", "algorithms pin", "?token=", "requireOwner (appartenance event_users)"] },
       { slug: "hub-middleware-box", title: "hub/middleware/boxAuth.js", js: ["createHash sha256", "header HTTP", "req.box (token = événement)"] },
       { slug: "hub-middleware-validate", title: "hub/middleware/validateParams.js", js: ["RegExp", "middleware factory", "path traversal"] },

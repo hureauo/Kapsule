@@ -259,6 +259,26 @@ Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.s
   front, hors périmètre doc-sync (code).
 - Vérifs : manifeste/fichiers OK (50/50), liens internes OK (0 mort), `node --check pages.js` OK.
 
+## Sync incrémentale — Phase 8R (extraction applyEventConfig)
+- Diff base : commit `cc0a5fe` (working tree clean). Périmètre code = **Hub** : nouveau module
+  `eventConfig.js` (`META_KEYS` source unique + `applyEventConfig(edb,{mode,meta,questions})`),
+  dédup des 3 sites config (`events.js` PUT + import, `sync.js` push-config) ; `admin.js` dérive
+  `META_HASH_KEYS = META_KEYS`. Pur refactor sans changement de comportement observable.
+- PAGE AJOUTÉE : `hub-eventconfig.html` (+ entrée pages.js, groupe « 3 — Le serveur Hub », après
+  hub-eventstore) — source unique META_KEYS, applyEventConfig (extrait réel commenté), 2 modes,
+  js-note « fonction recevant le handle DB » (injection de dépendance, see-also core-eventdbschema),
+  table d'API, « ce qu'il ne fait pas » (n'ouvre/ferme pas, ne valide pas mode/statut, ne log pas).
+- hub-routes-sync : extrait `POST /events/:id/config` mis à jour — le bloc META_KEYS+upsert inline
+  (qui ne reflétait plus le code) remplacé par l'appel `applyEventConfig(edb,{mode,meta,questions})`
+  + paragraphe de renvoi vers hub-eventconfig. Prose overwrite/merge conservée (toujours exacte).
+- ARCHITECTURE.md : `eventConfig.js` ajouté à la table « Modules transversaux » (section Hub).
+- Sans impact doc : `events.js` (PUT/import config n'avaient pas d'extrait inline — seules les lignes
+  de table d'API, inchangées) ; `admin.js` (`configHash`/`META_HASH_KEYS` non documenté → refactor
+  interne invisible) ; `eventConfig.test.js` (pattern générique tests-runner) ; ROADMAP.md (pas docs/).
+- pages.js : `js` de la nouvelle page (fonction recevant le handle DB, injection de dépendance,
+  overwrite/merge, META_KEYS source unique).
+- Vérifs : manifeste/fichiers OK (51/51), liens internes OK (0 mort), `node --check pages.js` OK.
+
 ---
 
 ## Conventions du site (décidées avec l'utilisateur)
@@ -286,6 +306,7 @@ Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.s
 - hub-config : (renvoi process.env), objet config exporté
 - hub-registry : singleton (let _db=null), pattern open/get/close, fonctions prennent db en param, SQL CHECK/FK, Object.keys/filter/map pour UPDATE dynamique
 - hub-eventstore : **Map**, ordre d'insertion garanti, LRU via delete+set, entries().next().value, destructuring array
+- hub-eventconfig : fonction recevant le handle DB (injection de dépendance, vs singleton registry), modes overwrite/merge, META_KEYS source unique dérivée de TEXT_FIELDS (renvois better-sqlite3 → core-eventdbschema)
 - hub-middleware-auth : **jsonwebtoken** (verify/sign), algorithms:['HS256'], optional chaining, ?token=, slice
 - hub-middleware-box : createHash sha256 (renvoi), headers['x-...'] minuscules
 - hub-middleware-validate : closure qui retourne un middleware (factory), RegExp literal + .test, rest params ...names
