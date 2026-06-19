@@ -1,7 +1,7 @@
 import express from 'express';
 import { statfs } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
-import { config } from './config.js';
+import { config, validateConfig } from './config.js';
 import { openRegistry, getActiveEvent } from './registry.js';
 import { makeAuthRouter, requireAdmin, requireTech } from './middleware/auth.js';
 import { makeEventsRouter } from './routes/events.js';
@@ -54,6 +54,7 @@ export function createApp(dataDir, cfg = config) {
 
 // Point d'entrée réel — n'est pas exécuté lors des tests (import direct de createApp)
 if (process.argv[1] === new URL(import.meta.url).pathname) {
+  validateConfig(config, process.env.NODE_ENV);
   mkdirSync(config.dataDir, { recursive: true });
   const app = createApp(config.dataDir);
   app.listen(config.port, async () => {

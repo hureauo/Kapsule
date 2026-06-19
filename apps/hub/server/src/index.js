@@ -2,7 +2,7 @@ import express from 'express';
 import { statfs } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import argon2 from 'argon2';
-import { config } from './config.js';
+import { config, validateConfig } from './config.js';
 import { openRegistry, getDb, getUserByEmail, insertUser } from './registry.js';
 import { makeAuthRouter } from './routes/auth.js';
 import { makeEventsRouter } from './routes/events.js';
@@ -65,6 +65,7 @@ export function createApp(dataDir, opts = {}) {
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
+  validateConfig(config, process.env.NODE_ENV);
   mkdirSync(config.dataDir, { recursive: true });
   const app = createApp(config.dataDir);
   seedAdminIfNeeded().then(() => {

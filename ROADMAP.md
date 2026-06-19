@@ -222,7 +222,33 @@ committé en `phase 7X.Y: …`.
 
 **Terminé quand** : un user `general` pullé déclenche un login devant la preview ; `admin_borne`/`tech_borne` se connectent par email+mdp sur borne et preview ; mode autonome fonctionne avec `TECH_PASSWORD` env.
 
-## Phase 8 — Évolutions (au fil de l'eau)
+## Phase 8 — Durcissement & dette technique (avant exposition Internet)
+
+Issus des audits `rapports/securite.md`, `rapports/sql.md`, `rapports/deadcode.md`.
+Priorité : les 🔴 sécurité sont **bloquants** pour exposer le Hub/preview sur Internet.
+
+### 8S — Sécurité (avant exposition)
+
+- [x] 8S.1 🔴 Fail-fast si `JWT_SECRET === 'change-me'` au démarrage en production (les deux `config.js` Hub + Borne) ; warning seul en dev/test. Tests : démarrage refusé en prod, accepté en test
+- [ ] 8S.2 🔴 Supprimer les défauts de secrets (`TECH_PASSWORD` `'tech123'` borne ; `admin123`/`tech123` dans `docker-compose.preview.yml`) ; échec si absent en preview exposée
+- [ ] 8S.3 🔴 `express.json({ limit: '1mb' })` sur les deux serveurs (anti-DoS body volumineux)
+- [ ] 8S.4 🟠 Rate-limit sur le login Borne (`POST /api/admin/login`) — réutiliser `express-rate-limit` (à ajouter au workspace `apps/borne/server`) + tests
+- [ ] 8S.5 🟠 Rate-limit par IP sur `POST /api/sessions` et `POST /api/videos` (Borne, surface publique de la preview) + plafond uploads par session + tests
+- [ ] 8S.6 🟠 En-têtes de sécurité (HSTS, X-Frame-Options, nosniff, CSP) — au niveau **edge nginx** (pas de dépendance npm hors stack) ; vérifier la redirection HTTP→HTTPS
+- [ ] 8S.7 🟡 Réduire `GET /api/health` public à `{ ok: true }` (Hub + Borne) — détails (nom événement, disque) derrière auth
+
+### 8R — Refactoring SQL
+
+- [ ] 8R.1 Extraire `applyEventConfig(edb, { mode, meta, questions })` dans `apps/hub/server/src/eventConfig.js` (corps = bloc actuel) + tests unitaires (overwrite/merge, slice 500, défauts, thème invalide)
+- [ ] 8R.2 Brancher les 3 sites dupliqués (`routes/sync.js`, `routes/events.js` ×2) sur `applyEventConfig` ; `insertSyncLog` reste dans les routes (pas de couplage) ; dériver `META_HASH_KEYS` de `META_KEYS`. Tests existants verts sans modification
+
+### 8D — Nettoyage code mort
+
+- [ ] 8D.1 Supprimer `clearGeneralToken` (`apps/borne/web/src/api/client.js`) et `listUserEvents` (`apps/hub/server/src/registry.js`) ; tests verts
+
+**Terminé quand** : aucun secret par défaut exploitable en prod ; surface publique limitée (body-limit + rate-limit + health réduit) ; en-têtes de sécurité posés ; bloc d'import config dédupliqué ; code mort retiré.
+
+## Phase 9 — Évolutions (au fil de l'eau)
 
 Machine de capture dédiée, job `chromakey`, portail invités, mode point d'accès Wi-Fi (hostapd).
 
