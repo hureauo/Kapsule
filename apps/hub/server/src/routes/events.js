@@ -12,6 +12,8 @@ import { openEventDb, closeEventDb } from '../eventStore.js';
 import { META_KEYS, applyEventConfig } from '../eventConfig.js';
 import { requireUser, requireOwner } from '../middleware/auth.js';
 import { provisionPreview, deprovisionPreview, slugFor, dockerCli } from '../preview/provisioner.js';
+import { captureSnapshot, resolveAuthor } from '../versioning.js';
+import { deleteEventVersions } from '../registry.js';
 
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'superuser') return res.status(403).json({ error: 'Réservé aux admins' });
@@ -128,6 +130,9 @@ export function makeEventsRouter(dataDir) {
       }
 
       const db = getDb();
+      const edb = openEventDb(event.id, dataDir);
+      captureSnapshot(db, edb, { event_id: event.id, author: resolveAuthor(db, req.user) });
+
       res.json(withMeta(getEvent(db, event.id), dataDir));
     } catch (err) {
       next(err);
@@ -307,6 +312,7 @@ export function makeEventsRouter(dataDir) {
       rmSync(eventDir, { recursive: true, force: true });
 
       const db = getDb();
+      deleteEventVersions(db, event.id);
       updateEvent(db, event.id, { status: 'purged', purged_at: new Date().toISOString() });
       insertSyncLog(db, { event_id: event.id, action: 'purge', detail: { name: event.name } });
 

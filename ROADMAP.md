@@ -248,6 +248,28 @@ Priorité : les 🔴 sécurité sont **bloquants** pour exposer le Hub/preview s
 
 **Terminé quand** : aucun secret par défaut exploitable en prod ; surface publique limitée (body-limit + rate-limit + health réduit) ; en-têtes de sécurité posés ; bloc d'import config dédupliqué ; code mort retiré.
 
+## Codé en live — fonctionnalités non planifiées
+
+Features émergées pendant le développement, hors plan de phases initial.
+Implémentées, testées et relues par `kapsule-reviewer` comme les autres sous-lots.
+
+### Scripts opérateur preview (branch `feat/vps-deploy`)
+
+- [x] `docker/preview-start.sh` — démarre tous les containers `preview-*` arrêtés ; rapport start/fail par itération ; script npm `preview:start`
+- [x] `docker/preview-stop.sh` — arrête tous les containers `preview-*` en cours ; même pattern ; script npm `preview:stop`
+
+### Historique de versions de configuration (branch `feat/vps-deploy`)
+
+Capture automatique d'un snapshot `{meta, questions}` à chaque modification de configuration d'événement. Permet de consulter l'historique, comparer deux versions (diff lisible) et restaurer une version antérieure.
+
+- [x] `registry.js` : table `event_versions` + helpers `insertEventVersion`, `listEventVersions`, `getEventVersion`, `getPreviousEventVersion`, `deleteEventVersions` (purge RGPD à la suppression d'événement)
+- [x] `versioning.js` : `readSnapshot`, `captureSnapshot` (no-op si contenu identique), `resolveAuthor`
+- [x] `routes/versions.js` : `GET /api/events/:id/versions`, `GET /api/events/:id/versions/:versionId` (snapshot + diff), `POST /api/events/:id/versions/:versionId/restore` (superuser)
+- [x] Branché sur `routes/events.js` (PUT config) et `routes/questions.js` (POST, PUT, reorder, DELETE)
+- [x] Tests : `versions.test.js` (7 cas : liste vide, création par PUT meta, création par POST question, no-doublon, snapshot+diff, restore, 404)
+
+---
+
 ## Phase 9 — Évolutions (au fil de l'eau)
 
 Machine de capture dédiée, job `chromakey`, portail invités, mode point d'accès Wi-Fi (hostapd).

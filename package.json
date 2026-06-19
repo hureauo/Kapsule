@@ -14,7 +14,9 @@
     "dev:hub": "npm run dev --workspace=apps/hub/server",
     "smoke:hub": "docker/smoke-hub.sh",
     "smoke:borne": "docker/smoke-borne.sh",
-    "smoke": "docker/smoke-hub.sh && docker/smoke-borne.sh"
+    "smoke": "docker/smoke-hub.sh && docker/smoke-borne.sh",
+    "preview:start": "docker/preview-start.sh",
+    "preview:stop": "docker/preview-stop.sh"
   },
   "engines": {
     "node": ">=20"

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { validateQuestion } from '@kapsule/core';
 import { getDb, getEvent } from '../registry.js';
 import { openEventDb } from '../eventStore.js';
+import { captureSnapshot, resolveAuthor } from '../versioning.js';
 import { requireUser, requireOwner } from '../middleware/auth.js';
 
 const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
@@ -44,17 +45,19 @@ export function makeQuestionsRouter(dataDir) {
   router.put('/reorder/batch', requireUser, requireOwner, (req, res, next) => {
     try {
       if (checkFrozen(req, res)) return;
-      const db = getEventDb(req);
+      const edb = getEventDb(req);
       const { order } = req.body;
       if (!Array.isArray(order) || order.length === 0) {
         return res.status(400).json({ error: 'order doit être un tableau non vide' });
       }
-      const update = db.prepare(
+      const update = edb.prepare(
         'UPDATE questions SET order_index=?, updated_at=CURRENT_TIMESTAMP WHERE id=?'
       );
-      db.transaction(() => {
+      edb.transaction(() => {
         for (const { id, order_index } of order) update.run(order_index, id);
       })();
+      const db = getDb();
+      captureSnapshot(db, edb, { event_id: req.params.eventId, author: resolveAuthor(db, req.user) });
       res.json({ ok: true });
     } catch (err) {
       next(err);
@@ -65,17 +68,19 @@ export function makeQuestionsRouter(dataDir) {
   router.post('/', requireUser, requireOwner, (req, res, next) => {
     try {
       if (checkFrozen(req, res)) return;
-      const db = getEventDb(req);
+      const edb = getEventDb(req);
       const { text, max_duration = 60, countdown = 3 } = req.body;
       const err = validateQuestion({ text, max_duration, countdown });
       if (err) return res.status(400).json({ error: err });
 
-      const maxRow = db.prepare('SELECT MAX(order_index) as m FROM questions').get();
+      const maxRow = edb.prepare('SELECT MAX(order_index) as m FROM questions').get();
       const order_index = (maxRow.m ?? -1) + 1;
-      const result = db
+      const result = edb
         .prepare('INSERT INTO questions (text, max_duration, countdown, order_index) VALUES (?, ?, ?, ?)')
         .run(text.trim(), max_duration, countdown, order_index);
-      res.status(201).json(db.prepare('SELECT * FROM questions WHERE id=?').get(result.lastInsertRowid));
+      const db = getDb();
+      captureSnapshot(db, edb, { event_id: req.params.eventId, author: resolveAuthor(db, req.user) });
+      res.status(201).json(edb.prepare('SELECT * FROM questions WHERE id=?').get(result.lastInsertRowid));
     } catch (err) {
       next(err);
     }
@@ -111,6 +116,8 @@ export function makeQuestionsRouter(dataDir) {
       fields.push('updated_at=CURRENT_TIMESTAMP');
       values.push(req.params.id);
       db.prepare(`UPDATE questions SET ${fields.join(', ')} WHERE id=?`).run(...values);
+      const rdb = getDb();
+      captureSnapshot(rdb, db, { event_id: req.params.eventId, author: resolveAuthor(rdb, req.user) });
       res.json(db.prepare('SELECT * FROM questions WHERE id=?').get(req.params.id));
     } catch (err) {
       next(err);
@@ -125,6 +132,8 @@ export function makeQuestionsRouter(dataDir) {
       const question = db.prepare('SELECT * FROM questions WHERE id=?').get(req.params.id);
       if (!question) return res.status(404).json({ error: 'Question introuvable' });
       db.prepare('DELETE FROM questions WHERE id=?').run(req.params.id);
+      const rdb = getDb();
+      captureSnapshot(rdb, db, { event_id: req.params.eventId, author: resolveAuthor(rdb, req.user) });
       res.status(204).end();
     } catch (err) {
       next(err);

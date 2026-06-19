@@ -11,6 +11,7 @@ import { makeQuestionsRouter } from './routes/questions.js';
 import { makeAdminRouter } from './routes/admin.js';
 import { makeSyncRouter } from './routes/sync.js';
 import { makeGalleryRouter } from './routes/gallery.js';
+import { makeVersionsRouter } from './routes/versions.js';
 
 async function seedAdminIfNeeded() {
   if (!config.adminEmail || !config.adminPassword) return;
@@ -33,6 +34,7 @@ export function createApp(dataDir, opts = {}) {
   app.use('/api/events/:eventId/questions', makeQuestionsRouter(dataDir));
   app.use('/api/admin', makeAdminRouter(dataDir));
   app.use('/api/sync', makeSyncRouter(dataDir, opts.sync));
+  app.use('/api/events/:eventId/versions', makeVersionsRouter(dataDir));
   app.use('/api/events/:eventId', makeGalleryRouter(dataDir));
 
   app.get('/api/health', (_req, res) => {

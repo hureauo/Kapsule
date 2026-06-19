@@ -87,6 +87,15 @@ export function openRegistry(dataDir) {
       detail     TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS event_versions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      snapshot   TEXT NOT NULL,
+      summary    TEXT NOT NULL,
+      author     TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Migration 6B.1: add 'active' to users
@@ -347,4 +356,36 @@ export function insertSyncLog(db, { event_id = null, action, detail = null }) {
   return db
     .prepare('INSERT INTO sync_log (event_id, action, detail) VALUES (?, ?, ?)')
     .run(event_id, action, detail ? JSON.stringify(detail) : null);
+}
+
+// ── event_versions ────────────────────────────────────────────────────────────
+
+export function insertEventVersion(db, { event_id, snapshot, summary, author = null }) {
+  return db
+    .prepare('INSERT INTO event_versions (event_id, snapshot, summary, author) VALUES (?, ?, ?, ?)')
+    .run(event_id, JSON.stringify(snapshot), summary, author);
+}
+
+export function listEventVersions(db, event_id) {
+  return db
+    .prepare('SELECT id, event_id, summary, author, created_at FROM event_versions WHERE event_id = ? ORDER BY created_at DESC, id DESC')
+    .all(event_id);
+}
+
+export function getEventVersion(db, id) {
+  const row = db.prepare('SELECT * FROM event_versions WHERE id = ?').get(id);
+  if (!row) return null;
+  return { ...row, snapshot: JSON.parse(row.snapshot) };
+}
+
+export function getPreviousEventVersion(db, event_id, current_id) {
+  const row = db
+    .prepare('SELECT * FROM event_versions WHERE event_id = ? AND id < ? ORDER BY id DESC LIMIT 1')
+    .get(event_id, current_id);
+  if (!row) return null;
+  return { ...row, snapshot: JSON.parse(row.snapshot) };
+}
+
+export function deleteEventVersions(db, event_id) {
+  return db.prepare('DELETE FROM event_versions WHERE event_id = ?').run(event_id);
 }
