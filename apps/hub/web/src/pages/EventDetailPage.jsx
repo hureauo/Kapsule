@@ -142,44 +142,20 @@ function DesignTab({ event, frozen, onSaved }) {
 
 // ── Onglet Aperçu ─────────────────────────────────────────────────────────────
 function ApercuTab({ event, previewTokens, onConfigImported }) {
-  const [importState, setImportState] = useState(null); // null | 'loading' | { questions, meta } | 'error'
+  const [importState, setImportState] = useState(null);
   const [importError, setImportError] = useState('');
   const [modal, setModal] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyMsg, setApplyMsg] = useState('');
-
-  // Preview auto-provisionnée
-  const [previewStatus, setPreviewStatus] = useState(null); // null | { up, preview_url }
-  const [generatedLink, setGeneratedLink] = useState('');
-  const [linkExpiry, setLinkExpiry] = useState('7d');
-  const [linkLoading, setLinkLoading] = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState(null);
 
   useEffect(() => {
     api.previewStatus(event.id)
-      .then(s => setPreviewStatus(s))
-      .catch(() => setPreviewStatus({ up: false, preview_url: null }));
+      .then(s => setPreviewUrl(s.preview_url))
+      .catch(() => {});
   }, [event.id]);
 
-  async function handleGenerateLink() {
-    setLinkLoading(true);
-    setGeneratedLink('');
-    setLinkCopied(false);
-    try {
-      const { preview_url } = await api.generatePreviewToken(event.id, linkExpiry);
-      setGeneratedLink(preview_url);
-    } finally {
-      setLinkLoading(false);
-    }
-  }
-
-  function copyLink() {
-    navigator.clipboard.writeText(generatedLink);
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 2000);
-  }
-
-  // Borne preview avec une URL de location valide (point d'entrée pour lire la config)
+  // Borne preview avec une URL de location valide (pour l'import de config)
   const previewBorne = previewTokens.find(t => t.location && /^https?:\/\//.test(t.location)) ?? null;
 
   async function fetchPreviewConfig() {
@@ -187,14 +163,12 @@ function ApercuTab({ event, previewTokens, onConfigImported }) {
     setImportState('loading');
     setImportError('');
     try {
-      // Lit la config directement sur la borne preview (endpoints publics)
       const [eventRes, questionsRes] = await Promise.all([
         fetch(`${previewBorne.location}/api/event`),
         fetch(`${previewBorne.location}/api/questions`),
       ]);
       if (!eventRes.ok) throw new Error(`Borne preview inaccessible (${eventRes.status})`);
       const [eventData, questions] = await Promise.all([eventRes.json(), questionsRes.json()]);
-
       const meta = {
         theme: eventData.theme,
         idle_timeout: String(eventData.idle_timeout),
@@ -232,83 +206,24 @@ function ApercuTab({ event, previewTokens, onConfigImported }) {
     <div className="tab-content">
       <section className="panel-section">
         <h3 className="panel-section__title">Borne d'essai</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-          {previewStatus === null && <span className="text--muted">Vérification…</span>}
-          {previewStatus !== null && (
-            <>
-              <span style={{
-                display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
-                background: previewStatus.up ? '#22c55e' : '#ef4444',
-              }} />
-              <span className="text--muted">{previewStatus.up ? 'En ligne' : 'Hors ligne'}</span>
-              {previewStatus.preview_url && (
-                <a href={previewStatus.preview_url} target="_blank" rel="noopener noreferrer" className="btn btn--ghost" style={{ padding: '2px 10px', fontSize: '0.85rem' }}>
-                  Ouvrir ↗
-                </a>
-              )}
-            </>
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          <label className="text--muted" style={{ fontSize: '0.85rem' }}>Lien valide</label>
-          <select value={linkExpiry} onChange={e => setLinkExpiry(e.target.value)} style={{ fontSize: '0.85rem', padding: '2px 6px' }}>
-            <option value="1d">1 jour</option>
-            <option value="7d">7 jours</option>
-            <option value="30d">30 jours</option>
-          </select>
-          <button className="btn btn--primary" onClick={handleGenerateLink} disabled={linkLoading} style={{ padding: '4px 12px', fontSize: '0.85rem' }}>
-            {linkLoading ? 'Génération…' : 'Générer un lien d\'accès'}
-          </button>
-        </div>
-        {generatedLink && (
-          <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <input readOnly value={generatedLink} style={{ flex: 1, minWidth: 200, fontSize: '0.8rem', padding: '4px 8px', border: '1px solid #ccc', borderRadius: 4 }} />
-            <button className="btn btn--ghost" onClick={copyLink} style={{ padding: '4px 10px', fontSize: '0.85rem' }}>
-              {linkCopied ? 'Copié ✓' : 'Copier'}
-            </button>
-          </div>
-        )}
-      </section>
-
-      <section className="panel-section">
-        <h3 className="panel-section__title">Tokens manuels</h3>
-        {previewTokens.length === 0 && (
-          <p className="text--muted">Aucun token d'essai pour cet événement.</p>
-        )}
-        {previewTokens.map(t => (
-          <div key={t.id} className="preview-token-card">
-            <div>
-              <strong>{t.label || "Borne d'essai"}</strong>
-              {t.location && <span className="text--muted"> — {t.location}</span>}
-            </div>
-            <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
-              {t.location && /^https?:\/\//.test(t.location) && (
-                <a href={t.location} target="_blank" rel="noopener noreferrer" className="btn btn--ghost">
-                  Ouvrir ↗
-                </a>
-              )}
-            </div>
-            {!t.location && (
-              <p className="text--muted" style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>
-                Renseignez le champ « location » du token avec l'URL de la borne d'essai pour activer l'import.
-              </p>
-            )}
-          </div>
-        ))}
+        <p className="text--muted" style={{ marginBottom: '12px', fontSize: '14px' }}>
+          Accédez à votre borne d'essai pour tester le parcours avant l'événement.
+          Connectez-vous avec votre email et mot de passe.
+        </p>
+        {previewUrl
+          ? <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="btn btn--primary">Ouvrir la borne d'essai ↗</a>
+          : <span className="text--muted" style={{ fontSize: '14px' }}>Chargement…</span>
+        }
       </section>
 
       {previewBorne && (
         <section className="panel-section">
           <h3 className="panel-section__title">Importer la configuration de la preview</h3>
           <p className="text--muted" style={{ marginBottom: '12px', fontSize: '14px' }}>
-            Récupère les questions et le design tels que configurés sur la borne d'essai,
+            Récupère les questions et le design configurés sur la borne d'essai
             et les applique à cet événement. Les vidéos ne sont jamais transférées.
           </p>
-          <button
-            className="btn btn--primary"
-            onClick={fetchPreviewConfig}
-            disabled={importState === 'loading'}
-          >
+          <button className="btn btn--primary" onClick={fetchPreviewConfig} disabled={importState === 'loading'}>
             {importState === 'loading' ? 'Récupération…' : 'Importer la config de la preview'}
           </button>
           {importState === 'error' && (
@@ -331,23 +246,13 @@ function ApercuTab({ event, previewTokens, onConfigImported }) {
                 Choisissez comment appliquer ces données à l'événement :
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <button
-                  className="btn btn--primary"
-                  onClick={() => applyConfig('overwrite')}
-                  disabled={applying}
-                >
+                <button className="btn btn--primary" onClick={() => applyConfig('overwrite')} disabled={applying}>
                   Écraser — remplacer questions + design par ceux de la preview
                 </button>
-                <button
-                  className="btn btn--ghost"
-                  onClick={() => applyConfig('merge')}
-                  disabled={applying}
-                >
+                <button className="btn btn--ghost" onClick={() => applyConfig('merge')} disabled={applying}>
                   Fusionner — garder les champs Hub non vides déjà définis
                 </button>
-                <button className="btn btn--ghost" onClick={() => setModal(false)} disabled={applying}>
-                  Annuler
-                </button>
+                <button className="btn btn--ghost" onClick={() => setModal(false)} disabled={applying}>Annuler</button>
               </div>
               {applyMsg && <p className="text--muted" style={{ marginTop: '8px' }}>{applyMsg}</p>}
             </div>

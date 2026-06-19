@@ -62,8 +62,8 @@ export const api = {
   updateBoxToken: (tokenId, fields) => apiFetch(`/admin/tokens/${tokenId}`, { method: 'PUT', body: fields }),
   assignEventOwner: (eventId, email) => apiFetch(`/events/${eventId}/owner`, { method: 'PUT', body: { email } }),
   importPreviewConfig: (eventId, payload) => apiFetch(`/events/${eventId}/config`, { method: 'POST', body: payload }),
-  previewStatus: (eventId) => apiFetch(`/admin/events/${eventId}/preview/status`),
-  generatePreviewToken: (eventId, expires_in) => apiFetch(`/admin/events/${eventId}/preview/token`, { method: 'POST', body: { expires_in } }),
+  previewStatus: (eventId) => apiFetch(`/events/${eventId}/preview/status`),
+  generatePreviewToken: (eventId, expires_in) => apiFetch(`/events/${eventId}/preview/token`, { method: 'POST', body: { expires_in } }),
 
   // Admin : gestion des comptes clients
   listUsers: () => apiFetch('/admin/users'),
