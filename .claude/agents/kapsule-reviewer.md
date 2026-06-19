@@ -89,7 +89,17 @@ Workspaces à tester :
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
 - <finding ❌ ou ⚠️ qu'un test pourrait valider/infirmer>
+
+## Corrections demandées
+
+> Cette section est lue par l'agent principal pour implémenter les corrections.
+> Chaque item est coché par l'agent principal une fois corrigé.
+
+- [ ] ❌ `fichier:ligne` — <description courte de la correction à apporter>
+- [ ] ⚠️ `fichier:ligne` — <description courte de la correction à apporter>
 ```
+
+La section `## Corrections demandées` doit lister **uniquement les findings ❌ et ⚠️** de ton rapport, reformulés comme des actions concrètes à effectuer (pas des constats — des corrections). Une ligne par finding. Les 💡 et 🧑 n'y figurent pas. Si `verdict: COMMIT OK`, écris `## Corrections demandées\n\nAucune correction requise.`
 
 Règles :
 - `status` est TOUJOURS `tests-pending` quand c'est toi qui écris (c'est kapsule-tester qui le fera passer à `tests-passed`/`tests-failed`).
