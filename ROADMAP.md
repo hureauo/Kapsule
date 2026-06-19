@@ -230,12 +230,12 @@ Priorité : les 🔴 sécurité sont **bloquants** pour exposer le Hub/preview s
 ### 8S — Sécurité (avant exposition)
 
 - [x] 8S.1 🔴 Fail-fast si `JWT_SECRET === 'change-me'` au démarrage en production (les deux `config.js` Hub + Borne) ; warning seul en dev/test. Tests : démarrage refusé en prod, accepté en test
-- [ ] 8S.2 🔴 Supprimer les défauts de secrets (`TECH_PASSWORD` `'tech123'` borne ; `admin123`/`tech123` dans `docker-compose.preview.yml`) ; échec si absent en preview exposée
-- [ ] 8S.3 🔴 `express.json({ limit: '1mb' })` sur les deux serveurs (anti-DoS body volumineux)
-- [ ] 8S.4 🟠 Rate-limit sur le login Borne (`POST /api/admin/login`) — réutiliser `express-rate-limit` (à ajouter au workspace `apps/borne/server`) + tests
-- [ ] 8S.5 🟠 Rate-limit par IP sur `POST /api/sessions` et `POST /api/videos` (Borne, surface publique de la preview) + plafond uploads par session + tests
-- [ ] 8S.6 🟠 En-têtes de sécurité (HSTS, X-Frame-Options, nosniff, CSP) — au niveau **edge nginx** (pas de dépendance npm hors stack) ; vérifier la redirection HTTP→HTTPS
-- [ ] 8S.7 🟡 Réduire `GET /api/health` public à `{ ok: true }` (Hub + Borne) — détails (nom événement, disque) derrière auth
+- [x] 8S.2 🔴 Supprimer les défauts de secrets (`TECH_PASSWORD` `'tech123'` borne ; `admin123`/`tech123` dans `docker-compose.preview.yml`) ; échec si absent en preview exposée
+- [x] 8S.3 🔴 `express.json({ limit: '1mb' })` sur les deux serveurs (anti-DoS body volumineux)
+- [x] 8S.4 🟠 Rate-limit sur le login Borne (`POST /api/admin/login`) — réutiliser `express-rate-limit` (à ajouter au workspace `apps/borne/server`) + tests
+- [x] 8S.5 🟠 Rate-limit par IP sur `POST /api/sessions` et `POST /api/videos` (Borne, surface publique de la preview) + plafond uploads par session + tests
+- [x] 8S.6 🟠 En-têtes de sécurité (HSTS, X-Frame-Options, nosniff, CSP) — au niveau **edge nginx** (pas de dépendance npm hors stack) ; vérifier la redirection HTTP→HTTPS
+- [x] 8S.7 🟡 Réduire `GET /api/health` public à `{ ok: true }` (Hub + Borne) — détails (nom événement, disque) derrière auth
 
 ### 8R — Refactoring SQL
 

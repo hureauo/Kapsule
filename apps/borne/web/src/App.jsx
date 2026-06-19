@@ -10,11 +10,11 @@ export default function App() {
   const [eventName, setEventName] = useState(null);
 
   useEffect(() => {
-    fetch('/api/health')
-      .then(r => r.json())
+    fetch('/api/event')
+      .then(r => r.ok ? r.json() : null)
       .then(d => {
-        if (d.isPreview) setIsPreview(true);
-        if (d.eventName) setEventName(d.eventName);
+        if (d?.is_preview) setIsPreview(true);
+        if (d?.name) setEventName(d.name);
       })
       .catch(() => {});
   }, []);

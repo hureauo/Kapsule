@@ -1,11 +1,21 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
 import { validateGuestName } from '@kapsule/core';
 import { getActiveEvent, updateEventStatus } from '../registry.js';
 import { getActiveEventDb } from '../eventDb.js';
 
 export function makeSessionsRouter(dataDir, cfg) {
+  // Instancié par routeur pour éviter la pollution entre suites de tests (état en mémoire)
+  const createSessionLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Trop de sessions créées, réessayez dans 15 minutes.' },
+    skip: () => cfg.skipRateLimits === true,
+  });
   const router = Router();
   const auth = cfg.requireAdmin;
 
@@ -20,7 +30,7 @@ export function makeSessionsRouter(dataDir, cfg) {
 
   // ── Routes publiques ──────────────────────────────────────────────────────
 
-  router.post('/sessions', (req, res, next) => {
+  router.post('/sessions', createSessionLimiter, (req, res, next) => {
     try {
       const ctx = requireActiveDb(res);
       if (!ctx) return;

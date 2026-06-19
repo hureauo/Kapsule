@@ -18,6 +18,7 @@ const TEST_CFG = {
   dataDir: '',
   hubUrl: 'https://hub.test',
   boxToken: 'tok',
+  skipRateLimits: true,
 };
 
 async function setup() {

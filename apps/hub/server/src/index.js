@@ -5,6 +5,7 @@ import argon2 from 'argon2';
 import { config, validateConfig } from './config.js';
 import { openRegistry, getDb, getUserByEmail, insertUser } from './registry.js';
 import { makeAuthRouter } from './routes/auth.js';
+import { requireUser } from './middleware/auth.js';
 import { makeEventsRouter } from './routes/events.js';
 import { makeQuestionsRouter } from './routes/questions.js';
 import { makeAdminRouter } from './routes/admin.js';
@@ -25,7 +26,7 @@ export function createApp(dataDir, opts = {}) {
 
   const app = express();
   app.set('trust proxy', 1);
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
 
   app.use('/api/auth', makeAuthRouter());
   app.use('/api/events', makeEventsRouter(dataDir));
@@ -34,12 +35,15 @@ export function createApp(dataDir, opts = {}) {
   app.use('/api/sync', makeSyncRouter(dataDir, opts.sync));
   app.use('/api/events/:eventId', makeGalleryRouter(dataDir));
 
-  app.get('/api/health', async (req, res, next) => {
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  app.get('/api/admin/health', requireUser, async (req, res, next) => {
     try {
       const stats = await statfs(dataDir);
       const free_bytes = stats.bfree * stats.bsize;
       const total_bytes = stats.blocks * stats.bsize;
-
       res.json({ ok: true, disk: { free_bytes, total_bytes } });
     } catch (err) {
       next(err);

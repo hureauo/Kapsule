@@ -26,7 +26,7 @@ export default function AdminLayout({ activeTab, onTabChange, onLogout, children
 
   const fetchDisk = useCallback(async () => {
     try {
-      const data = await api.health();
+      const data = await api.adminHealth();
       setFreeBytes(data?.disk?.free_bytes ?? null);
     } catch { /* non bloquant */ }
   }, []);

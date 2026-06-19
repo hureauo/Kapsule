@@ -24,9 +24,8 @@ services:
       - MAX_DATA_BYTES=1073741824
       - PREVIEW_MODE=true
       - HUB_URL=${HUB_URL:-http://hub-backend:3001}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD_PREVIEW:-admin123}
-      - TECH_PASSWORD=${TECH_PASSWORD_PREVIEW:-tech123}
-      - JWT_SECRET=${JWT_SECRET:-change-me}
+      - TECH_PASSWORD=${TECH_PASSWORD_PREVIEW}
+      - JWT_SECRET=${JWT_SECRET}
       - DATA_DIR=/app/data
       - PORT=3001
     volumes:

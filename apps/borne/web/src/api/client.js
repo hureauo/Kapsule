@@ -107,7 +107,8 @@ export const api = {
 
   // ── Routes client admin (requireAdmin = client OU tech) ───────────────────
 
-  health: () => apiFetch('/api/health'), // public, pas d'auth requise
+  health: () => apiFetch('/api/health'), // public, liveness probe
+  adminHealth: () => apiFetch('/api/admin/health'), // auth requise — retourne disk, eventName, isPreview
 
   listEvents: () => apiFetch('/api/events'),
   activateEvent: (id) =>

@@ -4,11 +4,13 @@ import { stat } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import multer from 'multer';
+import rateLimit from 'express-rate-limit';
 import { sha256File } from '@kapsule/core/src/checksum.js';
 import { LIMITS } from '@kapsule/core';
 import { getActiveEvent } from '../registry.js';
 import { config } from '../config.js';
 import { getActiveEventDb } from '../eventDb.js';
+
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.avi', '.mkv']);
 
@@ -91,6 +93,16 @@ export function makeVideosRouter(dataDir, cfg) {
   const auth = cfg.requireAdmin;
   const upload = makeMulter(dataDir);
 
+  // Instancié par routeur pour éviter la pollution entre suites de tests (état en mémoire)
+  const uploadLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 50,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Trop d\'uploads, réessayez dans 15 minutes.' },
+    skip: () => cfg.skipRateLimits === true,
+  });
+
   function blockInPreview(req, res, next) {
     if (cfg.previewMode) return res.status(403).json({ error: 'Non disponible en mode preview' });
     next();
@@ -117,7 +129,7 @@ export function makeVideosRouter(dataDir, cfg) {
 
   // ── Upload public ─────────────────────────────────────────────────────────
 
-  router.post('/videos', checkQuota, upload.single('video'), async (req, res, next) => {
+  router.post('/videos', uploadLimiter, checkQuota, upload.single('video'), async (req, res, next) => {
     // multer a déjà stocké le fichier sur disque si on arrive ici
     const ctx = requireActiveDb(res);
     if (!ctx) {
@@ -144,6 +156,21 @@ export function makeVideosRouter(dataDir, cfg) {
     if (!session) {
       unlink(req.file.path, () => {});
       return res.status(400).json({ error: 'Session introuvable' });
+    }
+
+    // Plafond : au plus autant de vidéos que de questions par session
+    const questionsCount = db.prepare('SELECT COUNT(*) as n FROM questions').get().n;
+    if (questionsCount > 0) {
+      const isReplacement = question_id
+        ? db.prepare('SELECT 1 FROM videos WHERE session_id=? AND question_id=?').get(session_id, question_id)
+        : null;
+      if (!isReplacement) {
+        const videosCount = db.prepare('SELECT COUNT(*) as n FROM videos WHERE session_id=?').get(session_id).n;
+        if (videosCount >= questionsCount) {
+          unlink(req.file.path, () => {});
+          return res.status(429).json({ error: 'Plafond d\'uploads atteint pour cette session.' });
+        }
+      }
     }
 
     try {

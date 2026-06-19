@@ -9,6 +9,7 @@ export const TEST_CFG = {
   techPassword: 'tech-test',
   jwtSecret: 'secret-test',
   dataDir: '',
+  skipRateLimits: true,
 };
 
 // Crée un événement 'ev-seed' actif avec deux users : admin_borne + tech_borne.

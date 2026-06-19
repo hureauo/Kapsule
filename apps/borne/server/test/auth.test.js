@@ -17,6 +17,7 @@ const TEST_CONFIG = {
   techPassword: 'tech-test',
   jwtSecret: 'secret-test',
   dataDir: '',
+  skipRateLimits: true,
 };
 
 // Crée un événement actif avec un user event_users (hash argon2)

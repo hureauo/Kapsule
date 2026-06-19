@@ -183,6 +183,7 @@ export function makeEventsRouter(dataDir, cfg) {
         consent_details: textOrDefault('consent_details'),
         thanks_text: textOrDefault('thanks_text'),
         requiresLogin,
+        is_preview: !!(activeEvent.is_preview),
       });
     } catch (err) {
       next(err);
