@@ -453,6 +453,34 @@ Refresh LRU : delete + re-insert en fin de Map.
 
 ## Journal de synchro incrémentale
 
+### 2026-06-19 — Régénération SECTION 1 (Hub modules transversaux)
+Régénération depuis l'état actuel du code (pas de diff git). Source de cadrage : ARCHITECTURE.md.
+Périmètre : 7 pages (config, registry, eventStore, middleware auth/box/validate, index).
+- hub-config : déjà conforme au code (aucune retouche).
+- hub-eventstore : déjà conforme (LRU 10, Map delete+set, closeEventDb §11.11) — aucune retouche.
+- hub-middleware-box : déjà conforme (req.box {token_id,event_id,is_preview}, §11.20) — aucune retouche.
+- hub-middleware-validate : déjà conforme (validateUuidParams, path traversal) — aucune retouche.
+- hub-index : seed corrigé `role:'admin'` → `role:'superuser'` (reste conforme : trust proxy,
+  error handler multer, seedAdminIfNeeded). Bannière de boot volontairement simplifiée (rappel).
+- hub-middleware-auth : `requireOwner` réécrit — vérification d'**appartenance** via `getEventUser`
+  (table event_users) + rôle `superuser`, au lieu de `event.owner_id === req.user.sub` / `'admin'`.
+  Intro, extrait, prose et table d'API mis à jour (403 = non-membre). owner_id ≠ autorisation.
+- hub-registry : refonte ciblée. Intro (7 tables). Schéma users (CHECK superuser/client, password_hash
+  nullable) + events (owner_id nullable). Nouvelles sections registration_tokens et event_users
+  (roles JSON, appartenance). Nouvelle section « migration par reconstruction de table » (rename role
+  admin→superuser via DROP/CREATE/INSERT CASE, owner_id NOT NULL→nullable, PRAGMA foreign_keys=OFF).
+  insertEvent corrigé (signature `{id,name,event_date}`, plus d'owner_id). listEvents corrigé
+  (INNER JOIN event_users, plus de WHERE owner_id). Inventaire des fonctions complété (users étendu,
+  registration_tokens, event_users).
+- invariants.html : inchangé — §11.13 (RGPD), §11.13b (token hash+clair), §11.20, §11.11 déjà
+  corrects pour cette section ; le passage owner_id→event_users est un changement de mécanisme
+  d'auth, pas un nouvel invariant numéroté.
+- pages.js : `js` enrichi sur hub-registry (registration_tokens, event_users, migration par
+  reconstruction) et hub-middleware-auth (requireOwner appartenance).
+- Vérifs : manifeste/fichiers 50/50 OK, liens internes 0 mort, `node --check pages.js` OK.
+- Sections 2 à 9 restent à régénérer (Hub routers, Hub worker, Hub preview [provisioner.js = page à
+  CRÉER + edge nginx], Borne transversaux, Borne routers, Borne sync, Front web, Architecture).
+
 ### 2026-06-18 — Phase 7E (nettoyage env + Hub front Utilisateurs)
 Diff source : `.env.example`, `apps/borne/server/src/config.js`, `apps/hub/web/src/api/client.js`, `apps/hub/web/src/pages/EventDetailPage.jsx` (+ PROJET/ROADMAP source de vérité).
 
