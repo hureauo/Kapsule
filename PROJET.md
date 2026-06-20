@@ -51,6 +51,7 @@ draft → preview → ready → loaded → live → closed → pushed → proces
 
 - `draft` : événement en cours de configuration (questions, consent, timeout…). Édition libre.
 - `preview` : le client teste via la borne d'essai (conteneur `docker-compose.preview.yml`). Édition encore possible. Transition manuelle `draft → preview` (bouton « Lancer la preview »). La borne d'essai associée (token `is_preview=1`) peut puller et recevoir des sessions de test — données jetables. Transition `preview → ready` (bouton « Valider la configuration »).
+  - **État désiré de la borne preview** : indépendant du statut de l'événement, `events.preview_desired` (`running`/`stopped`) mémorise si le conteneur d'essai *doit* tourner. Les boutons « Démarrer / Éteindre » du Hub le basculent ; il passe `running` à la création (provision auto réussie) et `stopped` à la purge. Au démarrage du serveur ou via `make vps-up`, le script `reconcile-previews` relance uniquement les previews `running` — une borne éteinte volontairement n'est jamais ressuscitée. Distinguer cet **état désiré** (en base) de l'**état réel** du conteneur (Docker) est ce qui rend la réconciliation correcte après un reboot.
 - `ready` : configuration gelée. Le Hub peut générer un token de borne réelle. Seule transition possible : `ready → loaded` (au premier pull de la borne réelle).
 - `loaded` → `live` → `closed` → `pushed` : sur la Borne (voir ci-dessous).
 - `processed` : worker a terminé ses jobs (miniatures, ZIP). Vidéos consultables par le client.
@@ -90,6 +91,7 @@ kapsule/
 ├── docker-compose.borne.yml          # déploiement Borne (production Raspberry)
 ├── docker-compose.hub.yml            # déploiement Hub (production VPS)
 ├── docker-compose.preview.yml        # borne d'essai manuelle (BOX_TOKEN_PREVIEW + HUB_URL)
+├── Makefile                          # raccourcis VPS : vps-build/up/down, hub-reset (voir §13)
 ├── PROJET.md                         # ce document
 ├── packages/
 │   └── core/                         # @kapsule/core — tout ce qui est partagé
@@ -170,8 +172,11 @@ kapsule/
 │       │       │   ├── gallery.js           # vidéos : list, stream (Range), download, zip, csv
 │       │       │   └── sync.js              # endpoints appelés par la Borne (requireBox)
 │       │       ├── preview/
-│       │       │   └── provisioner.js       # DockerClient (typedef + dockerCli réel),
-│       │       │                            # provisionPreview(), deprovisionPreview(), slugFor()
+│       │       │   └── provisioner.js       # DockerClient (typedef + dockerCli réel), slugFor(),
+│       │       │                            # provisionPreview/startPreview/deprovisionPreview()
+│       │       ├── scripts/
+│       │       │   ├── create-admin.js      # crée le 1er compte superuser (prompt email/mdp)
+│       │       │   └── reconcile-previews.js# démarre les previews preview_desired='running' (boot/vps-up)
 │       │       └── worker/
 │       │           ├── index.js             # boucle : prend un job 'pending', l'exécute
 │       │           ├── ffmpeg.js            # runFfprobe(file), makeThumbnail(file, out)
@@ -213,6 +218,7 @@ kapsule/
     ├── preview-stop.sh               # opérateur : arrête + déprovisionne une borne preview
     ├── smoke-hub.sh                  # smoke tests Hub (curl health + auth + endpoint garde)
     ├── smoke-borne.sh                # smoke tests Borne (curl health + endpoint garde)
+    ├── smoke-preview.sh              # smoke e2e borne preview (provision, auth wall, reconcile)
     └── smoke-common.sh               # helpers partagés (assert_status, wait_for)
 ```
 
@@ -330,6 +336,8 @@ events (
   event_date DATE,
   status TEXT NOT NULL DEFAULT 'draft'
     CHECK(status IN ('draft','preview','ready','loaded','live','closed','pushed','processed','waiting')),
+  preview_desired TEXT NOT NULL DEFAULT 'stopped', -- 'running'|'stopped' : état DÉSIRÉ de la borne preview,
+                                                   -- réconcilié au boot/vps-up (≠ état réel du container, §3)
   pulled_at DATETIME, pushed_at DATETIME, processed_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP

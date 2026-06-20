@@ -241,6 +241,20 @@ const MIGRATIONS = [
       db.exec('PRAGMA foreign_keys = ON');
     },
   },
+  {
+    version: 7,
+    name: 'preview_desired_state',
+    // État désiré de la borne preview, indépendant de l'état réel du container.
+    // 'running' = doit tourner (réconcilié au boot / make vps-up) ; 'stopped' = éteinte
+    // volontairement (bouton Hub) ou jamais démarrée. Défaut 'stopped' : une preview
+    // ne tourne que sur action explicite, pas dès la création de l'événement.
+    up(db) {
+      const cols = db.pragma('table_info(events)').map((c) => c.name);
+      if (!cols.includes('preview_desired')) {
+        db.exec("ALTER TABLE events ADD COLUMN preview_desired TEXT NOT NULL DEFAULT 'stopped'");
+      }
+    },
+  },
 ];
 
 function runMigrations(db) {
@@ -344,6 +358,11 @@ export function getEvent(db, id) {
   return db.prepare('SELECT * FROM events WHERE id = ?').get(id);
 }
 
+// Événements dont la borne preview doit tourner (réconciliation au boot).
+export function listEventsPreviewDesired(db) {
+  return db.prepare("SELECT * FROM events WHERE preview_desired = 'running'").all();
+}
+
 export function insertEvent(db, { id, name, event_date = null }) {
   return db
     .prepare('INSERT INTO events (id, name, event_date) VALUES (?, ?, ?)')
@@ -352,7 +371,7 @@ export function insertEvent(db, { id, name, event_date = null }) {
 
 export function updateEvent(db, id, fields) {
   const allowed = ['name', 'event_date', 'status',
-    'pulled_at', 'pushed_at', 'processed_at'];
+    'pulled_at', 'pushed_at', 'processed_at', 'preview_desired'];
   const updates = Object.keys(fields)
     .filter((k) => allowed.includes(k))
     .map((k) => `${k} = ?`);

@@ -169,6 +169,27 @@ export async function provisionPreview(eventId, docker = dockerCli) {
   return buildPreviewUrl(slug);
 }
 
+// ── Start (démarrer ou provisionner) ───────────────────────────────────────────
+//
+// Idempotent : si les containers existent mais sont arrêtés, les démarre ; s'ils
+// n'existent pas, les provisionne. Utilisé par la route POST /preview/start ET par
+// la réconciliation au boot (script reconcile-previews). Renvoie l'URL preview.
+
+export async function startPreview(eventId, docker = dockerCli) {
+  const slug         = slugFor(eventId);
+  const frontendName = `preview-${slug}`;
+  const backendName  = `preview-backend-${slug}`;
+
+  if (!await docker.exists(frontendName)) {
+    return provisionPreview(eventId, docker);
+  }
+  if (!await docker.running(frontendName)) await docker.start(frontendName);
+  if (await docker.exists(backendName) && !await docker.running(backendName)) {
+    await docker.start(backendName);
+  }
+  return buildPreviewUrl(slug);
+}
+
 // ── Deprovision ───────────────────────────────────────────────────────────────
 
 export async function deprovisionPreview(eventId, docker = dockerCli) {

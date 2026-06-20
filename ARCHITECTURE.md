@@ -64,7 +64,7 @@ Process séparé optionnel : `worker/index.js` (boucle de jobs).
 | Fichier | Responsabilité |
 |---------|---------------|
 | `config.js` | Lecture des variables d'env (port, jwtSecret, adminEmail…) |
-| `registry.js` | **Toute** la couche d'accès à `registry.sqlite` : schéma + migrations + helpers CRUD (users, events, box_tokens, event_users, registration_tokens, jobs, sync_log, **event_versions**). Singleton `_db`. **Migrations versionées** : tableau `MIGRATIONS` appliqué via `runMigrations` + table `schema_migrations` (chaque migration jouée une seule fois ; idempotence interne conservée). |
+| `registry.js` | **Toute** la couche d'accès à `registry.sqlite` : schéma + migrations + helpers CRUD (users, events, box_tokens, event_users, registration_tokens, jobs, sync_log, **event_versions**). `events.preview_desired` (`running`/`stopped`) porte l'état désiré de la borne preview ; `listEventsPreviewDesired` alimente la réconciliation. Singleton `_db`. **Migrations versionées** : tableau `MIGRATIONS` appliqué via `runMigrations` + table `schema_migrations` (chaque migration jouée une seule fois ; idempotence interne conservée). |
 | `versioning.js` | Historique de config éditoriale. `readSnapshot(edb)` lit **uniquement** `event_meta` + `questions` (jamais sessions/vidéos/invités — RGPD). `captureSnapshot` insère une version si le contenu a changé ; `resolveAuthor` résout l'email depuis `req.user`. Appelé par `events.js` (PUT/config) et `versions.js` (restore). |
 | `eventStore.js` | Cache **LRU (10)** de handles `db.sqlite` par événement. `openEventDb` / `closeEventDb` / `closeAllEventDbs`. `closeEventDb` **obligatoire** avant `rm -rf` ou écrasement (§11.11). |
 | `eventConfig.js` | Logique d'application config partagée par les 3 sites (`events.js` PUT, `events.js` import, `sync.js` push). `META_KEYS` (source unique des clés `event_meta`) + `applyEventConfig(edb, {mode, meta, questions})` (overwrite/merge). `admin.js` dérive son `META_HASH_KEYS` de `META_KEYS`. |
@@ -112,17 +112,26 @@ Réinvalidés : supprimer une vidéo ré-enfile un job `archive`.
 Auto-provisioning Docker d'une borne d'essai par événement. Contrôle le démon Docker via
 `/var/run/docker.sock` monté (CLI `docker` dans l'image backend).
 - `slugFor(eventId)` : 8 hex du sha256, DNS-safe, stable. Sert de nom de container + sous-domaine.
-- `provisionPreview` : crée réseau isolé `preview-net-<slug>`, lance **2 containers**
+- `provisionPreview` : **insère d'abord le box_token** (purge les `preview-auto` orphelins du
+  même event, puis insert), crée le réseau isolé `preview-net-<slug>`, lance **2 containers**
   (`preview-backend-<slug>` = borne Express avec alias réseau `borne-preview-backend`,
-  `preview-<slug>` = nginx SPA), connecte **les deux** à `kapsule_hub_net` (pour que l'edge
-  les résolve), **puis** insère le box_token (après les `docker run` → pas d'orphelin si échec).
+  `preview-<slug>` = nginx SPA), connecte **les deux** à `kapsule_hub_net`. ⚠️ Le token est
+  inséré **avant** les `docker run` : la borne pull dès le boot, le token doit déjà être valide
+  (sinon 401 « Token borne invalide » → « aucun événement actif »). Fournit `TECH_PASSWORD`
+  au backend (sinon il refuse de démarrer → 502). Un token sans container est inoffensif.
+- `startPreview` : idempotent — démarre les containers s'ils existent et sont arrêtés,
+  les **provisionne** s'ils n'existent pas. Partagé par la route `preview/start` et le script
+  `reconcile-previews`.
 - `deprovisionPreview` : révoque le token, supprime les 2 containers + le réseau.
 - Appelé best-effort par `POST /api/events` (création) et `DELETE /api/events/:id` (purge).
-- **Cycle de vie start/stop** (≠ provision/deprovision) : les routes `POST .../preview/start`
-  et `.../preview/stop` démarrent/arrêtent les containers déjà provisionnés sans les recréer
-  (économie de ressources : un preview éteint ne consomme rien). `preview/status` reflète
-  l'état `running`. ⚠️ Ces routes appellent `docker.running/start/stop`, méthodes qui doivent
-  exister sur l'objet `dockerCli` injecté.
+- **Cycle de vie start/stop + état désiré** : les routes `POST .../preview/start|stop`
+  (superuser) démarrent/arrêtent les containers ET écrivent `events.preview_desired`
+  (`running`/`stopped`). Cet **état désiré** (en base) est distinct de l'**état réel** (Docker) :
+  le script `scripts/reconcile-previews.js` (lancé au boot / `make vps-up`) relance via
+  `startPreview` uniquement les events `preview_desired='running'` — une preview éteinte
+  volontairement n'est jamais ressuscitée. `preview/status` reflète l'état réel (`docker.running`).
+  ⚠️ Ces routes appellent `docker.running/start/stop`, méthodes qui doivent exister sur le
+  `dockerCli` injecté.
 
 ---
 

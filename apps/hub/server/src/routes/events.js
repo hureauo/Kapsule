@@ -84,10 +84,13 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       // Initialise db.sqlite avec le schéma + 4 questions par défaut
       openEventDb(id, dataDir);
 
-      // Auto-provisioning preview (best-effort : un échec Docker ne bloque pas la création)
+      // Auto-provisioning preview (best-effort : un échec Docker ne bloque pas la création).
+      // La preview est lancée → on marque l'état désiré 'running' pour qu'elle soit
+      // réconciliée au boot. Un échec laisse 'stopped' (défaut) : pas de fantôme à relancer.
       let preview_url = null;
       try {
         preview_url = await provisionPreview(id, docker);
+        updateEvent(db, id, { preview_desired: 'running' });
       } catch (err) {
         console.error('[provisioner] échec provision preview pour', id, err.message);
       }
@@ -304,6 +307,8 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       const slug = slugFor(req.event.id);
       const frontend = `preview-${slug}`;
       const backend  = `preview-backend-${slug}`;
+      // État désiré : doit tourner (réconcilié au boot / make vps-up).
+      updateEvent(getDb(), req.event.id, { preview_desired: 'running' });
       if (!await docker.exists(frontend)) {
         // Pas de container → on provisionne (crée les deux containers + token).
         await provisionPreview(req.event.id, docker);
@@ -325,6 +330,8 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       const slug = slugFor(req.event.id);
       const frontend = `preview-${slug}`;
       const backend  = `preview-backend-${slug}`;
+      // État désiré : éteinte volontairement → ne pas relancer au boot / vps-up.
+      updateEvent(getDb(), req.event.id, { preview_desired: 'stopped' });
       if (await docker.running(frontend)) await docker.stop(frontend);
       if (await docker.exists(backend) && await docker.running(backend)) await docker.stop(backend);
       res.json({ up: false });
@@ -357,7 +364,9 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
 
       const db = getDb();
       deleteEventVersions(db, event.id);
-      updateEvent(db, event.id, { status: 'waiting' });
+      // status waiting + preview_desired stopped : l'event purgé ne doit pas être
+      // réconcilié au prochain vps-up (sinon on relancerait une preview fantôme).
+      updateEvent(db, event.id, { status: 'waiting', preview_desired: 'stopped' });
       insertSyncLog(db, { event_id: event.id, action: 'purge', detail: { name: event.name } });
 
       res.json({ ok: true });
