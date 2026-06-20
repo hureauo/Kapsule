@@ -71,18 +71,27 @@ export async function pullEvent(hubEventId, dataDir) {
       }
     })();
 
-    // Écrase event_users depuis le Hub (source de vérité) — DELETE + INSERT
+    // Écrase event_users depuis le Hub — seuls admin_borne/tech_borne sont pullés.
+    // Le rôle 'general' n'est plus inclus dans le bundle (auth proxiée vers Hub, §11.24).
     edb.transaction(() => {
       edb.prepare('DELETE FROM event_users').run();
-      if (Array.isArray(bundle.users) && bundle.users.length > 0) {
+      const borneUsers = (bundle.users ?? []).filter(u =>
+        Array.isArray(u.roles) && u.roles.some(r => r !== 'general')
+      );
+      if (borneUsers.length > 0) {
         const insUser = edb.prepare(
           'INSERT INTO event_users (email, password_hash, roles) VALUES (?, ?, ?)'
         );
-        for (const u of bundle.users) {
+        for (const u of borneUsers) {
           insUser.run(u.email, u.password_hash, JSON.stringify(u.roles));
         }
       }
     })();
+
+    // Stocker requiresLogin dans event_meta pour que la borne puisse l'exposer
+    // sans relire les event_users (qui ne contiennent plus les 'general').
+    const requiresLogin = bundle.requiresLogin === true ? 'true' : 'false';
+    edb.prepare("INSERT OR REPLACE INTO event_meta (key, value) VALUES ('requires_login', ?)").run(requiresLogin);
   } finally {
     edb.close();
   }

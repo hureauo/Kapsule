@@ -152,16 +152,7 @@ before(async () => {
     .send({ name: 'Événement Intégration' });
   eventId = evRes.body.id;
 
-  await hubAgent
-    .put(`/api/events/${eventId}/status`)
-    .set('Authorization', `Bearer ${tokenClient}`)
-    .send({ status: 'ready' });
-
-  // Token de borne lié à cet événement (modèle token = événement §11.20)
-  const tokenHash = createHash('sha256').update(BOX_TOKEN).digest('hex');
-  insertBoxToken(db, { event_id: eventId, token_hash: tokenHash, token_clear: BOX_TOKEN, label: 'Borne Integ' });
-
-  // Questions Hub
+  // Questions Hub — ajoutées en draft/preview, avant ready (ready gèle le contenu)
   await hubAgent
     .post(`/api/events/${eventId}/questions`)
     .set('Authorization', `Bearer ${tokenClient}`)
@@ -170,6 +161,19 @@ before(async () => {
     .post(`/api/events/${eventId}/questions`)
     .set('Authorization', `Bearer ${tokenClient}`)
     .send({ text: 'Question B', max_duration: 60, countdown: 3 });
+
+  await hubAgent
+    .put(`/api/events/${eventId}/status`)
+    .set('Authorization', `Bearer ${tokenClient}`)
+    .send({ status: 'preview' });
+  await hubAgent
+    .put(`/api/events/${eventId}/status`)
+    .set('Authorization', `Bearer ${tokenClient}`)
+    .send({ status: 'ready' });
+
+  // Token de borne lié à cet événement (modèle token = événement §11.20)
+  const tokenHash = createHash('sha256').update(BOX_TOKEN).digest('hex');
+  insertBoxToken(db, { event_id: eventId, token_hash: tokenHash, token_clear: BOX_TOKEN, label: 'Borne Integ' });
 
   // ── Borne
   borneDir = mkdtempSync(join(tmpdir(), 'kapsule-integ-borne-'));
@@ -343,9 +347,10 @@ describe('Intégration 3.9 — coupure à mi-upload et reprise', () => {
       .send({ name: 'Événement Coupure' });
     eventId2 = evRes.body.id;
 
-    await hubAgent.put(`/api/events/${eventId2}/status`).set('Authorization', `Bearer ${tokenClient}`).send({ status: 'ready' });
     await hubAgent.post(`/api/events/${eventId2}/questions`).set('Authorization', `Bearer ${tokenClient}`)
       .send({ text: 'Q Coupure', max_duration: 60, countdown: 3 });
+    await hubAgent.put(`/api/events/${eventId2}/status`).set('Authorization', `Bearer ${tokenClient}`).send({ status: 'preview' });
+    await hubAgent.put(`/api/events/${eventId2}/status`).set('Authorization', `Bearer ${tokenClient}`).send({ status: 'ready' });
 
     // Token de borne lié à eventId2 (token distinct — un token = un événement §11.20)
     const db = getHubDb();

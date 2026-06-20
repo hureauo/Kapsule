@@ -1,7 +1,8 @@
 import express from 'express';
 import { statfs } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
-import { config } from './config.js';
+import rateLimit from 'express-rate-limit';
+import { config, validateConfig } from './config.js';
 import { openRegistry, getActiveEvent } from './registry.js';
 import { makeAuthRouter, requireAdmin, requireTech } from './middleware/auth.js';
 import { makeEventsRouter } from './routes/events.js';
@@ -14,18 +15,33 @@ import { pullMyEvent } from './sync/pull.js';
 export function createApp(dataDir, cfg = config) {
   openRegistry(dataDir);
 
+  // Instancié par app pour éviter la pollution entre suites de tests (état en mémoire)
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Trop de tentatives de connexion, réessayez dans 15 minutes.' },
+    skip: () => cfg.skipRateLimits === true,
+  });
+
   const app = express();
-  app.use(express.json());
+  app.set('trust proxy', 1);
+  app.use(express.json({ limit: '1mb' }));
 
   const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg), requireTech: requireTech(cfg) };
-  app.post('/api/admin/login', makeAuthRouter(cfg, dataDir));
+  app.post('/api/admin/login', loginLimiter, makeAuthRouter(cfg, dataDir));
   app.use('/api', makeEventsRouter(dataDir, routerCfg));
   app.use('/api', makeQuestionsRouter(dataDir, routerCfg));
   app.use('/api', makeSessionsRouter(dataDir, routerCfg));
   app.use('/api', makeVideosRouter(dataDir, routerCfg));
   app.use('/api', makeSyncRouter(dataDir, routerCfg));
 
-  app.get('/api/health', async (req, res, next) => {
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  app.get('/api/admin/health', routerCfg.requireAdmin, async (req, res, next) => {
     try {
       const stats = await statfs(dataDir);
       const free_bytes = stats.bfree * stats.bsize;
@@ -54,6 +70,7 @@ export function createApp(dataDir, cfg = config) {
 
 // Point d'entrée réel — n'est pas exécuté lors des tests (import direct de createApp)
 if (process.argv[1] === new URL(import.meta.url).pathname) {
+  validateConfig(config, process.env.NODE_ENV);
   mkdirSync(config.dataDir, { recursive: true });
   const app = createApp(config.dataDir);
   app.listen(config.port, async () => {

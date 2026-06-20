@@ -283,13 +283,15 @@ export default function SyncPanel() {
           >
             {pullState === 'loading' ? 'Pull…' : '↓ Pull (Hub → borne)'}
           </button>
-          <button
-            className={`btn btn--small${pushConfigState === 'loading' ? ' btn--loading' : ' btn--secondary'}`}
-            onClick={handlePushConfig}
-            disabled={!status?.online || pushConfigState === 'loading'}
-          >
-            {pushConfigState === 'loading' ? 'Push…' : '↑ Push config (borne → Hub)'}
-          </button>
+          {!status?.isPreview && (
+            <button
+              className={`btn btn--small${pushConfigState === 'loading' ? ' btn--loading' : ' btn--secondary'}`}
+              onClick={handlePushConfig}
+              disabled={!status?.online || pushConfigState === 'loading'}
+            >
+              {pushConfigState === 'loading' ? 'Push…' : '↑ Push config (borne → Hub)'}
+            </button>
+          )}
         </div>
 
         {pullMsg && (

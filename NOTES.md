@@ -706,3 +706,19 @@ gros dossier. Acceptable pour une borne d'essai (quota 1 Go, faible volume).
 
 **À ne pas corriger maintenant.** Si la borne de production adopte aussi un quota, migrer
 vers une approche incrémentale (compteur mis à jour à chaque upload/suppression).
+
+---
+
+## Phase 8C — Smoke tests / extraction pure logique hub-web
+
+### `roles.js` dupliqué borne/hub (scalaire vs tableau)
+
+**Fichiers :** `apps/borne/web/src/api/roles.js`, `apps/hub/web/src/api/roles.js`
+
+**Observation :** Les deux modules ont la même API (`getRole(token)`) mais une sémantique
+différente — la borne encode `roles: ['admin_borne']` (tableau), le Hub encode `role: 'superuser'`
+(scalaire). La duplication est défendable aujourd'hui. Un module partagé `@kapsule/core-web`
+(isomorphique, zéro dépendance native) permettrait de factoriser à terme, si d'autres utilitaires
+frontend partagés émergent.
+
+**À ne pas corriger maintenant.**

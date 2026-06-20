@@ -48,11 +48,24 @@ export function makeSyncRouter(dataDir, cfg) {
   router.get('/sync/status', auth, (req, res) => {
     const hubUrl = cfg.hubUrl || config.hubUrl || null;
     const boxToken = cfg.boxToken || config.boxToken || null;
+
+    // requiresLogin depuis event_meta (stocké au pull, §11.24)
+    let requiresLogin = false;
+    try {
+      const active = getActiveEvent();
+      if (active && active.is_preview) {
+        const db = getActiveEventDb(dataDir, active);
+        const meta = db.prepare("SELECT value FROM event_meta WHERE key = 'requires_login'").get();
+        requiresLogin = meta?.value === 'true';
+      }
+    } catch { /* aucun événement actif */ }
+
     res.json({
       online: !!hubUrl,
       hubUrl,
       token: boxToken ? `${boxToken.slice(0, 8)}…` : null,
       isPreview: isPreviewMode(cfg),
+      requiresLogin,
       lastPull: getLastPull(),
       localConfig: getLocalConfig(dataDir),
       push: getPushState(),
@@ -105,9 +118,12 @@ export function makeSyncRouter(dataDir, cfg) {
 
   // ── POST /api/sync/push-config ───────────────────────────────────────────────
   // Pousse questions + event_meta de l'événement actif vers le Hub (overwrite).
-  // Autorisé en mode preview — usage principal : client ajuste et remonte sa config.
+  // Réservé à la borne réelle : interdit en mode preview (config Hub = source de vérité).
   router.post('/sync/push-config', auth, async (req, res, next) => {
     try {
+      if (isPreviewMode(cfg)) {
+        return res.status(403).json({ error: 'Push config interdit en mode démo (borne d\'essai)' });
+      }
       if (!config.hubUrl && !cfg.hubUrl) {
         return res.status(409).json({ error: 'Borne en mode autonome — aucun Hub configuré' });
       }

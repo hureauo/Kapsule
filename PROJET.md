@@ -11,7 +11,7 @@ Un système de **borne d'enregistrement de messages vidéo pour événements** (
 - **La Borne** (Raspberry Pi) : serveur local **100% offline** pendant l'événement. Un iPad en Safari sur le même Wi-Fi sert de kiosque : l'invité saisit son prénom puis répond à une séquence de questions en se filmant. Un admin local permet d'ajuster les questions sur place et de visionner les vidéos brutes immédiatement.
 - **Le Hub** (VPS) : interface web où le **client** (l'organisateur ; à terme plusieurs clients avec des comptes séparés) prépare ses événements et ses questions, puis consulte ses vidéos après coup. Le Hub reçoit les vidéos, génère miniatures et métadonnées, et accueillera plus tard du traitement lourd (fond vert…).
 
-**Cycle de vie** : le client configure sur le Hub → la Borne **tire** (pull) la configuration → l'événement se déroule offline, **la Borne est maître** → de retour sur la fibre, on **pousse** (push, déclenchement manuel) vidéos + configuration finale vers le Hub → traitement → consultation → purge.
+**Cycle de vie** : le client configure sur le Hub → valide via la **borne preview** (conteneur d'essai, étape officielle) → marque l'événement prêt → la Borne **tire** (pull) la configuration → l'événement se déroule offline, **la Borne est maître** → de retour sur la fibre, on **pousse** (push, déclenchement manuel) vidéos + configuration finale vers le Hub → traitement → consultation → purge manuel.
 
 **Contraintes structurantes :**
 - Multi-événements, multi-clients **côté Hub** ; **une Borne (un Raspberry) ne sert qu'un seul événement**. Chaque Raspberry est déployé à un lieu donné pour un événement donné : pas de gestion multi-événements sur la Borne. Le **token d'appairage est lié à l'événement** (table `box_tokens`, §5.3) — fournir ce token à une Borne (réelle ou conteneur d'essai) l'initialise sur cet événement précis, sans étape d'assignation séparée.
@@ -42,11 +42,24 @@ Un système de **borne d'enregistrement de messages vidéo pour événements** (
 - Machine à états d'un événement (stockée dans le registre du Hub ; sous-ensemble sur la Borne) :
 
 ```
-draft → ready → loaded → live → closed → pushed → processed → purged
- hub     hub     pull    1ʳᵉ session  borne   push OK   worker    RGPD
+draft → preview → ready → loaded → live → closed → pushed → processed → waiting
+ hub      hub      hub     pull    1ʳᵉ session  borne   push OK   worker    manuel
 ```
 
+États Hub uniquement : `draft`, `preview`, `ready`, `processed`, `waiting`.
+États Borne : `loaded`, `live`, `closed`, `pushed`.
+
+- `draft` : événement en cours de configuration (questions, consent, timeout…). Édition libre.
+- `preview` : le client teste via la borne d'essai (conteneur `docker-compose.preview.yml`). Édition encore possible. Transition manuelle `draft → preview` (bouton « Lancer la preview »). La borne d'essai associée (token `is_preview=1`) peut puller et recevoir des sessions de test — données jetables. Transition `preview → ready` (bouton « Valider la configuration »).
+  - **État désiré de la borne preview** : indépendant du statut de l'événement, `events.preview_desired` (`running`/`stopped`) mémorise si le conteneur d'essai *doit* tourner. Les boutons « Démarrer / Éteindre » du Hub le basculent ; il passe `running` à la création (provision auto réussie) et `stopped` à la purge. Au démarrage du serveur ou via `make vps-up`, le script `reconcile-previews` relance uniquement les previews `running` — une borne éteinte volontairement n'est jamais ressuscitée. Distinguer cet **état désiré** (en base) de l'**état réel** du conteneur (Docker) est ce qui rend la réconciliation correcte après un reboot.
+- `ready` : configuration gelée. Le Hub peut générer un token de borne réelle. Seule transition possible : `ready → loaded` (au premier pull de la borne réelle).
+- `loaded` → `live` → `closed` → `pushed` : sur la Borne (voir ci-dessous).
+- `processed` : worker a terminé ses jobs (miniatures, ZIP). Vidéos consultables par le client.
+- `waiting` : état terminal d'attente. Les données sont disponibles. La purge reste **manuelle** pour l'instant (pas de RGPD automatique pendant la période de test). Transition : purge manuelle → suppression du dossier `events/<id>/`.
+
 **Règle anti-conflit (à respecter scrupuleusement)** : le pull n'opère que tant que l'événement local est en `loaded`. Dès la première session invitée (`live`), plus aucun pull ; au push, l'état de la Borne **écrase** celui du Hub pour cet événement (tracé dans `sync_log`). Le Hub connaît le statut `live`/`closed` uniquement au moment du push — entre temps, il gèle l'édition dès `loaded` (voir §7).
+
+**Auth wall preview** : le mécanisme est le rôle `general` dans `event_users` (voir §7D). Si au moins un utilisateur Hub avec le rôle `general` est assigné à l'événement et inclus dans le bundle, le kiosque de la borne d'essai affiche un login (email + mot de passe) avant d'accéder au parcours invité. Ce compte `general` est typiquement partagé entre toutes les personnes autorisées à tester. Le kiosque de la borne réelle (physique, Wi-Fi local) n'a jamais d'auth wall.
 
 ---
 
@@ -60,7 +73,9 @@ draft → ready → loaded → live → closed → pushed → processed → purg
 
 **Frontends** : React 18 + Vite 5 (`@vitejs/plugin-react`), `react-router-dom` v6, CSS pur (un stylesheet par app, custom properties, pas de framework UI). Capture via l'API native `MediaRecorder` (pas de bibliothèque d'enregistrement).
 
-**Hub en plus** : `argon2` (hash mots de passe), `express-rate-limit` (anti brute force sur le login), `ffmpeg`/`ffprobe` appelés via `child_process.spawn` (pas de wrapper npm), `archiver` (génération des ZIP d'export, mode store).
+**Hub en plus** : `argon2` (hash mots de passe), `express-rate-limit` (anti brute force sur login, sessions et uploads), `ffmpeg`/`ffprobe` appelés via `child_process.spawn` (pas de wrapper npm), `archiver` (génération des ZIP d'export, mode store).
+
+**Borne preview en plus** : `express-rate-limit` (la borne d'essai est Internet-facing : même protection que le Hub sur les sessions et uploads).
 
 **Infra** : Docker + docker-compose. Borne = images **arm64** (`node:20-alpine` multi-arch). Nginx alpine. OpenSSL pour le cert auto-signé de la Borne ; Let's Encrypt (certbot) ou cert fourni pour le Hub.
 
@@ -72,8 +87,11 @@ draft → ready → loaded → live → closed → pushed → processed → purg
 kapsule/
 ├── package.json                      # workspaces: ["packages/*", "apps/*/server", "apps/*/web"]
 ├── .env.example
-├── docker-compose.borne.yml
-├── docker-compose.hub.yml
+├── docker-compose.yml                # dev local (services dev:borne, dev:hub)
+├── docker-compose.borne.yml          # déploiement Borne (production Raspberry)
+├── docker-compose.hub.yml            # déploiement Hub (production VPS)
+├── docker-compose.preview.yml        # borne d'essai manuelle (BOX_TOKEN_PREVIEW + HUB_URL)
+├── Makefile                          # raccourcis VPS : vps-build/up/down, hub-reset (voir §10)
 ├── PROJET.md                         # ce document
 ├── packages/
 │   └── core/                         # @kapsule/core — tout ce qui est partagé
@@ -98,14 +116,15 @@ kapsule/
 │   │   │       ├── routes/
 │   │   │       │   ├── events.js     # admin : gestion des événements locaux, activation, clôture
 │   │   │       │   ├── questions.js  # CRUD + reorder (sur l'événement actif)
-│   │   │       │   ├── sessions.js
-│   │   │       │   ├── videos.js     # upload/replace, stream, download, csv, delete
+│   │   │       │   ├── sessions.js   # sessions invités (rate-limit, cloisonnement event)
+│   │   │       │   ├── videos.js     # upload/replace (rate-limit), stream (Range), download, csv, delete
 │   │   │       │   └── sync.js       # admin : état synchro, déclenchement pull/push, purge
 │   │   │       └── sync/
 │   │   │           ├── hubClient.js  # fetch vers le Hub avec token borne + retry/backoff + borneLog
 │   │   │           ├── pull.js       # pullMyEvent() : pull one-shot ; pullEvent(id) : écrit bundle
 │   │   │           └── push.js       # pushEvent(eventId) + pushConfig(eventId) — manifest, uploads, finalize, reprise
 │   │   └── web/
+│   │       ├── Dockerfile.preview    # image borne preview (SPA + nginx, arm64/amd64)
 │   │       ├── package.json, vite.config.js, index.html
 │   │       └── src/
 │   │           ├── main.jsx, App.jsx # routes : "/" → GuestPage, "/admin/*" → AdminPage
@@ -134,18 +153,30 @@ kapsule/
 │       │   ├── package.json
 │       │   └── src/
 │       │       ├── index.js, config.js
-│       │       ├── registry.js              # users, box_tokens, events, jobs, sync_log
+│       │       ├── registry.js              # users, box_tokens, events, event_users, jobs,
+│       │       │                            # sync_log, event_versions, schema_migrations
+│       │       │                            # + runMigrations() versionné
 │       │       ├── eventStore.js            # openEventDb(eventId) avec cache LRU + closeEventDb()
-│       │       ├── middleware/auth.js       # requireUser (JWT), requireOwner(eventId)
+│       │       ├── versioning.js            # saveVersion(), listVersions(), restoreVersion()
+│       │       ├── eventConfig.js           # readSnapshot(), applyConfig() — lecture/écriture config événement
+│       │       ├── middleware/auth.js       # requireUser (JWT), requireOwner(eventId), requireAdmin
 │       │       ├── middleware/boxAuth.js    # requireBox : header X-Box-Token → sha256 → box_tokens
 │       │       ├── routes/
 │       │       │   ├── auth.js              # login/register
-│       │       │   ├── events.js            # CRUD événements du client + transitions d'état
+│       │       │   ├── events.js            # CRUD événements + transitions d'état + routes preview
+│       │       │   │                        # (status/token : owner ; start/stop : superuser)
 │       │       │   ├── questions.js         # CRUD questions (écrit dans la BD de l'événement)
+│       │       │   ├── versions.js          # historique config : list, get, restore
 │       │       │   ├── admin.js             # super-admin : bornes (token affiché une fois),
 │       │       │   │                        # overview (stockage/événement, jobs en erreur, bornes)
 │       │       │   ├── gallery.js           # vidéos : list, stream (Range), download, zip, csv
 │       │       │   └── sync.js              # endpoints appelés par la Borne (requireBox)
+│       │       ├── preview/
+│       │       │   └── provisioner.js       # DockerClient (typedef + dockerCli réel), slugFor(),
+│       │       │                            # provisionPreview/startPreview/deprovisionPreview()
+│       │       ├── scripts/
+│       │       │   ├── create-admin.js      # crée le 1er compte superuser (prompt email/mdp)
+│       │       │   └── reconcile-previews.js# démarre les previews preview_desired='running' (boot/vps-up)
 │       │       └── worker/
 │       │           ├── index.js             # boucle : prend un job 'pending', l'exécute
 │       │           ├── ffmpeg.js            # runFfprobe(file), makeThumbnail(file, out)
@@ -155,20 +186,40 @@ kapsule/
 │       │               └── archive.js       # ZIP de toutes les vidéos (mode store) → derived/
 │       └── web/
 │           ├── package.json, vite.config.js, index.html
-│           └── src/
-│               ├── main.jsx, App.jsx
-│               ├── api/client.js
-│               ├── pages/LoginPage.jsx
-│               ├── pages/EventsPage.jsx     # liste + création + statuts
-│               ├── pages/EventDetailPage.jsx# onglets : Questions | Synchro | Galerie
-│               ├── pages/AdminPage.jsx      # super-admin : bornes, stockage, jobs, tous les événements
-│               ├── components/QuestionEditor.jsx
-│               ├── components/VideoGallery.jsx
-│               ├── components/SyncStatus.jsx
-│               └── styles/app.css
+│           ├── src/
+│           │   ├── main.jsx, App.jsx
+│           │   ├── api/
+│           │   │   ├── client.js            # getToken/saveToken/getRole (ré-importe roles.js)
+│           │   │   └── roles.js             # decodeJwtPayload + getRole (scalaire) — testable seul
+│           │   ├── utils/
+│           │   │   └── format.js            # formatBytes/formatDate/formatDuration/formatSize
+│           │   ├── pages/LoginPage.jsx
+│           │   ├── pages/EventsPage.jsx     # liste + création + statuts
+│           │   ├── pages/EventDetailPage.jsx# onglets : Questions | Synchro | Galerie | Versions
+│           │   ├── pages/AdminPage.jsx      # super-admin : bornes, stockage, jobs, tous les événements
+│           │   ├── components/QuestionEditor.jsx
+│           │   ├── components/VideoGallery.jsx
+│           │   ├── components/SyncStatus.jsx
+│           │   └── styles/app.css
+│           └── test/
+│               ├── roles.test.js            # node:test — decodeJwtPayload + getRole
+│               └── format.test.js           # node:test — les 4 formateurs
 └── docker/
-    ├── borne-nginx.conf, borne-entrypoint.sh   # cert auto-signé CN borne.local
-    └── hub-nginx.conf
+    ├── borne-nginx.conf              # nginx borne (cert auto-signé, proxy /api/*)
+    ├── borne-entrypoint.sh           # génère cert auto-signé CN=borne.local au démarrage
+    ├── hub-nginx.conf                # nginx Hub interne (proxy /api/* → backend:3001)
+    ├── hub-entrypoint.sh             # attend que le backend soit prêt avant de démarrer nginx
+    ├── edge-nginx.conf.template      # edge TLS : Hub principal + bornes preview (essai-<slug>)
+    │                                 # server_tokens off, HSTS, resolver Docker, proxy paresseux
+    ├── edge-entrypoint.sh            # substitue EDGE_DOMAIN dans le template au démarrage
+    ├── Dockerfile.edge               # image edge nginx (envsubst + template)
+    ├── preview-nginx.conf            # nginx borne preview (proxy vers borne-preview-backend:3001)
+    ├── preview-start.sh              # opérateur : provisionne + démarre une borne preview
+    ├── preview-stop.sh               # opérateur : arrête + déprovisionne une borne preview
+    ├── smoke-hub.sh                  # smoke tests Hub (curl health + auth + endpoint garde)
+    ├── smoke-borne.sh                # smoke tests Borne (curl health + endpoint garde)
+    ├── smoke-preview.sh              # smoke e2e borne preview (provision, auth wall, reconcile)
+    └── smoke-common.sh               # helpers partagés (assert_status, wait_for)
 ```
 
 ---
@@ -284,8 +335,10 @@ events (
   name TEXT NOT NULL,                          -- (plus de box_id : le lien Borne↔événement vit dans box_tokens, §1)
   event_date DATE,
   status TEXT NOT NULL DEFAULT 'draft'
-    CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
-  pulled_at DATETIME, pushed_at DATETIME, processed_at DATETIME, purged_at DATETIME,
+    CHECK(status IN ('draft','preview','ready','loaded','live','closed','pushed','processed','waiting')),
+  preview_desired TEXT NOT NULL DEFAULT 'stopped', -- 'running'|'stopped' : état DÉSIRÉ de la borne preview,
+                                                   -- réconcilié au boot/vps-up (≠ état réel du container, §3)
+  pulled_at DATETIME, pushed_at DATETIME, processed_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -311,7 +364,7 @@ sync_log (
 );
 ```
 
-**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` ne stocke que des hash ; `box_tokens` stocke à la fois le hash (auth) et le token en clair (consultation admin, cf. §11.13). Jamais de donnée invité dans le registre. La purge d'un événement : `rm -rf events/<id>` + `status='purged'` + ligne `sync_log` ; le `ON DELETE CASCADE` sur `box_tokens.event_id` retire au passage les tokens de l'événement purgé.
+**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` ne stocke que des hash ; `box_tokens` stocke à la fois le hash (auth) et le token en clair (consultation admin, cf. §11.13). Jamais de donnée invité dans le registre. La purge d'un événement : `rm -rf events/<id>` + `status='waiting'` + ligne `sync_log` ; le `ON DELETE CASCADE` sur `box_tokens.event_id` retire au passage les tokens de l'événement purgé.
 
 ### 5.4 Registre de la Borne — `registry.sqlite`
 
@@ -321,7 +374,7 @@ local_events (
   name TEXT NOT NULL,
   origin TEXT NOT NULL CHECK(origin IN ('hub','local')),
   status TEXT NOT NULL DEFAULT 'loaded'
-    CHECK(status IN ('loaded','live','closed','pushed','purged')),
+    CHECK(status IN ('loaded','live','closed','pushed','waiting')),
   active INTEGER NOT NULL DEFAULT 0,           -- un seul événement actif servi au kiosque
   pulled_at DATETIME, pushed_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -383,7 +436,7 @@ Base `/api`. JSON partout sauf flux de fichiers. Gestionnaire d'erreurs global �
 **Synchro** (`routes/sync.js`) — admin :
 - `GET /api/sync/status` — `{ online, hubUrl, lastPull, push: { running, total, done, currentFile } }`.
 - `POST /api/sync/pull` — pull manuel immédiat.
-- `POST /api/sync/push-config` — pousse questions + `event_meta` de l'événement actif vers le Hub (overwrite). Autorisé en mode preview.
+- `POST /api/sync/push-config` — pousse questions + `event_meta` de l'événement actif vers le Hub (overwrite). Interdit en mode preview (403) — réservé à la borne réelle ; la config Hub reste la source de vérité.
 - `POST /api/sync/push/:eventId` — **409 si l'événement n'est pas `closed`** (message : « Clôturez l'événement avant le push ») ; sinon lance `push.js` en tâche de fond ; la progression se lit via `GET /api/sync/status`.
 - `POST /api/sync/purge/:eventId` — refusé si `status != 'pushed'` ; demande une confirmation explicite (`{ confirm: name }`).
 
@@ -401,15 +454,15 @@ Base `/api`. `GET /api/health`.
 **Événements** (`routes/events.js`) — user :
 - `GET /api/events` — ceux du user (tous si admin).
 - `POST /api/events` `{ name, event_date }` → uuid, statut `draft`, crée `events/<id>/db.sqlite` avec questions par défaut.
-- `PUT /api/events/:id` — métadonnées, dont `consent_text` et `idle_timeout` (écrits dans `event_meta` de la BD événement, donc transférés à la Borne via le bundle) ; `PUT /api/events/:id/status` `{ status:'ready' }` (seules transitions manuelles : `draft→ready`, `ready→draft`). Même règle de gel d'édition que les questions (voir ci-dessous).
+- `PUT /api/events/:id` — métadonnées, dont `consent_text` et `idle_timeout` ; `PUT /api/events/:id/status` `{ status }` (transitions manuelles Hub : `draft→preview`, `preview→draft`, `preview→ready`, `ready→preview`). Même règle de gel d'édition que les questions (voir ci-dessous).
 - (Plus de `PUT …/assign` : avec token = événement, le lien Borne↔événement se crée en générant un token de borne pour l'événement, voir le super-admin ci-dessous. La Borne s'auto-rattache via son token au moment du pull.)
-- `DELETE /api/events/:id` — **purge RGPD** : `rm -rf events/<id>` + `status='purged'` + `sync_log`. Confirmation `{ confirm: name }`.
+- `DELETE /api/events/:id` — **purge RGPD** : `rm -rf events/<id>` + `status='waiting'` + `sync_log`. Confirmation `{ confirm: name }`.
 
 **Questions** (`routes/questions.js`) — user + owner ; mêmes routes que la Borne mais sur `eventStore.openEventDb(eventId)` : `GET/POST/PUT/DELETE /api/events/:id/questions`, `PUT /api/events/:id/questions/reorder/batch`.
 
 **Règle de gel d'édition (Hub)** — le Hub ne voit pas l'événement passer `live` en temps réel (la Borne est offline) ; il l'apprend au push. Donc :
-- Édition **autorisée** en `draft`, `ready` et `loaded` (c'est ce qui permet d'ajuster les questions jusqu'au jour J).
-- Édition **refusée (409)** dès que le Hub connaît un statut ≥ `live` (push effectué).
+- Édition **autorisée** en `draft`, `preview` et `loaded` (c'est ce qui permet d'ajuster les questions jusqu'au jour J).
+- Édition **refusée (409)** en `ready` (configuration gelée, le token borne réelle peut avoir été distribué) et dès que le Hub connaît un statut ≥ `live` (push effectué).
 - Si `updated_at > pulled_at`, l'UI affiche un bandeau **« Modifications non encore récupérées par la borne »** — le client sait que ses changements ne s'appliqueront que si la Borne re-pull avant l'événement. Au push, l'état de la Borne écrase de toute façon celui du Hub (la Borne est maître).
 
 **Galerie** (`routes/gallery.js`) — user + owner, disponible après push :
@@ -434,8 +487,9 @@ Base `/api`. `GET /api/health`.
 - `GET /api/admin/overview` — vue d'ensemble : tous les événements (tous clients), espace disque consommé par événement (`du` sur `events/<id>/`), disque libre du volume, jobs `failed` récents, et pour chaque événement ses tokens de borne (label, location, `is_preview`, `last_seen_at`).
 
 **Synchro** (`routes/sync.js`) — `requireBox` (header `X-Box-Token`) résout le token via `box_tokens`, met à jour `box_tokens.last_seen_at`, écrit `sync_log`, et **expose `req.box = { token_id, event_id, is_preview }`** (le token désigne directement l'événement, §1) :
-- `GET /api/sync/event` — l'**unique** événement de ce token s'il est `status IN ('ready','loaded')` : `{ id, name, event_date, status, updated_at, is_preview }`. **404** si l'événement n'est plus pullable (purgé, ou déjà ≥ `live`). Remplace l'ancien `GET /assigned` (liste) — une borne = un événement.
-- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […], users: [{email, password_hash, roles}] }`. **403 si `:id` ≠ `req.box.event_id`** (un token ne peut tirer que son propre événement). Passe `ready→loaded`, set `pulled_at`. `users` contient les comptes Hub ayant un mot de passe défini et assignés à l'événement — la Borne les stocke dans `event_users` de sa BD événement et les utilise pour l'auth nominative (§6).
+- `GET /api/sync/event` — l'**unique** événement de ce token s'il est `status IN ('preview','ready','loaded')` : `{ id, name, event_date, status, updated_at, is_preview }`. **404** si l'événement n'est plus pullable (en attente, ou déjà ≥ `live`). Remplace l'ancien `GET /assigned` (liste) — une borne = un événement. Un token `is_preview=1` ne peut puller que si le statut est `preview` ; un token réel ne peut puller qu'en `ready` ou `loaded`.
+- `POST /api/sync/event/login` `{ email, password }` — auth wall preview (§11.24). Protégé par `X-Box-Token`. Vérifie les credentials Hub de l'utilisateur **et** son assignation à l'événement du token avec le rôle `general`. Répond `200 { ok: true }` si les deux conditions sont remplies, `401` si credentials invalides, `403` si l'utilisateur n'est pas assigné `general` ou si l'événement n'est pas en statut `preview`. Rate-limit : 10 essais / 15 min / IP.
+- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […], users: [{email, password_hash, roles}] }`. **403 si `:id` ≠ `req.box.event_id`** (un token ne peut tirer que son propre événement). Passe `ready→loaded` (token réel) ou ne change pas le statut (token preview, qui reste en `preview`), set `pulled_at`. `users` contient les comptes Hub ayant un mot de passe défini et assignés à l'événement **avec le rôle `admin_borne` ou `tech_borne`** — la Borne les stocke dans `event_users` de sa BD événement et les utilise pour l'auth nominative (§6). Les utilisateurs avec le rôle `general` ne sont **pas** inclus dans le bundle : leur auth est proxiée vers le Hub à chaque login (§11.24). Le bundle inclut aussi `requiresLogin: true` si au moins un user `general` est assigné à l'événement.
 - `POST /api/sync/events/:id/status` `{ status: 'live'|'closed' }` — envoyé par la Borne au moment du push (transitions avant uniquement, jamais de retour en arrière) ; met à jour le statut dans le registre Hub pour déclencher le gel d'édition.
 - `POST /api/sync/events/:id/manifest` — body `{ files: [{ video_id, filename, size, checksum }], db: { size, checksum } }`. Réponse : `{ missing: [video_id…] }` (ceux non encore reçus ou de checksum différent) → **c'est ce qui rend le push reprenable et idempotent**.
 - `PUT /api/sync/events/:id/files/:videoId` — upload multipart d'UN fichier ; le Hub recalcule le sha256, 422 si mismatch (la Borne retentera).
@@ -512,10 +566,59 @@ Base `/api`. `GET /api/health`.
 - `borne-entrypoint.sh` : génère un cert auto-signé si absent (`openssl req -x509 -nodes -days 730 -newkey rsa:2048`, CN `borne.local`) puis `nginx -g 'daemon off;'`.
 - `borne-nginx.conf` : `client_max_body_size 600M` ; 80 → redirect 443 ; `/api/` → `proxy_pass http://backend:3001` avec headers forwardés, timeouts read/send **600s**, `proxy_request_buffering off` ; `/` → SPA fallback `try_files $uri $uri/ /index.html`.
 
-### docker-compose.hub.yml (VPS)
-- `backend` : build `apps/hub/server`, env `JWT_SECRET DATA_DIR=/app/data ALLOW_REGISTER PORT=3001`, volume `hub_data:/app/data`.
-- `worker` : **même image** que backend, `command: node src/worker/index.js`, même volume. L'image installe `ffmpeg` (`apk add ffmpeg`).
-- `frontend` : nginx + build Vite, ports `80/443`, certs Let's Encrypt montés `/etc/letsencrypt:ro`. Mêmes réglages proxy que la Borne (`client_max_body_size 600M`, timeouts 600s, buffering off — le push passe par là).
+### docker-compose.hub.yml (VPS) — architecture edge
+
+Le Hub est exposé derrière un **reverse proxy frontal unique** (`edge`) qui termine TLS et
+route par `Host`. Le frontend Hub et les bornes preview passent en **HTTP interne** (plus de
+ports hôte ni de TLS dupliqué). Tous les services partagent le réseau `kapsule_hub_net`
+(nommé en dur, indépendant du projet Compose) ; le frontal les joint par nom de container.
+
+- `backend` : build `apps/hub/server`, `container_name: hub-backend` (nom fixe : les bornes preview le joignent par `http://hub-backend:3001`). Env `JWT_SECRET DATA_DIR PORT ALLOW_REGISTER ADMIN_EMAIL ADMIN_PASSWORD_HUB EDGE_DOMAIN PREVIEW_IMAGE`. Volumes `hub_data:/app/data` **et `/var/run/docker.sock`** (auto-provisioning preview, §10 ci-dessous). Port `3001` publié pour debug.
+- `worker` : **même image** que backend, `command: node src/worker/index.js`, même volume. L'image installe `ffmpeg`.
+- `frontend` : `container_name: hub-frontend`, nginx + build Vite, **plus de ports ni de TLS** — joint par l'edge via le DNS Docker (`proxy_pass http://hub-frontend`).
+- `edge` : build `docker/Dockerfile.edge` (`nginx:alpine` + openssl). **Seul service exposant `80/443`** et seul détenteur du cert. Monte `/etc/letsencrypt:ro`, env `EDGE_DOMAIN`.
+
+**edge — routing par Host** (`docker/edge-nginx.conf.template`, substitué au démarrage) :
+- `${EDGE_DOMAIN}` / `www.${EDGE_DOMAIN}` → `hub-frontend`
+- `essai-<slug>.${EDGE_DOMAIN}` → container `preview-<slug>` (nom déterministe)
+- Comme les sous-domaines preview apparaissent/disparaissent dynamiquement, l'upstream est **variabilisé** (`set $up …; proxy_pass http://$up;`) + `resolver 127.0.0.11` (DNS Docker) : la résolution devient **paresseuse, par requête** — pas besoin de reload nginx quand une preview va et vient. En-têtes sécurité au niveau edge (HSTS, X-Frame-Options, nosniff, CSP), `server_tokens off`, `client_max_body_size 600M`, timeouts 600s.
+- `edge-entrypoint.sh` : si le cert Let's Encrypt (`/etc/letsencrypt/live/kapsule/`) est absent (dev/local), génère un cert **auto-signé** dans un répertoire écrivable ; sinon utilise le vrai cert monté en lecture seule.
+
+### Auto-provisioning de la borne preview (Hub pilote Docker via `docker.sock`)
+
+À la création d'un événement, le backend Hub provisionne **un conteneur preview par
+événement** (cloisonnement RGPD : data dir + db.sqlite séparés) via le socket Docker monté.
+`preview/provisioner.js` (voir ARCHITECTURE.md) : `slugFor(eventId)` → identité DNS-safe
+servant de **sous-domaine** (`essai-<slug>`) et de **nom de container** (`preview-<slug>`).
+Lance deux containers sur un réseau isolé `preview-net-<slug>`, tous deux raccordés à
+`kapsule_hub_net` pour que l'edge les résolve. Les boutons « Démarrer / Éteindre » (superuser)
+et l'**état désiré** `events.preview_desired` pilotent leur cycle de vie (§3) ;
+`reconcile-previews` les relance au boot/`make vps-up`. Images preview à **construire sur le
+VPS** avant le 1er déploiement : `docker compose -f docker-compose.preview.yml build`.
+
+> **Pourquoi monter `docker.sock` est acceptable** : ça donne au backend un pouvoir
+> équivalent root sur l'hôte. Ici le Hub est de confiance (notre propre admin, périmètre
+> contrôlé) et l'alternative (cron/agent externe) ajoute latence + composant hors-app.
+> Risque accepté et documenté.
+
+### Certificat wildcard (Let's Encrypt, DNS-01 manuel)
+
+DNS : **CNAME wildcard** `*.${EDGE_DOMAIN} → ${EDGE_DOMAIN}` (n'importe quel sous-domaine
+atterrit sur le VPS). Cert wildcard + apex, challenge DNS-01 manuel (renouvellement ~60 j ;
+plugin DNS auto = amélioration future) :
+```bash
+sudo certbot certonly --manual --preferred-challenges dns --cert-name kapsule \
+  -d "${EDGE_DOMAIN}" -d "*.${EDGE_DOMAIN}"
+# → créer le TXT _acme-challenge.${EDGE_DOMAIN}, vérifier (dig TXT) puis valider
+```
+Le cert atterrit dans `/etc/letsencrypt/live/kapsule/` → monté `:ro` dans le service `edge`.
+
+### Raccourcis `make` (voir Makefile)
+
+`make vps-build` (images Hub + preview) · `make vps-up` (up + réconciliation des previews) ·
+`make vps-down` (Hub + containers/réseaux preview hors compose) · `make hub-reset` (reset
+volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fixé à `-p kapsule`
+(les previews joignent `hub-backend` par nom, le nom de projet doit être stable).
 
 ### Dockerfile backend (les deux) : `node:20-alpine`, `apk add python3 make g++` (build natif better-sqlite3 — fonctionne en arm64), `npm ci --omit=dev` au niveau workspace, copie de `packages/core` + `src`, `CMD node src/index.js`.
 
@@ -532,6 +635,11 @@ Base `/api`. `GET /api/health`.
 | `MAX_DATA_BYTES` | Borne | _(vide = illimité)_ | Quota disque de l'événement (essai : `1073741824` = 1 Go) ; upload invité → 507 au-delà |
 | `PREVIEW_MODE` | Borne | _(déduit du token `is_preview`)_ | Force le mode démo (bandeau « BORNE D'ESSAI », push interdit). Override optionnel ; normalement déduit du token |
 | `ALLOW_REGISTER` | Hub | `false` | Ouvrir l'inscription publique (indépendant des comptes créés par l'admin) |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD_HUB` | Hub | _(vide)_ | Seed du 1er compte superuser au démarrage si absent (évite `create-admin`) |
+| `EDGE_DOMAIN` | Hub | `kapsule.hureau.com` | Domaine principal : routing wildcard de l'edge + URLs preview (`essai-<slug>.<domaine>`) |
+| `PREVIEW_IMAGE` / `PREVIEW_BACKEND_IMAGE` | Hub | `kapsule-borne-preview-frontend` / `-backend` | Images lancées par le provisioner pour chaque preview |
+| `HUB_URL_INTERNAL` | Hub | `http://hub-backend:3001` | URL interne du backend, injectée aux containers preview (réseau `hub_net`) |
+| `TECH_PASSWORD_PREVIEW` | Hub | _(secret jetable généré)_ | `TECH_PASSWORD` injecté aux backends preview (sinon ils refusent de démarrer → 502) |
 
 > **TLS / iPad** : iOS Safari exige HTTPS pour la caméra. Faire confiance au certificat auto-signé sur l'iPad (Réglages → Général → VPN et gestion de l'appareil) ou fournir un vrai cert. Utiliser Accès Guidé + « Ajouter à l'écran d'accueil » pour le mode kiosque.
 
@@ -562,7 +670,8 @@ Base `/api`. `GET /api/health`.
 21. **Borne d'essai** : une borne dont le token est `is_preview=1` (ou `PREVIEW_MODE=true`) **ne doit jamais pouvoir push** (409) — ce sont des données jetables. Quota `MAX_DATA_BYTES` vérifié **avant** d'écrire le fichier d'upload invité (507 si plein), sinon un client peut saturer le disque du VPS via l'aperçu.
 22. **Compte client sans mot de passe** : `users.password_hash` est NULL tant que le client n'a pas suivi le lien d'enregistrement. Le login (argon2) doit gérer ce cas **avant** d'appeler `argon2.verify(null, …)` (sinon exception) ; un compte `active=0` ou sans hash → 401 « identifiants invalides » (ne pas divulguer lequel).
 23. **`event_users` Borne** : les comptes pullés dans `event_users` de la BD événement (`events/<id>/db.sqlite`) ne contiennent que `email`, `password_hash`, `roles` — **RGPD : pas de nom ni d'autre PII** (le nom reste sur le Hub). Ces données sont **écrasées à chaque pull** (DELETE+INSERT en transaction).
-24. **Preview requiresLogin** : si `GET /api/event` retourne `requiresLogin: true` (preview + au moins un user avec rôle `general`), le kiosque doit exiger un login général avant toute session. Le token `general` (JWT `roles: ['general']`) est stocké en `sessionStorage` (durée de la session navigateur uniquement) et envoyé comme Bearer à `POST /api/sessions`.
+24. **Preview requiresLogin (rôle `general`)** : si le bundle indique `requiresLogin: true` (au moins un user `general` assigné côté Hub), la borne stocke `requires_login=true` dans `event_meta` au pull. Le kiosque de la borne d'essai doit alors exiger un login avant d'afficher le parcours invité. Le login est **proxié vers le Hub via un seul appel** : `POST /api/preview/login` `{ email, password }` sur la borne → la borne appelle `POST /api/sync/event/login` du Hub (protégé par `X-Box-Token`). Le Hub vérifie les credentials **ET** que l'utilisateur est assigné à CET événement précis avec le rôle `general` — il répond `200 { ok: true }` / `401` / `403`. En cas de succès, la borne émet un JWT local `{ email, roles: ['general'], event_id }` (8 h). Ce JWT est stocké en `sessionStorage` (durée de session navigateur uniquement) et envoyé en Bearer à `POST /api/sessions`. **Le rôle `general` n'est jamais pullé dans le bundle ni stocké dans `event_users` borne** — la vérification de l'assignation se fait entièrement côté Hub à chaque login (la borne preview est toujours connectée).
+25. **Transitions d'état `preview`** : un token `is_preview=1` ne peut puller que si le statut Hub est `preview`. Un token réel (`is_preview=0`) ne peut puller que si le statut est `ready` ou `loaded`. `requireBox` doit vérifier cette cohérence et retourner 403 si le type de token ne correspond pas au statut attendu.
 
 ---
 

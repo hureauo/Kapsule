@@ -5,7 +5,8 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "start": "node src/index.js",
-    "create-admin": "node src/scripts/create-admin.js"
+    "create-admin": "node src/scripts/create-admin.js",
+    "reconcile-previews": "node src/scripts/reconcile-previews.js"
   },
   "dependencies": {
     "@kapsule/core": "*",

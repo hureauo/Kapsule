@@ -2,14 +2,16 @@ import express from 'express';
 import { statfs } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import argon2 from 'argon2';
-import { config } from './config.js';
+import { config, validateConfig } from './config.js';
 import { openRegistry, getDb, getUserByEmail, insertUser } from './registry.js';
 import { makeAuthRouter } from './routes/auth.js';
+import { requireUser } from './middleware/auth.js';
 import { makeEventsRouter } from './routes/events.js';
 import { makeQuestionsRouter } from './routes/questions.js';
 import { makeAdminRouter } from './routes/admin.js';
 import { makeSyncRouter } from './routes/sync.js';
 import { makeGalleryRouter } from './routes/gallery.js';
+import { makeVersionsRouter } from './routes/versions.js';
 
 async function seedAdminIfNeeded() {
   if (!config.adminEmail || !config.adminPassword) return;
@@ -20,26 +22,30 @@ async function seedAdminIfNeeded() {
   console.log(`[hub] compte admin créé : ${config.adminEmail}`);
 }
 
-export function createApp(dataDir, opts = {}) {
+export function createApp(dataDir, opts = {}, { docker } = {}) {
   openRegistry(dataDir);
 
   const app = express();
   app.set('trust proxy', 1);
-  app.use(express.json());
+  app.use(express.json({ limit: '1mb' }));
 
   app.use('/api/auth', makeAuthRouter());
-  app.use('/api/events', makeEventsRouter(dataDir));
+  app.use('/api/events', makeEventsRouter(dataDir, { docker }));
   app.use('/api/events/:eventId/questions', makeQuestionsRouter(dataDir));
   app.use('/api/admin', makeAdminRouter(dataDir));
   app.use('/api/sync', makeSyncRouter(dataDir, opts.sync));
+  app.use('/api/events/:eventId/versions', makeVersionsRouter(dataDir));
   app.use('/api/events/:eventId', makeGalleryRouter(dataDir));
 
-  app.get('/api/health', async (req, res, next) => {
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  app.get('/api/admin/health', requireUser, async (req, res, next) => {
     try {
       const stats = await statfs(dataDir);
       const free_bytes = stats.bfree * stats.bsize;
       const total_bytes = stats.blocks * stats.bsize;
-
       res.json({ ok: true, disk: { free_bytes, total_bytes } });
     } catch (err) {
       next(err);
@@ -65,6 +71,7 @@ export function createApp(dataDir, opts = {}) {
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
+  validateConfig(config, process.env.NODE_ENV);
   mkdirSync(config.dataDir, { recursive: true });
   const app = createApp(config.dataDir);
   seedAdminIfNeeded().then(() => {

@@ -4,9 +4,11 @@
 <p>
   Ce fichier gère <span class="path">registry.sqlite</span>, l'annuaire global du Hub. Il fait
   deux choses : (1) ouvrir/initialiser la base (schéma des tables <code>users</code>,
-  <code>box_tokens</code>, <code>events</code>, <code>jobs</code>, <code>sync_log</code>), et (2)
+  <code>registration_tokens</code>, <code>box_tokens</code>, <code>events</code>,
+  <code>event_users</code>, <code>jobs</code>, <code>sync_log</code>) avec ses migrations, et (2)
   fournir un jeu de fonctions d'accès (insert/get/update/delete) que les routes appellent. Rappel :
-  <strong>aucune donnée invité ici</strong> (invariant RGPD §11.13).
+  <strong>aucune donnée invité ici</strong> (invariant RGPD §11.13) — prénoms, vidéos et sessions
+  vivent uniquement dans les <code>db.sqlite</code> par événement.
 </p>
 
 <h2>Le pattern singleton</h2>
@@ -76,10 +78,21 @@ export function closeRegistry() {
 </div>
 
 <h2>Le schéma : contraintes SQL comme garde-fou</h2>
-<p>Extrait du schéma (table <code>events</code>) :</p>
-<pre><code class="js">CREATE TABLE IF NOT EXISTS events (
+<p>Extrait du schéma (tables <code>users</code> et <code>events</code>) :</p>
+<pre><code class="js">CREATE TABLE IF NOT EXISTS users (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  email         TEXT UNIQUE NOT NULL,
+  password_hash TEXT,                       -- NULL tant que le client n'a pas défini son mot de passe
+  name          TEXT,
+  role          TEXT NOT NULL DEFAULT 'client'
+                CHECK(role IN ('superuser','client')),
+  active        INTEGER NOT NULL DEFAULT 1,
+  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS events (
   id           TEXT PRIMARY KEY,
-  owner_id     INTEGER NOT NULL REFERENCES users(id),
+  owner_id     INTEGER REFERENCES users(id),  -- nullable : un événement peut exister sans client assigné
   name         TEXT NOT NULL,
   event_date   DATE,
   status       TEXT NOT NULL DEFAULT 'draft'
@@ -93,8 +106,36 @@ export function closeRegistry() {
   (<a href="#/core-constants">constants.js</a>) au niveau base : SQLite <strong>refuse</strong>
   physiquement une valeur de statut hors liste. C'est une duplication assumée (la liste existe en
   JS et en SQL) qui ajoute une dernière ligne de défense — même un bug applicatif ne peut pas
-  écrire un statut invalide. Idem pour <code>role CHECK(role IN ('admin','client'))</code> dans
-  <code>users</code>.
+  écrire un statut invalide. Idem pour <code>role CHECK(role IN ('superuser','client'))</code> dans
+  <code>users</code> : seuls ces deux rôles globaux existent (le rôle historique <code>'admin'</code>
+  a été renommé <code>'superuser'</code>, voir la migration plus bas).
+</p>
+<p>
+  Deux points à connaître sur <code>users</code> : <code>password_hash</code> est
+  <strong>nullable</strong> — un compte client créé par l'admin n'a pas encore de mot de passe tant
+  qu'il n'a pas suivi son lien d'enregistrement (voir <code>registration_tokens</code> ci-dessous) ;
+  <code>owner_id</code> sur <code>events</code> est lui aussi nullable, car un événement peut être créé
+  par l'admin avant d'être attribué à un client. L'accès, lui, ne dépend pas de <code>owner_id</code>
+  mais de la table <code>event_users</code> (cf. <a href="#/hub-middleware-auth">requireOwner</a>).
+</p>
+
+<h2>La table <code>registration_tokens</code> : définir son mot de passe par lien</h2>
+<pre><code class="js">CREATE TABLE IF NOT EXISTS registration_tokens (
+  token_hash  TEXT PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at  DATETIME NOT NULL,
+  used_at     DATETIME,
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);</code></pre>
+<p>
+  Quand l'admin crée un compte client (ou l'assigne à un événement), il ne fixe pas son mot de passe :
+  le serveur génère un <strong>jeton d'enregistrement</strong> à usage unique, n'en stocke que le
+  <strong>hash SHA-256</strong> (<code>token_hash</code>, comme pour les tokens de borne), et renvoie le
+  clair dans un lien <code>…/register?token=…</code>. Le client suit ce lien pour poser son mot de
+  passe (<a href="#/hub-routes-auth">routes/auth — set-password</a>). Le token a une
+  <strong>expiration</strong> (<code>expires_at</code>, 7 jours par défaut) et est marqué consommé via
+  <code>used_at</code> — on ne le réutilise pas. <code>ON DELETE CASCADE</code> sur <code>user_id</code>
+  nettoie les jetons orphelins si le compte est supprimé.
 </p>
 
 <h2>La table <code>box_tokens</code> : un token = un événement (§11.20)</h2>
@@ -135,6 +176,33 @@ export function closeRegistry() {
   événement, <code>event_id</code> suffit à tracer qui a fait quoi.
 </p>
 
+<h2>La table <code>event_users</code> : qui accède à quel événement, avec quels rôles</h2>
+<pre><code class="js">CREATE TABLE IF NOT EXISTS event_users (
+  event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  roles      TEXT NOT NULL DEFAULT '[]',          -- tableau JSON de rôles borne, ex. '["admin_borne"]'
+  PRIMARY KEY (event_id, user_id)
+);</code></pre>
+<p>
+  C'est la table d'<strong>appartenance</strong> : une ligne <code>(event_id, user_id)</code> dit que ce
+  client a accès à cet événement. La clé primaire composite garantit une seule ligne par couple (un
+  client ne figure qu'une fois sur un événement). Deux usages distincts :
+</p>
+<ul>
+  <li><strong>Cloisonnement de l'UI Hub</strong> : <a href="#/hub-middleware-auth">requireOwner</a>
+      autorise un non-superuser uniquement s'il a une ligne ici pour l'événement visé (plus de
+      <code>owner_id === sub</code>).</li>
+  <li><strong>Rôles sur la Borne</strong> : le champ <code>roles</code> est un <em>tableau JSON</em>
+      (<code>admin_borne</code>, <code>tech_borne</code>…) qui est <strong>pullé</strong> dans le
+      <code>db.sqlite</code> de l'événement (table <code>event_users</code> côté Borne). C'est ainsi
+      qu'un client se connecte à la borne avec un compte nominatif plutôt qu'un mot de passe partagé.</li>
+</ul>
+<p>
+  Stocker un tableau comme chaîne JSON (plutôt qu'une table de jointure rôles) est un choix de
+  simplicité : la liste de rôles est courte, lue/écrite d'un bloc, jamais requêtée par rôle au
+  niveau SQL. Voir <code>upsertEventUser</code> (qui fait <code>JSON.stringify(roles)</code>) plus bas.
+</p>
+
 <h2>La migration douce de <code>token_clear</code></h2>
 <p>
   <code>box_tokens</code> a d'abord existé <em>sans</em> <code>token_clear</code> (le clair n'était
@@ -151,8 +219,54 @@ if (!boxCols.includes('token_clear')) {
   On interroge le schéma réel via <code>pragma('table_info(...)')</code>, et on n'ajoute la colonne
   que si elle manque — idempotent, rejouable à chaque démarrage. Le <code>DEFAULT ''</code> couvre
   les lignes anciennes (tokens générés avant la migration : leur clair n'a pas été conservé). C'est le
-  même motif que les migrations <code>active</code> sur <code>users</code> plus haut dans le fichier.
+  même motif que la migration <code>active</code> sur <code>users</code> plus haut dans le fichier.
 </p>
+
+<h2>Migration par reconstruction de table (renommage de rôle, colonne nullable)</h2>
+<p>
+  <code>ALTER TABLE … ADD COLUMN</code> suffit pour <em>ajouter</em> une colonne. Mais SQLite ne sait
+  pas <em>modifier</em> une colonne existante (changer un <code>CHECK</code>, retirer un
+  <code>NOT NULL</code>) de façon portable. Deux migrations le contournent par
+  <strong>reconstruction</strong> : créer une table neuve au bon schéma, recopier les données, jeter
+  l'ancienne, renommer la neuve. Exemple — renommer le rôle <code>'admin'</code> en
+  <code>'superuser'</code> (le <code>CHECK</code> n'accepte plus <code>'admin'</code>) :
+</p>
+<pre><code class="js">// Migration 7A.1 : role 'admin' → 'superuser'. Reconstruction car CHECK non modifiable en place.
+const needsUsersMigration =
+  db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n > 0;
+if (needsUsersMigration) {
+  db.exec('PRAGMA foreign_keys = OFF');           // les recopies temporaires violeraient les FK
+  db.exec(`
+    DROP TABLE IF EXISTS users_new;
+    CREATE TABLE users_new ( … role TEXT … CHECK(role IN ('superuser','client')) … );
+    INSERT INTO users_new SELECT
+      id, email, password_hash, name,
+      CASE WHEN role = 'admin' THEN 'superuser' ELSE role END,   -- transformation à la volée
+      active, created_at
+    FROM users;
+    DROP TABLE users;
+    ALTER TABLE users_new RENAME TO users;
+  `);
+  db.exec('PRAGMA foreign_keys = ON');
+}</code></pre>
+<p>
+  La même technique relâche <code>events.owner_id</code> de <code>NOT NULL</code> à nullable : on
+  détecte le besoin en inspectant <code>pragma('table_info(events)')</code> et en regardant
+  <code>notnull === 1</code> sur la colonne <code>owner_id</code>, puis on reconstruit. Les deux
+  migrations sont <strong>conditionnelles</strong> (elles ne tournent que si l'ancien schéma est
+  encore là) et donc idempotentes : sur une base neuve, le <code>CREATE TABLE IF NOT EXISTS</code>
+  initial pose déjà le bon schéma et la condition est fausse.
+</p>
+<div class="callout warn">
+  <div class="callout-title">⚠ Pourquoi couper les foreign keys pendant la reconstruction</div>
+  <p>
+    Le <code>DROP TABLE users</code> casserait les clés étrangères qui pointent vers
+    <code>users</code> (events, event_users, registration_tokens) si elles étaient appliquées.
+    <code>PRAGMA foreign_keys = OFF</code> le temps de l'opération évite ces erreurs, puis on les
+    réactive. La table renommée garde le même nom, donc les FK redeviennent valides. À ne faire que
+    dans une migration contrôlée, jamais en fonctionnement normal.
+  </p>
+</div>
 
 <h2>Les fonctions d'accès : <code>db</code> passé en argument</h2>
 
@@ -160,10 +274,15 @@ if (!boxCols.includes('token_clear')) {
 <pre><code class="js">export function getUserByEmail(db, email) {
   return db.prepare('SELECT * FROM users WHERE email = ?').get(email);
 }
-export function insertEvent(db, { id, owner_id, name, event_date = null }) {
-  return db.prepare('INSERT INTO events (id, owner_id, name, event_date) VALUES (?, ?, ?, ?)')
-    .run(id, owner_id, name, event_date);
+export function insertEvent(db, { id, name, event_date = null }) {
+  return db.prepare('INSERT INTO events (id, name, event_date) VALUES (?, ?, ?)')
+    .run(id, name, event_date);
 }</code></pre>
+<p>
+  Noter que <code>insertEvent</code> ne pose <strong>pas</strong> d'<code>owner_id</code> : un
+  événement naît sans propriétaire. L'attribution à un client se fait plus tard via une route dédiée
+  (qui insère dans <code>event_users</code> et fixe éventuellement <code>owner_id</code>).
+</p>
 <p>
   Pourquoi passer <code>db</code> alors que <code>getDb()</code> existe ? Pour la
   <strong>testabilité</strong> et la clarté : ces fonctions deviennent pures vis-à-vis de la base
@@ -230,13 +349,30 @@ export function insertEvent(db, { id, owner_id, name, event_date = null }) {
 <table class="api-table">
   <tr><th>Catégorie</th><th>Fonctions</th></tr>
   <tr><td>Cycle de vie</td><td><code>openRegistry</code>, <code>getDb</code>, <code>closeRegistry</code></td></tr>
-  <tr><td>users</td><td><code>insertUser</code>, <code>getUserByEmail</code>, <code>getUserById</code></td></tr>
+  <tr><td>users</td><td><code>insertUser</code>, <code>getUserByEmail</code>, <code>getUserById</code>, <code>listUsers</code>, <code>countSuperusers</code> (refus de retirer le dernier admin), <code>updateUser</code></td></tr>
+  <tr><td>registration_tokens</td><td><code>createRegistrationToken</code> (génère + hashe + renvoie le clair), <code>getRegistrationToken</code> (par hash), <code>markRegistrationTokenUsed</code></td></tr>
   <tr><td>events</td><td><code>listEvents</code>, <code>getEvent</code>, <code>insertEvent</code>, <code>updateEvent</code>, <code>deleteEvent</code></td></tr>
   <tr><td>box_tokens</td><td><code>insertBoxToken</code>, <code>listBoxTokensByEvent</code>, <code>listAllBoxTokens</code> (JOIN events → ajoute <code>event_name</code>, vue globale onglet Tokens), <code>getBoxTokenById</code>, <code>getBoxTokenByHash</code>, <code>updateBoxToken</code>, <code>updateBoxTokenSeen</code>, <code>deleteBoxToken</code></td></tr>
+  <tr><td>event_users</td><td><code>listEventUsers</code> (JOIN users), <code>listUserEvents</code>, <code>upsertEventUser</code> (INSERT … ON CONFLICT, <code>JSON.stringify(roles)</code>), <code>deleteEventUser</code>, <code>getEventUser</code></td></tr>
   <tr><td>sync_log</td><td><code>insertSyncLog</code></td></tr>
 </table>
 <p>
-  À noter : <code>listEvents</code> filtre selon le rôle — un admin voit tous les événements, un
-  client seulement les siens (<code>WHERE owner_id = ?</code>). C'est le socle du cloisonnement,
-  renforcé par le middleware <a href="#/hub-middleware-auth">requireOwner</a>.
+  À noter : <code>listEvents</code> filtre selon le rôle — un <strong>superuser</strong> voit tous les
+  événements, un <strong>client</strong> seulement ceux dont il est membre, via une jointure sur
+  <code>event_users</code> (et non plus un <code>WHERE owner_id = ?</code>) :
+</p>
+<pre><code class="js">export function listEvents(db, { userId, role }) {
+  if (role === 'superuser') return db.prepare('SELECT * FROM events ORDER BY created_at DESC').all();
+  return db.prepare(`
+    SELECT e.* FROM events e
+    INNER JOIN event_users eu ON eu.event_id = e.id
+    WHERE eu.user_id = ?
+    ORDER BY e.created_at DESC
+  `).all(userId);
+}</code></pre>
+<p>
+  C'est le socle du cloisonnement, le même critère d'appartenance que le middleware
+  <a href="#/hub-middleware-auth">requireOwner</a> applique route par route :
+  le <code>INNER JOIN event_users</code> ne laisse remonter que les événements où il existe une ligne
+  d'appartenance pour ce <code>userId</code>.
 </p>

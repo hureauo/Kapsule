@@ -8,6 +8,7 @@ import argon2 from 'argon2';
 import { createApp } from '../src/index.js';
 import { getDb, closeRegistry, insertUser, getUserByEmail, getBoxTokenByHash, insertEvent, upsertEventUser, countSuperusers } from '../src/registry.js';
 import { createHash } from 'node:crypto';
+import jwt from 'jsonwebtoken';
 
 let dir, request, tokenAdmin, tokenClient;
 
@@ -391,6 +392,9 @@ describe('boxAuth — middleware', () => {
     // Passer l'event en ready pour que GET /api/sync/event retourne 200
     await request.put(`/api/events/${eventIdBox}/status`)
       .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ status: 'preview' });
+    await request.put(`/api/events/${eventIdBox}/status`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ status: 'ready' });
 
     const tokenRes = await request.post(`/api/admin/events/${eventIdBox}/tokens`)
@@ -564,5 +568,69 @@ describe('event_users — gestion des utilisateurs par événement', () => {
     const res = await request.get(`/api/admin/events/${eventId}/users`)
       .set('Authorization', `Bearer ${tokenClient}`);
     assert.equal(res.status, 403);
+  });
+});
+
+// ── POST /api/events/:id/preview/token ────────────────────────────────────────
+// Accessible au propriétaire (client) et aux superusers (requireOwner).
+
+describe('POST /api/events/:id/preview/token', () => {
+  let evId, tokenOwner;
+
+  before(async () => {
+    // Crée l'événement (superuser)
+    const res = await request.post('/api/events')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Événement preview token' });
+    evId = res.body.id;
+
+    // Assigne un client owner et récupère son token
+    const db = getDb();
+    const hashOwner = await argon2.hash('owner-pass', { type: argon2.argon2id });
+    insertUser(db, { email: 'owner-preview@test.com', password_hash: hashOwner, role: 'client' });
+    const owner = getUserByEmail(db, 'owner-preview@test.com');
+    upsertEventUser(db, { event_id: evId, user_id: owner.id, roles: ['admin_borne'] });
+    const r = await request.post('/api/auth/login').send({ email: 'owner-preview@test.com', password: 'owner-pass' });
+    tokenOwner = r.body.token;
+  });
+
+  it('retourne un token JWT et une preview_url (superuser)', async () => {
+    const res = await request.post(`/api/events/${evId}/preview/token`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ expires_in: '1d' });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.token, 'token absent');
+    assert.ok(res.body.preview_url, 'preview_url absent');
+    assert.match(res.body.preview_url, /^https:\/\/essai-/);
+    assert.ok(res.body.preview_url.includes('?token='), 'token absent de l\'URL');
+  });
+
+  it('accessible au client owner de l\'événement', async () => {
+    const res = await request.post(`/api/events/${evId}/preview/token`)
+      .set('Authorization', `Bearer ${tokenOwner}`)
+      .send({});
+    assert.equal(res.status, 200);
+    assert.ok(res.body.token);
+  });
+
+  it('le JWT contient event_id et le rôle general', async () => {
+    const res = await request.post(`/api/events/${evId}/preview/token`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({});
+    const payload = jwt.decode(res.body.token);
+    assert.equal(payload.event_id, evId);
+    assert.ok(Array.isArray(payload.roles) && payload.roles.includes('general'));
+  });
+
+  it('retourne 404 pour un événement inexistant', async () => {
+    const res = await request.post('/api/events/00000000-0000-0000-0000-000000000000/preview/token')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({});
+    assert.equal(res.status, 404);
+  });
+
+  it('retourne 401 sans token', async () => {
+    const res = await request.post(`/api/events/${evId}/preview/token`).send({});
+    assert.equal(res.status, 401);
   });
 });

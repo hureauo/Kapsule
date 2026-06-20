@@ -1,3 +1,5 @@
+import { getRole as roleFromToken } from './roles.js';
+
 const TOKEN_KEY = 'hub_token';
 
 export function getToken() { return localStorage.getItem(TOKEN_KEY); }
@@ -5,11 +7,7 @@ export function saveToken(t) { localStorage.setItem(TOKEN_KEY, t); }
 export function clearToken() { localStorage.removeItem(TOKEN_KEY); }
 export function isAuthenticated() { return !!getToken(); }
 
-export function getRole() {
-  const token = getToken();
-  if (!token) return null;
-  try { return JSON.parse(atob(token.split('.')[1])).role; } catch { return null; }
-}
+export function getRole() { return roleFromToken(getToken()); }
 
 async function apiFetch(path, opts = {}) {
   const token = getToken();
@@ -61,7 +59,13 @@ export const api = {
   deleteBoxToken: (tokenId) => apiFetch(`/admin/tokens/${tokenId}`, { method: 'DELETE' }),
   updateBoxToken: (tokenId, fields) => apiFetch(`/admin/tokens/${tokenId}`, { method: 'PUT', body: fields }),
   assignEventOwner: (eventId, email) => apiFetch(`/events/${eventId}/owner`, { method: 'PUT', body: { email } }),
-  importPreviewConfig: (eventId, payload) => apiFetch(`/events/${eventId}/config`, { method: 'POST', body: payload }),
+  previewStatus: (eventId) => apiFetch(`/events/${eventId}/preview/status`),
+  previewStart:  (eventId) => apiFetch(`/events/${eventId}/preview/start`, { method: 'POST' }),
+  previewStop:   (eventId) => apiFetch(`/events/${eventId}/preview/stop`,  { method: 'POST' }),
+  generatePreviewToken: (eventId, expires_in) => apiFetch(`/events/${eventId}/preview/token`, { method: 'POST', body: { expires_in } }),
+  listVersions:   (eventId) => apiFetch(`/events/${eventId}/versions`),
+  getVersion:     (eventId, versionId) => apiFetch(`/events/${eventId}/versions/${versionId}`),
+  restoreVersion: (eventId, versionId) => apiFetch(`/events/${eventId}/versions/${versionId}/restore`, { method: 'POST' }),
 
   // Admin : gestion des comptes clients
   listUsers: () => apiFetch('/admin/users'),

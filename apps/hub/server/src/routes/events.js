@@ -2,30 +2,38 @@ import { Router } from 'express';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
-import { THEMES, TEXT_FIELDS } from '@kapsule/core';
+import jwt from 'jsonwebtoken';
+import { THEMES } from '@kapsule/core';
 import {
   getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog, upsertEventUser,
   getUserByEmail, insertUser, createRegistrationToken, listUsers,
 } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
+import { META_KEYS, applyEventConfig } from '../eventConfig.js';
 import { requireUser, requireOwner } from '../middleware/auth.js';
+import { provisionPreview, deprovisionPreview, slugFor, dockerCli } from '../preview/provisioner.js';
+import { captureSnapshot, resolveAuthor } from '../versioning.js';
+import { deleteEventVersions } from '../registry.js';
 
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'superuser') return res.status(403).json({ error: 'Réservé aux admins' });
   next();
 }
 
-// Statuts à partir desquels l'édition est gelée (Hub connaît un statut ≥ live)
-const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
+// Statuts à partir desquels l'édition de contenu (questions, meta) est gelée.
+// 'ready' gèle le contenu (config validée), mais autorise encore un retour à 'preview'.
+// Les statuts live+ gèlent aussi les transitions de statut (Borne maître ou push effectué).
+const CONTENT_FROZEN = new Set(['ready', 'live', 'closed', 'pushed', 'processed', 'waiting']);
+const STATUS_FROZEN  = new Set(['live', 'closed', 'pushed', 'processed', 'waiting']);
 
-function isFrozen(status) {
-  return FROZEN_STATUSES.has(status);
-}
+function isContentFrozen(status) { return CONTENT_FROZEN.has(status); }
+function isStatusFrozen(status)  { return STATUS_FROZEN.has(status); }
 
-// Transitions manuelles autorisées : draft↔ready uniquement
+// Transitions manuelles Hub : depuis chaque statut, les statuts cibles autorisés (§2)
 const MANUAL_TRANSITIONS = new Map([
-  ['draft', 'ready'],
-  ['ready', 'draft'],
+  ['draft',   new Set(['preview'])],
+  ['preview', new Set(['draft', 'ready'])],
+  ['ready',   new Set(['preview'])],
 ]);
 
 // Enrichit un événement avec ses event_meta (thème, textes, idle_timeout).
@@ -41,7 +49,7 @@ function withMeta(event, dataDir) {
   }
 }
 
-export function makeEventsRouter(dataDir) {
+export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
   const router = Router();
 
   // ── GET /api/events ────────────────────────────────────────────────────────
@@ -51,7 +59,7 @@ export function makeEventsRouter(dataDir) {
   });
 
   // ── POST /api/events ───────────────────────────────────────────────────────
-  router.post('/', requireUser, requireAdmin, (req, res, next) => {
+  router.post('/', requireUser, requireAdmin, async (req, res, next) => {
     try {
       const { name, event_date } = req.body;
       if (!name || typeof name !== 'string' || !name.trim()) {
@@ -76,7 +84,18 @@ export function makeEventsRouter(dataDir) {
       // Initialise db.sqlite avec le schéma + 4 questions par défaut
       openEventDb(id, dataDir);
 
-      res.status(201).json(getEvent(db, id));
+      // Auto-provisioning preview (best-effort : un échec Docker ne bloque pas la création).
+      // La preview est lancée → on marque l'état désiré 'running' pour qu'elle soit
+      // réconciliée au boot. Un échec laisse 'stopped' (défaut) : pas de fantôme à relancer.
+      let preview_url = null;
+      try {
+        preview_url = await provisionPreview(id, docker);
+        updateEvent(db, id, { preview_desired: 'running' });
+      } catch (err) {
+        console.error('[provisioner] échec provision preview pour', id, err.message);
+      }
+
+      res.status(201).json({ ...getEvent(db, id), preview_url });
     } catch (err) {
       next(err);
     }
@@ -91,7 +110,7 @@ export function makeEventsRouter(dataDir) {
   router.put('/:eventId', requireUser, requireOwner, (req, res, next) => {
     try {
       const event = req.event;
-      if (isFrozen(event.status)) {
+      if (isContentFrozen(event.status)) {
         return res.status(409).json({ error: `Édition impossible : événement en statut ${event.status}` });
       }
       const { name, event_date } = req.body;
@@ -101,21 +120,14 @@ export function makeEventsRouter(dataDir) {
 
       // Champs event_meta : thème, textes du parcours, idle_timeout, consent_text
       const { theme, idle_timeout } = req.body;
-      const metaUpdates = {};
-      if (theme !== undefined) {
-        if (!THEMES.includes(theme)) return res.status(400).json({ error: `Thème invalide : ${theme}` });
-        metaUpdates.theme = theme;
+      if (theme !== undefined && !THEMES.includes(theme)) {
+        return res.status(400).json({ error: `Thème invalide : ${theme}` });
       }
-      if (idle_timeout !== undefined) metaUpdates.idle_timeout = String(idle_timeout);
-      for (const key of Object.keys(TEXT_FIELDS)) {
-        if (req.body[key] !== undefined) metaUpdates[key] = String(req.body[key]);
-      }
-      if (Object.keys(metaUpdates).length > 0) {
+      const metaKeys = META_KEYS.filter(k => req.body[k] !== undefined);
+      if (metaKeys.length > 0) {
+        const meta = Object.fromEntries(metaKeys.map(k => [k, req.body[k]]));
         const evDb = openEventDb(event.id, dataDir);
-        const upsert = evDb.prepare(
-          'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'
-        );
-        for (const [k, v] of Object.entries(metaUpdates)) upsert.run(k, v);
+        applyEventConfig(evDb, { mode: 'overwrite', meta });
       }
 
       if (Object.keys(fields).length > 0) {
@@ -124,6 +136,9 @@ export function makeEventsRouter(dataDir) {
       }
 
       const db = getDb();
+      const edb = openEventDb(event.id, dataDir);
+      captureSnapshot(db, edb, { event_id: event.id, author: resolveAuthor(db, req.user) });
+
       res.json(withMeta(getEvent(db, event.id), dataDir));
     } catch (err) {
       next(err);
@@ -137,14 +152,14 @@ export function makeEventsRouter(dataDir) {
       const { status } = req.body;
       if (!status) return res.status(400).json({ error: 'status requis' });
 
-      if (isFrozen(event.status)) {
+      if (isStatusFrozen(event.status)) {
         return res.status(409).json({ error: `Transition impossible : événement en statut ${event.status}` });
       }
 
       const allowed = MANUAL_TRANSITIONS.get(event.status);
-      if (allowed !== status) {
+      if (!allowed || !allowed.has(status)) {
         return res.status(400).json({
-          error: `Transition non autorisée : ${event.status} → ${status}. Seules draft↔ready sont manuelles.`,
+          error: `Transition non autorisée : ${event.status} → ${status}. Transitions manuelles : draft↔preview, preview↔ready.`,
         });
       }
 
@@ -184,7 +199,6 @@ export function makeEventsRouter(dataDir) {
         pulled_at: event.pulled_at,
         pushed_at: event.pushed_at,
         processed_at: event.processed_at,
-        purged_at: event.purged_at,
       },
       tokens,
       jobs: { total: jobs.length, done: jobsDone, failed: jobsFailed, list: jobs },
@@ -195,11 +209,12 @@ export function makeEventsRouter(dataDir) {
   // ── POST /api/events/:eventId/config — import config depuis UI Hub (admin) ──
   // body: { mode: 'overwrite'|'merge', questions: [...], meta: { theme, ... } }
   // Protégé par requireUser (JWT) — distinct de POST /api/sync/events/:id/config (box token).
+  // Plus d'appelant UI depuis le retrait du write-back preview (importPreviewConfig supprimé).
+  // Conservé volontairement : utilisable via API directe ou futur outillage admin.
   router.post('/:eventId/config', requireUser, requireOwner, (req, res, next) => {
     try {
       const event = req.event;
-      const FROZEN = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
-      if (FROZEN.has(event.status)) {
+      if (isContentFrozen(event.status)) {
         return res.status(409).json({ error: `Import impossible : événement en statut ${event.status}` });
       }
 
@@ -208,38 +223,8 @@ export function makeEventsRouter(dataDir) {
         return res.status(400).json({ error: 'mode doit être overwrite ou merge' });
       }
 
-      const META_KEYS = ['theme', 'idle_timeout', ...Object.keys(TEXT_FIELDS)];
       const edb = openEventDb(event.id, dataDir);
-      const upsert = edb.prepare(
-        'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'
-      );
-
-      if (meta && typeof meta === 'object') {
-        for (const key of META_KEYS) {
-          if (meta[key] === undefined) continue;
-          if (mode === 'merge') {
-            const existing = edb.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value;
-            if (existing && existing.trim() !== '') continue;
-          }
-          if (key === 'theme' && !THEMES.includes(meta[key])) continue;
-          upsert.run(key, String(meta[key]));
-        }
-      }
-
-      if (Array.isArray(questions)) {
-        if (mode === 'overwrite') edb.prepare('DELETE FROM questions').run();
-        const existingTexts = new Set(edb.prepare('SELECT text FROM questions').all().map(q => q.text));
-        const insert = edb.prepare(
-          'INSERT INTO questions (text, max_duration, countdown, order_index, enabled) VALUES (?, ?, ?, ?, ?)'
-        );
-        const maxRow = edb.prepare('SELECT MAX(order_index) as m FROM questions').get();
-        let nextOrder = (maxRow?.m ?? -1) + 1;
-        for (const q of questions) {
-          if (!q.text || typeof q.text !== 'string') continue;
-          if (mode === 'merge' && existingTexts.has(q.text)) continue;
-          insert.run(q.text.slice(0, 500), q.max_duration ?? 60, q.countdown ?? 3, nextOrder++, q.enabled !== undefined ? (q.enabled ? 1 : 0) : 1);
-        }
-      }
+      applyEventConfig(edb, { mode, meta, questions });
 
       const db = getDb();
       insertSyncLog(db, { event_id: event.id, action: 'config_import', detail: { mode, questions: questions?.length ?? 0 } });
@@ -278,13 +263,98 @@ export function makeEventsRouter(dataDir) {
     } catch (err) { next(err); }
   });
 
+  // ── POST /api/events/:eventId/preview/token ──────────────────────────────
+  // Génère un JWT scopé à cet événement avec le rôle `general`.
+  // Accessible au propriétaire (client) et aux superusers — pas uniquement superuser.
+  // body optionnel : { expires_in: '7d' }
+  router.post('/:eventId/preview/token', requireUser, requireOwner, (req, res) => {
+    const jwtSecret = process.env.JWT_SECRET ?? 'change-me';
+    const expiresIn = req.body?.expires_in ?? '7d';
+    const token = jwt.sign(
+      { roles: ['general'], event_id: req.event.id },
+      jwtSecret,
+      { expiresIn }
+    );
+
+    const slug = slugFor(req.event.id);
+    const domain = process.env.EDGE_DOMAIN ?? 'kapsule.hureau.com';
+    const preview_url = `https://essai-${slug}.${domain}?token=${token}`;
+
+    res.json({ token, preview_url, expires_in: expiresIn });
+  });
+
+  // ── GET /api/events/:eventId/preview/status ───────────────────────────────
+  // Retourne l'état du container preview (up/down) via docker inspect.
+  // Asymétrie de droits intentionnelle : status/token accessibles au propriétaire
+  // (le client peut consulter l'état et générer un lien d'essai), tandis que
+  // start/stop sont réservés aux superusers (contrôle des ressources Docker).
+  router.get('/:eventId/preview/status', requireUser, requireOwner, async (req, res, next) => {
+    try {
+      const slug = slugFor(req.event.id);
+      const domain = process.env.EDGE_DOMAIN ?? 'kapsule.hureau.com';
+      const preview_url = `https://essai-${slug}.${domain}`;
+      const up = await docker.running(`preview-${slug}`);
+      res.json({ up, preview_url, slug });
+    } catch (err) { next(err); }
+  });
+
+  // ── POST /api/events/:eventId/preview/start ───────────────────────────────
+  // Réservé aux superusers : démarre les containers preview. S'ils n'existent pas
+  // encore (événement créé avant l'auto-provisioning, ou provision échouée), on
+  // les provisionne à la volée — provisionPreview est idempotent.
+  router.post('/:eventId/preview/start', requireUser, requireAdmin, requireOwner, async (req, res, next) => {
+    try {
+      const slug = slugFor(req.event.id);
+      const frontend = `preview-${slug}`;
+      const backend  = `preview-backend-${slug}`;
+      // État désiré : doit tourner (réconcilié au boot / make vps-up).
+      updateEvent(getDb(), req.event.id, { preview_desired: 'running' });
+      if (!await docker.exists(frontend)) {
+        // Pas de container → on provisionne (crée les deux containers + token).
+        await provisionPreview(req.event.id, docker);
+        return res.json({ up: true, provisioned: true });
+      }
+      if (!await docker.running(frontend)) await docker.start(frontend);
+      if (await docker.exists(backend) && !await docker.running(backend)) await docker.start(backend);
+      res.json({ up: true });
+    } catch (err) {
+      console.error('[preview/start]', req.params.eventId, err.message);
+      next(Object.assign(err, { _docker: true }));
+    }
+  });
+
+  // ── POST /api/events/:eventId/preview/stop ────────────────────────────────
+  // Réservé aux superusers : arrête les containers sans les supprimer.
+  router.post('/:eventId/preview/stop', requireUser, requireAdmin, requireOwner, async (req, res, next) => {
+    try {
+      const slug = slugFor(req.event.id);
+      const frontend = `preview-${slug}`;
+      const backend  = `preview-backend-${slug}`;
+      // État désiré : éteinte volontairement → ne pas relancer au boot / vps-up.
+      updateEvent(getDb(), req.event.id, { preview_desired: 'stopped' });
+      if (await docker.running(frontend)) await docker.stop(frontend);
+      if (await docker.exists(backend) && await docker.running(backend)) await docker.stop(backend);
+      res.json({ up: false });
+    } catch (err) {
+      console.error('[preview/stop]', req.params.eventId, err.message);
+      next(Object.assign(err, { _docker: true }));
+    }
+  });
+
   // ── DELETE /api/events/:eventId — purge RGPD ──────────────────────────────
-  router.delete('/:eventId', requireUser, requireOwner, (req, res, next) => {
+  router.delete('/:eventId', requireUser, requireOwner, async (req, res, next) => {
     try {
       const event = req.event;
       const { confirm } = req.body;
       if (!confirm || confirm.trim() !== event.name.trim()) {
         return res.status(400).json({ error: 'Confirmation invalide : fournir { confirm: "<nom exact>" }' });
+      }
+
+      // Arrêter le container preview avant de supprimer le dossier (best-effort)
+      try {
+        await deprovisionPreview(event.id, docker);
+      } catch (err) {
+        console.error('[provisioner] échec deprovision pour', event.id, err.message);
       }
 
       // §11.11 : fermer le handle avant rm -rf
@@ -293,7 +363,10 @@ export function makeEventsRouter(dataDir) {
       rmSync(eventDir, { recursive: true, force: true });
 
       const db = getDb();
-      updateEvent(db, event.id, { status: 'purged', purged_at: new Date().toISOString() });
+      deleteEventVersions(db, event.id);
+      // status waiting + preview_desired stopped : l'event purgé ne doit pas être
+      // réconcilié au prochain vps-up (sinon on relancerait une preview fantôme).
+      updateEvent(db, event.id, { status: 'waiting', preview_desired: 'stopped' });
       insertSyncLog(db, { event_id: event.id, action: 'purge', detail: { name: event.name } });
 
       res.json({ ok: true });

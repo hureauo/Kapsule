@@ -80,13 +80,18 @@ router.post('/events/:id/config', validateUuidParams('id'), (req, res, next) =&g
   const { mode, questions, meta } = req.body;
   if (!['overwrite', 'merge'].includes(mode)) return res.status(400).json({ error: 'mode invalide' });
 
-  const META_KEYS = ['theme', 'idle_timeout', ...Object.keys(TEXT_FIELDS)];
   const edb = openEventDb(event.id, dataDir);
-  // meta : upsert clé par clé (en merge, on ne remplace pas une valeur non vide ; theme validé via THEMES)
-  // questions : en overwrite on vide d'abord ; en merge on ignore les textes déjà présents
+  applyEventConfig(edb, { mode, meta, questions });  // logique meta+questions centralisée
   // … insertSyncLog('config_import') …
   res.json({ ok: true });
 });</code></pre>
+<p>
+  La logique d'écriture (quelles clés <code>event_meta</code>, comment overwrite/merge se comportent)
+  ne vit plus ici : elle est centralisée dans <a href="#/hub-eventconfig"><code>eventConfig.js</code></a>
+  (<code>applyEventConfig</code>) et partagée à l'identique par les trois sites qui appliquent une
+  config Hub (cette route, le <code>PUT /:eventId</code> et l'import UI de
+  <a href="#/hub-routes-events">events.js</a>). Le détail des deux modes est documenté là-bas.
+</p>
 <p>
   C'est le pendant Hub de <a href="#/borne-sync-push">pushConfig</a> (la Borne <em>remonte</em> sa
   config). Comme toutes les routes de ce fichier, elle est protégée par

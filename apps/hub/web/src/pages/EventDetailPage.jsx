@@ -6,7 +6,13 @@ import QuestionEditor from '../components/QuestionEditor.jsx';
 import SyncStatus from '../components/SyncStatus.jsx';
 import VideoGallery from '../components/VideoGallery.jsx';
 
-const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
+const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'waiting']);
+
+const STATUS_LABEL = {
+  draft: 'Brouillon', preview: 'Preview', ready: 'Prêt', loaded: 'Chargé',
+  live: 'En cours', closed: 'Terminé', pushed: 'Poussé',
+  processed: 'Traité', waiting: 'En attente',
+};
 
 const THEME_OPTIONS = [
   { value: 'cute',   label: '🫧 Cutealism', hint: 'Doux, coloré, rassurant (défaut)' },
@@ -140,150 +146,42 @@ function DesignTab({ event, frozen, onSaved }) {
   );
 }
 
-// ── Onglet Aperçu ─────────────────────────────────────────────────────────────
-function ApercuTab({ event, previewTokens, onConfigImported }) {
-  const [importState, setImportState] = useState(null); // null | 'loading' | { questions, meta } | 'error'
-  const [importError, setImportError] = useState('');
-  const [modal, setModal] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [applyMsg, setApplyMsg] = useState('');
+// ── Box borne d'essai (haut de page) ──────────────────────────────────────────
+// Box d'état de la borne d'essai, affichée en haut de la page événement.
+function PreviewBox({ event }) {
+  const [status, setStatus] = useState(null); // { up, preview_url } | null pendant le chargement
 
-  // Borne preview avec une URL de location valide (point d'entrée pour lire la config)
-  const previewBorne = previewTokens.find(t => t.location && /^https?:\/\//.test(t.location)) ?? null;
-
-  async function fetchPreviewConfig() {
-    if (!previewBorne) return;
-    setImportState('loading');
-    setImportError('');
-    try {
-      // Lit la config directement sur la borne preview (endpoints publics)
-      const [eventRes, questionsRes] = await Promise.all([
-        fetch(`${previewBorne.location}/api/event`),
-        fetch(`${previewBorne.location}/api/questions`),
-      ]);
-      if (!eventRes.ok) throw new Error(`Borne preview inaccessible (${eventRes.status})`);
-      const [eventData, questions] = await Promise.all([eventRes.json(), questionsRes.json()]);
-
-      const meta = {
-        theme: eventData.theme,
-        idle_timeout: String(eventData.idle_timeout),
-        welcome_title: eventData.welcome_title ?? '',
-        welcome_subtitle: eventData.welcome_subtitle ?? '',
-        name_prompt: eventData.name_prompt ?? '',
-        consent_text: eventData.consent_text ?? '',
-        consent_details: eventData.consent_details ?? '',
-        thanks_text: eventData.thanks_text ?? '',
-      };
-      setImportState({ questions, meta });
-      setModal(true);
-    } catch (err) {
-      setImportState('error');
-      setImportError(err.message);
-    }
-  }
-
-  async function applyConfig(mode) {
-    setApplying(true);
-    setApplyMsg('');
-    try {
-      await api.importPreviewConfig(event.id, { ...importState, mode });
-      setApplyMsg('Configuration importée.');
-      setModal(false);
-      onConfigImported();
-    } catch (err) {
-      setApplyMsg(`Erreur : ${err.message}`);
-    } finally {
-      setApplying(false);
-    }
-  }
+  useEffect(() => {
+    api.previewStatus(event.id)
+      .then(setStatus)
+      .catch(() => setStatus({ up: false, preview_url: null }));
+  }, [event.id]);
 
   return (
-    <div className="tab-content">
-      <section className="panel-section">
-        <h3 className="panel-section__title">Bornes d'essai</h3>
-        {previewTokens.length === 0 && (
-          <p className="text--muted">Aucune borne d'essai pour cet événement.</p>
+    <section className="event-meta-section">
+      <div className="event-meta-row" style={{ gap: '10px', flexWrap: 'wrap' }}>
+        <span className="panel-section__title" style={{ margin: 0 }}>Borne d'essai</span>
+        {status === null
+          ? <span className="text--muted" style={{ fontSize: '14px' }}>Vérification…</span>
+          : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px' }}>
+              <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', background: status.up ? '#16a34a' : '#9ca3af' }} />
+              {status.up ? 'En ligne' : 'Hors ligne'}
+            </span>
+          )
+        }
+        {status?.up && status.preview_url && (
+          <a href={status.preview_url} target="_blank" rel="noopener noreferrer" className="btn btn--primary btn--sm">
+            Ouvrir la borne d'essai ↗
+          </a>
         )}
-        {previewTokens.map(t => (
-          <div key={t.id} className="preview-token-card">
-            <div>
-              <strong>{t.label || "Borne d'essai"}</strong>
-              {t.location && <span className="text--muted"> — {t.location}</span>}
-            </div>
-            <div style={{ display: 'flex', gap: '8px', marginTop: '8px', flexWrap: 'wrap' }}>
-              {t.location && /^https?:\/\//.test(t.location) && (
-                <a href={t.location} target="_blank" rel="noopener noreferrer" className="btn btn--ghost">
-                  Ouvrir ↗
-                </a>
-              )}
-            </div>
-            {!t.location && (
-              <p className="text--muted" style={{ fontSize: '0.85rem', marginTop: '0.5rem' }}>
-                Renseignez le champ « location » du token avec l'URL de la borne d'essai pour activer l'import.
-              </p>
-            )}
-          </div>
-        ))}
-      </section>
-
-      {previewBorne && (
-        <section className="panel-section">
-          <h3 className="panel-section__title">Importer la configuration de la preview</h3>
-          <p className="text--muted" style={{ marginBottom: '12px', fontSize: '14px' }}>
-            Récupère les questions et le design tels que configurés sur la borne d'essai,
-            et les applique à cet événement. Les vidéos ne sont jamais transférées.
-          </p>
-          <button
-            className="btn btn--primary"
-            onClick={fetchPreviewConfig}
-            disabled={importState === 'loading'}
-          >
-            {importState === 'loading' ? 'Récupération…' : 'Importer la config de la preview'}
-          </button>
-          {importState === 'error' && (
-            <p className="text--error" style={{ marginTop: '8px' }}>{importError}</p>
-          )}
-          {applyMsg && <p className="text--muted" style={{ marginTop: '8px' }}>{applyMsg}</p>}
-        </section>
+      </div>
+      {status && !status.up && (
+        <p className="text--muted" style={{ fontSize: '13px', marginTop: '6px' }}>
+          La borne d'essai n'est pas démarrée. Un administrateur peut la lancer depuis le panneau d'administration.
+        </p>
       )}
-
-      {modal && importState && importState !== 'loading' && importState !== 'error' && (
-        <div className="modal-overlay" onClick={() => setModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3 className="modal__title">Importer la config de la preview</h3>
-            <div className="modal__body">
-              <p style={{ marginBottom: '8px' }}>
-                <strong>{importState.questions?.length ?? 0} question(s)</strong> +{' '}
-                thème <strong>{importState.meta?.theme ?? '?'}</strong> récupérés depuis la borne d'essai.
-              </p>
-              <p className="text--muted" style={{ fontSize: '13px', marginBottom: '16px' }}>
-                Choisissez comment appliquer ces données à l'événement :
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <button
-                  className="btn btn--primary"
-                  onClick={() => applyConfig('overwrite')}
-                  disabled={applying}
-                >
-                  Écraser — remplacer questions + design par ceux de la preview
-                </button>
-                <button
-                  className="btn btn--ghost"
-                  onClick={() => applyConfig('merge')}
-                  disabled={applying}
-                >
-                  Fusionner — garder les champs Hub non vides déjà définis
-                </button>
-                <button className="btn btn--ghost" onClick={() => setModal(false)} disabled={applying}>
-                  Annuler
-                </button>
-              </div>
-              {applyMsg && <p className="text--muted" style={{ marginTop: '8px' }}>{applyMsg}</p>}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </section>
   );
 }
 
@@ -418,23 +316,132 @@ function UtilisateursTab({ eventId }) {
   );
 }
 
+// ── Onglet Historique ─────────────────────────────────────────────────────────
+
+const DIFF_TYPE_LABELS = {
+  questions_added:     (d) => `+ ${d.items.length} question(s) ajoutée(s)`,
+  questions_removed:   (d) => `- ${d.items.length} question(s) supprimée(s)`,
+  questions_modified:  (d) => `${d.items.length} question(s) modifiée(s)`,
+  questions_reordered: ()  => 'Questions réordonnées',
+  meta_changed: (d) => {
+    const labels = { theme: 'Thème', idle_timeout: "Délai d'inactivité", welcome_title: "Titre d'accueil", welcome_subtitle: 'Sous-titre', name_prompt: 'Invite nom', consent_text: 'Texte consentement', consent_details: 'Détails consentement', thanks_text: 'Message de remerciement' };
+    return `${labels[d.key] ?? d.key} : ${d.before ?? '∅'} → ${d.after ?? '∅'}`;
+  },
+};
+
+function VersionBlock({ version, eventId, isSuperuser, onRestored }) {
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [restoring, setRestoring] = useState(false);
+
+  async function load() {
+    if (detail) { setOpen(o => !o); return; }
+    const data = await api.getVersion(eventId, version.id);
+    setDetail(data);
+    setOpen(true);
+  }
+
+  async function restore() {
+    if (!confirm('Restaurer cette version ? L\'état actuel sera remplacé.')) return;
+    setRestoring(true);
+    try {
+      await api.restoreVersion(eventId, version.id);
+      onRestored();
+    } catch (err) {
+      alert(`Erreur : ${err.message}`);
+    } finally {
+      setRestoring(false);
+    }
+  }
+
+  const date = new Date(version.created_at.endsWith('Z') ? version.created_at : version.created_at + 'Z');
+  const dateStr = `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')} ${date.getHours().toString().padStart(2,'0')}h${date.getMinutes().toString().padStart(2,'0')}`;
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 6, marginBottom: 8, overflow: 'hidden' }}>
+      <button
+        onClick={load}
+        style={{ width: '100%', background: 'none', border: 'none', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', textAlign: 'left' }}
+      >
+        <span style={{ fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 }}>{dateStr}</span>
+        <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}>{version.summary}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && detail && (
+        <div style={{ padding: '0 14px 12px', borderTop: '1px solid var(--border)' }}>
+          {version.author && (
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+              Par : <strong>{version.author}</strong>
+            </p>
+          )}
+          {detail.diff.length === 0
+            ? <p className="text--muted" style={{ fontSize: 13, marginTop: 8 }}>Aucun changement détecté.</p>
+            : (
+              <ul style={{ margin: '8px 0 0', padding: '0 0 0 16px', fontSize: 13 }}>
+                {detail.diff.map((d, i) => (
+                  <li key={i} style={{ marginBottom: 4, color: d.type === 'questions_added' ? '#16a34a' : d.type === 'questions_removed' ? '#dc2626' : 'inherit' }}>
+                    {DIFF_TYPE_LABELS[d.type]?.(d) ?? d.type}
+                    {(d.type === 'questions_added' || d.type === 'questions_removed' || d.type === 'questions_modified') && d.items && (
+                      <ul style={{ marginTop: 2, paddingLeft: 14, color: 'var(--text-muted)' }}>
+                        {d.items.map((item, j) => <li key={j} style={{ fontSize: 12 }}>{item}</li>)}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )
+          }
+          {isSuperuser && (
+            <button className="btn btn--ghost btn--sm" style={{ marginTop: 10 }} onClick={restore} disabled={restoring}>
+              {restoring ? 'Restauration…' : 'Restaurer cette version'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HistoriqueTab({ event, isSuperuser, onRestored }) {
+  const [versions, setVersions] = useState(null);
+
+  useEffect(() => {
+    api.listVersions(event.id).then(setVersions).catch(() => setVersions([]));
+  }, [event.id]);
+
+  return (
+    <div className="tab-content">
+      <section className="panel-section">
+        <h3 className="panel-section__title">Historique des modifications</h3>
+        {versions === null && <p className="text--muted">Chargement…</p>}
+        {versions?.length === 0 && <p className="text--muted">Aucune modification enregistrée.</p>}
+        {versions?.map(v => (
+          <VersionBlock
+            key={v.id}
+            version={v}
+            eventId={event.id}
+            isSuperuser={isSuperuser}
+            onRestored={onRestored}
+          />
+        ))}
+      </section>
+    </div>
+  );
+}
+
 // ── Page principale ───────────────────────────────────────────────────────────
 export default function EventDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [event, setEvent] = useState(null);
-  const [tokens, setTokens] = useState([]);
   const [tab, setTab] = useState('Questions');
   const [error, setError] = useState('');
 
   const loadEvent = useCallback(async () => {
     try {
-      const [ev, syncInfo] = await Promise.all([
-        api.getEvent(id),
-        api.getSyncInfo(id).catch(() => ({ tokens: [] })),
-      ]);
+      const ev = await api.getEvent(id);
       setEvent(ev);
-      setTokens(syncInfo.tokens ?? []);
     } catch (err) {
       if (err.status === 401) { clearToken(); navigate('/login', { replace: true }); }
       else setError(err.message);
@@ -457,11 +464,10 @@ export default function EventDetailPage() {
 
   const frozen = FROZEN_STATUSES.has(event.status);
   const notYetPulled = event.pulled_at && event.updated_at > event.pulled_at;
-  const previewTokens = tokens.filter(t => t.is_preview);
   const isSuperuser = getRole() === 'superuser';
   const TABS = [
     'Questions', 'Design', 'Synchro', 'Galerie',
-    ...(previewTokens.length > 0 ? ['Aperçu'] : []),
+    'Historique',
     ...(isSuperuser ? ['Utilisateurs'] : []),
   ];
 
@@ -487,21 +493,40 @@ export default function EventDetailPage() {
           </div>
         )}
 
+        <PreviewBox event={event} />
+
         <section className="event-meta-section">
           <div className="event-meta-row">
             <span className="text--muted">Date : {formatDate(event.event_date)}</span>
-            <span className={`status-badge status-badge--${event.status}`}>{event.status}</span>
+            <span className={`status-badge status-badge--${event.status}`}>
+              {STATUS_LABEL[event.status] ?? event.status}
+            </span>
           </div>
           {!frozen && (
-            <div className="event-meta-row">
+            <div className="event-meta-row" style={{ gap: '8px', flexWrap: 'wrap' }}>
               {event.status === 'draft' && (
-                <button className="btn btn--primary" onClick={() => handleStatusChange('ready')}>
-                  Marquer prêt
+                <button className="btn btn--primary" onClick={() => handleStatusChange('preview')}>
+                  Lancer la preview
                 </button>
               )}
-              {event.status === 'ready' && (
+              {event.status === 'preview' && (<>
                 <button className="btn btn--ghost" onClick={() => handleStatusChange('draft')}>
                   Repasser en brouillon
+                </button>
+                <button
+                  className="btn btn--primary"
+                  onClick={() => {
+                    if (confirm('Valider la configuration ? Le contenu (questions, design) sera gelé et la borne réelle pourra se connecter.')) {
+                      handleStatusChange('ready');
+                    }
+                  }}
+                >
+                  Valider la configuration
+                </button>
+              </>)}
+              {event.status === 'ready' && (
+                <button className="btn btn--ghost" onClick={() => handleStatusChange('preview')}>
+                  Retour en preview
                 </button>
               )}
             </div>
@@ -549,12 +574,8 @@ export default function EventDetailPage() {
           </div>
         )}
 
-        {tab === 'Aperçu' && (
-          <ApercuTab
-            event={event}
-            previewTokens={previewTokens}
-            onConfigImported={loadEvent}
-          />
+        {tab === 'Historique' && (
+          <HistoriqueTab event={event} isSuperuser={isSuperuser} onRestored={loadEvent} />
         )}
 
         {tab === 'Utilisateurs' && isSuperuser && (

@@ -1,0 +1,22 @@
+# Override dev local pour docker-compose.hub.yml.
+#
+# Usage :
+#   docker compose -f docker-compose.hub.yml -f docker-compose.hub.dev.yml up
+#
+# Ce fichier ne hardcode aucun domaine : EDGE_DOMAIN est lu depuis le .env local
+# (mettre EDGE_DOMAIN=kapsule.localhost dans ton .env pour le dev).
+# Seul DEV_CERT_DIR est fixé ici — il n'a aucun sens en prod et n'est lu que par
+# l'entrypoint edge quand la variable est présente.
+#
+# Prérequis : avoir lancé `bash docker/setup-dev-certs.sh` une fois pour générer
+# docker/certs/fullchain.pem et docker/certs/privkey.pem.
+
+services:
+  edge:
+    environment:
+      # Indique à l'entrypoint où trouver les certs mkcert.
+      # On monte dans /etc/nginx/certs/dev (répertoire neutre, toujours accessible)
+      # plutôt que dans /etc/letsencrypt qui est read-only dans l'image nginx:alpine.
+      - DEV_CERT_DIR=/etc/nginx/certs/dev
+    volumes:
+      - ./docker/certs:/etc/nginx/certs/dev:ro

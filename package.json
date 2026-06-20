@@ -11,7 +11,13 @@
   "scripts": {
     "test": "if find packages apps -maxdepth 3 -name 'package.json' -not -path '*/node_modules/*' 2>/dev/null | grep -q .; then npm test --workspaces --if-present; fi",
     "dev:borne": "npm run dev --workspace=apps/borne/server",
-    "dev:hub": "npm run dev --workspace=apps/hub/server"
+    "dev:hub": "npm run dev --workspace=apps/hub/server",
+    "smoke:hub": "docker/smoke-hub.sh",
+    "smoke:borne": "docker/smoke-borne.sh",
+    "smoke:preview": "docker/smoke-preview.sh",
+    "smoke": "docker/smoke-hub.sh && docker/smoke-borne.sh && docker/smoke-preview.sh",
+    "preview:start": "docker/preview-start.sh",
+    "preview:stop": "docker/preview-stop.sh"
   },
   "engines": {
     "node": ">=20"

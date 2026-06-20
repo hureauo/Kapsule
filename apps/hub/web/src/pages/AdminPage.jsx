@@ -1,20 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, clearToken, getRole } from '../api/client.js';
+import { formatBytes, formatDate } from '../utils/format.js';
 
 // ── Utilitaires ───────────────────────────────────────────────────────────────
-
-function formatBytes(b) {
-  if (!b) return '0 o';
-  if (b < 1024 * 1024) return `${Math.round(b / 1024)} Ko`;
-  if (b < 1024 * 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} Mo`;
-  return `${(b / (1024 * 1024 * 1024)).toFixed(2)} Go`;
-}
-
-function formatDate(d) {
-  if (!d) return '—';
-  return new Date(d).toLocaleString('fr-FR');
-}
 
 function CopyButton({ text, label = 'Copier', labelDone = '✓', className = 'btn btn--ghost btn--sm' }) {
   const [done, setDone] = useState(false);
@@ -173,6 +162,12 @@ function EventPanel({ event, onRefresh }) {
   const [isPreview, setIsPreview] = useState(false);
   const [tokenErr, setTokenErr] = useState('');
 
+  // Preview auto-provisionnée
+  const [previewStatus, setPreviewStatus] = useState(null);
+  const [linkExpiry, setLinkExpiry] = useState('7d');
+  const [generatedLink, setGeneratedLink] = useState('');
+  const [linkLoading, setLinkLoading] = useState(false);
+
   // event_users
   const [eventUsers, setEventUsers] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
@@ -197,7 +192,37 @@ function EventPanel({ event, onRefresh }) {
     } catch { /* ignore */ }
   }, [event.id]);
 
-  useEffect(() => { loadTokens(); loadUsers(); }, [loadTokens, loadUsers]);
+  const loadPreviewStatus = useCallback(async () => {
+    try { setPreviewStatus(await api.previewStatus(event.id)); }
+    catch { setPreviewStatus({ up: false, preview_url: null }); }
+  }, [event.id]);
+
+  const [toggling, setToggling] = useState(false);
+  async function handleTogglePreview() {
+    setToggling(true);
+    try {
+      if (previewStatus?.up) {
+        await api.previewStop(event.id);
+      } else {
+        await api.previewStart(event.id);
+      }
+      await loadPreviewStatus();
+    } catch (err) { alert(`Erreur : ${err.message}`); }
+    finally { setToggling(false); }
+  }
+
+  useEffect(() => { loadTokens(); loadUsers(); loadPreviewStatus(); }, [loadTokens, loadUsers, loadPreviewStatus]);
+
+  async function handleGenerateLink() {
+    setLinkLoading(true);
+    setGeneratedLink('');
+    try {
+      const { preview_url } = await api.generatePreviewToken(event.id, linkExpiry);
+      setGeneratedLink(preview_url);
+    } finally {
+      setLinkLoading(false);
+    }
+  }
 
   function toggleRole(role) {
     setSelectedRoles(prev => prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role]);
@@ -310,6 +335,43 @@ function EventPanel({ event, onRefresh }) {
         )}
         {usersMsg && <p className="text--muted" style={{ fontSize: '12px', marginTop: '4px' }}>{usersMsg}</p>}
         {usersErr && <p className="error-msg" style={{ fontSize: '12px', marginTop: '4px' }}>{usersErr}</p>}
+      </div>
+
+      {/* Bloc preview */}
+      <div className="event-panel__section">
+        <p className="event-panel__label">Borne d'essai</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px', fontSize: '13px' }}>
+          {previewStatus === null && <span className="text--muted">Vérification…</span>}
+          {previewStatus !== null && (
+            <>
+              <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: previewStatus.up ? '#22c55e' : '#ef4444' }} />
+              <span className="text--muted">{previewStatus.up ? 'En ligne' : 'Hors ligne'}</span>
+              <button className="btn btn--ghost btn--sm" onClick={handleTogglePreview} disabled={toggling}>
+                {toggling ? '…' : previewStatus.up ? 'Éteindre' : 'Démarrer'}
+              </button>
+              {previewStatus.up && previewStatus.preview_url && (
+                <a href={previewStatus.preview_url} target="_blank" rel="noopener noreferrer" className="btn btn--ghost btn--sm">Ouvrir ↗</a>
+              )}
+            </>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+          <span className="text--muted" style={{ fontSize: '12px' }}>Lien JWT valide</span>
+          <select value={linkExpiry} onChange={e => setLinkExpiry(e.target.value)} style={{ fontSize: '12px', padding: '2px 4px' }}>
+            <option value="1d">1 jour</option>
+            <option value="7d">7 jours</option>
+            <option value="30d">30 jours</option>
+          </select>
+          <button className="btn btn--ghost btn--sm" onClick={handleGenerateLink} disabled={linkLoading}>
+            {linkLoading ? 'Génération…' : 'Générer lien'}
+          </button>
+        </div>
+        {generatedLink && (
+          <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <code style={{ fontSize: '11px', wordBreak: 'break-all', flex: 1 }}>{generatedLink}</code>
+            <CopyButton text={generatedLink} label="Copier" labelDone="✓" />
+          </div>
+        )}
       </div>
 
       {/* Bloc tokens */}

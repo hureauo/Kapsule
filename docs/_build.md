@@ -259,6 +259,26 @@ Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.s
   front, hors périmètre doc-sync (code).
 - Vérifs : manifeste/fichiers OK (50/50), liens internes OK (0 mort), `node --check pages.js` OK.
 
+## Sync incrémentale — Phase 8R (extraction applyEventConfig)
+- Diff base : commit `cc0a5fe` (working tree clean). Périmètre code = **Hub** : nouveau module
+  `eventConfig.js` (`META_KEYS` source unique + `applyEventConfig(edb,{mode,meta,questions})`),
+  dédup des 3 sites config (`events.js` PUT + import, `sync.js` push-config) ; `admin.js` dérive
+  `META_HASH_KEYS = META_KEYS`. Pur refactor sans changement de comportement observable.
+- PAGE AJOUTÉE : `hub-eventconfig.html` (+ entrée pages.js, groupe « 3 — Le serveur Hub », après
+  hub-eventstore) — source unique META_KEYS, applyEventConfig (extrait réel commenté), 2 modes,
+  js-note « fonction recevant le handle DB » (injection de dépendance, see-also core-eventdbschema),
+  table d'API, « ce qu'il ne fait pas » (n'ouvre/ferme pas, ne valide pas mode/statut, ne log pas).
+- hub-routes-sync : extrait `POST /events/:id/config` mis à jour — le bloc META_KEYS+upsert inline
+  (qui ne reflétait plus le code) remplacé par l'appel `applyEventConfig(edb,{mode,meta,questions})`
+  + paragraphe de renvoi vers hub-eventconfig. Prose overwrite/merge conservée (toujours exacte).
+- ARCHITECTURE.md : `eventConfig.js` ajouté à la table « Modules transversaux » (section Hub).
+- Sans impact doc : `events.js` (PUT/import config n'avaient pas d'extrait inline — seules les lignes
+  de table d'API, inchangées) ; `admin.js` (`configHash`/`META_HASH_KEYS` non documenté → refactor
+  interne invisible) ; `eventConfig.test.js` (pattern générique tests-runner) ; ROADMAP.md (pas docs/).
+- pages.js : `js` de la nouvelle page (fonction recevant le handle DB, injection de dépendance,
+  overwrite/merge, META_KEYS source unique).
+- Vérifs : manifeste/fichiers OK (51/51), liens internes OK (0 mort), `node --check pages.js` OK.
+
 ---
 
 ## Conventions du site (décidées avec l'utilisateur)
@@ -286,6 +306,7 @@ Documentation complète et vérifiée. Pour lire : `cd docs && python3 -m http.s
 - hub-config : (renvoi process.env), objet config exporté
 - hub-registry : singleton (let _db=null), pattern open/get/close, fonctions prennent db en param, SQL CHECK/FK, Object.keys/filter/map pour UPDATE dynamique
 - hub-eventstore : **Map**, ordre d'insertion garanti, LRU via delete+set, entries().next().value, destructuring array
+- hub-eventconfig : fonction recevant le handle DB (injection de dépendance, vs singleton registry), modes overwrite/merge, META_KEYS source unique dérivée de TEXT_FIELDS (renvois better-sqlite3 → core-eventdbschema)
 - hub-middleware-auth : **jsonwebtoken** (verify/sign), algorithms:['HS256'], optional chaining, ?token=, slice
 - hub-middleware-box : createHash sha256 (renvoi), headers['x-...'] minuscules
 - hub-middleware-validate : closure qui retourne un middleware (factory), RegExp literal + .test, rest params ...names
@@ -452,6 +473,34 @@ Refresh LRU : delete + re-insert en fin de Map.
 ---
 
 ## Journal de synchro incrémentale
+
+### 2026-06-19 — Régénération SECTION 1 (Hub modules transversaux)
+Régénération depuis l'état actuel du code (pas de diff git). Source de cadrage : ARCHITECTURE.md.
+Périmètre : 7 pages (config, registry, eventStore, middleware auth/box/validate, index).
+- hub-config : déjà conforme au code (aucune retouche).
+- hub-eventstore : déjà conforme (LRU 10, Map delete+set, closeEventDb §11.11) — aucune retouche.
+- hub-middleware-box : déjà conforme (req.box {token_id,event_id,is_preview}, §11.20) — aucune retouche.
+- hub-middleware-validate : déjà conforme (validateUuidParams, path traversal) — aucune retouche.
+- hub-index : seed corrigé `role:'admin'` → `role:'superuser'` (reste conforme : trust proxy,
+  error handler multer, seedAdminIfNeeded). Bannière de boot volontairement simplifiée (rappel).
+- hub-middleware-auth : `requireOwner` réécrit — vérification d'**appartenance** via `getEventUser`
+  (table event_users) + rôle `superuser`, au lieu de `event.owner_id === req.user.sub` / `'admin'`.
+  Intro, extrait, prose et table d'API mis à jour (403 = non-membre). owner_id ≠ autorisation.
+- hub-registry : refonte ciblée. Intro (7 tables). Schéma users (CHECK superuser/client, password_hash
+  nullable) + events (owner_id nullable). Nouvelles sections registration_tokens et event_users
+  (roles JSON, appartenance). Nouvelle section « migration par reconstruction de table » (rename role
+  admin→superuser via DROP/CREATE/INSERT CASE, owner_id NOT NULL→nullable, PRAGMA foreign_keys=OFF).
+  insertEvent corrigé (signature `{id,name,event_date}`, plus d'owner_id). listEvents corrigé
+  (INNER JOIN event_users, plus de WHERE owner_id). Inventaire des fonctions complété (users étendu,
+  registration_tokens, event_users).
+- invariants.html : inchangé — §11.13 (RGPD), §11.13b (token hash+clair), §11.20, §11.11 déjà
+  corrects pour cette section ; le passage owner_id→event_users est un changement de mécanisme
+  d'auth, pas un nouvel invariant numéroté.
+- pages.js : `js` enrichi sur hub-registry (registration_tokens, event_users, migration par
+  reconstruction) et hub-middleware-auth (requireOwner appartenance).
+- Vérifs : manifeste/fichiers 50/50 OK, liens internes 0 mort, `node --check pages.js` OK.
+- Sections 2 à 9 restent à régénérer (Hub routers, Hub worker, Hub preview [provisioner.js = page à
+  CRÉER + edge nginx], Borne transversaux, Borne routers, Borne sync, Front web, Architecture).
 
 ### 2026-06-18 — Phase 7E (nettoyage env + Hub front Utilisateurs)
 Diff source : `.env.example`, `apps/borne/server/src/config.js`, `apps/hub/web/src/api/client.js`, `apps/hub/web/src/pages/EventDetailPage.jsx` (+ PROJET/ROADMAP source de vérité).

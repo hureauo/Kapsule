@@ -4,7 +4,9 @@ services:
       context: .
       dockerfile: apps/borne/server/Dockerfile
     environment:
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - NODE_ENV=production
+      # Mot de passe admin/tech en mode autonome (login borne sans Hub).
+      - TECH_PASSWORD=${TECH_PASSWORD:-tech123}
       - JWT_SECRET=${JWT_SECRET:-change-me}
       - HUB_URL=${HUB_URL:-}
       - BOX_TOKEN=${BOX_TOKEN:-}

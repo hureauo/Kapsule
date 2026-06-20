@@ -18,6 +18,7 @@ const TEST_CFG = {
   dataDir: '',
   hubUrl: 'https://hub.test',
   boxToken: 'tok',
+  skipRateLimits: true,
 };
 
 async function setup() {
@@ -470,6 +471,18 @@ describe('POST /api/sync/push-config', () => {
   it('retourne 401 sans token', async () => {
     const res = await request(app).post('/api/sync/push-config');
     assert.equal(res.status, 401);
+  });
+
+  it('retourne 403 en mode preview (write-back interdit)', async () => {
+    teardown(dir);
+    dir = mkdtempSync(join(tmpdir(), 'borne-sync-pushcfg-preview-'));
+    const previewApp = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: true });
+    const lr = await request(previewApp).post('/api/admin/login').send({ password: 'tech-test' });
+    const res = await request(previewApp)
+      .post('/api/sync/push-config')
+      .set('Authorization', `Bearer ${lr.body.token}`);
+    assert.equal(res.status, 403);
+    assert.match(res.body.error, /interdit.*mode démo/);
   });
 });
 

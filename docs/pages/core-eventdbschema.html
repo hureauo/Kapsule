@@ -139,8 +139,10 @@ export function createEventDb(filePath) {
 
 <h3>Création des tables</h3>
 <p>
-  Le schéma est créé en une seule chaîne SQL passée à <code>db.exec()</code>. On y trouve les cinq
-  tables d'un événement :
+  Le schéma est créé en une seule chaîne SQL passée à <code>db.exec()</code>. On y trouve les six
+  tables d'un événement : <code>event_meta</code> (config clé/valeur), <code>questions</code>,
+  <code>sessions</code>, <code>videos</code>, <code>derived</code> (données calculées par le worker)
+  et <code>event_users</code> (comptes nominatifs pour l'admin de la Borne) :
 </p>
 <pre><code class="js">  db.exec(`
     CREATE TABLE IF NOT EXISTS event_meta ( key TEXT PRIMARY KEY, value TEXT );
@@ -181,6 +183,12 @@ export function createEventDb(filePath) {
       video_id   TEXT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
       thumbnail  TEXT, duration_s REAL, width INTEGER, height INTEGER, probed_at DATETIME
     );
+
+    CREATE TABLE IF NOT EXISTS event_users (
+      email         TEXT PRIMARY KEY,
+      password_hash TEXT,
+      roles         TEXT NOT NULL DEFAULT '[]'
+    );
   `);</code></pre>
 
 <p>Quelques décisions de schéma à comprendre :</p>
@@ -205,6 +213,20 @@ export function createEventDb(filePath) {
     <strong><code>UNIQUE(session_id, question_id)</code></strong> : un invité ne peut avoir qu'une
     vidéo par question. Ré-enregistrer remplace — c'est la base de la « transaction de
     remplacement » de <a href="#/borne-routes-videos">videos.js</a> (§11.9).
+  </li>
+  <li>
+    <strong><code>event_users</code></strong> (email, <code>password_hash</code>, <code>roles</code>) :
+    les comptes qui ouvrent l'admin de la Borne (rôles <code>admin_borne</code> / <code>tech_borne</code>)
+    et l'accès <code>general</code> du mode preview. Cette table ne vit pas que côté Hub : elle est
+    <strong>recopiée dans le <code>db.sqlite</code> au moment du pull</strong>, pour que la Borne
+    puisse authentifier en local, 100 % hors-ligne pendant l'événement (voir
+    <a href="#/borne-sync-pull">pull.js</a> et <a href="#/borne-middleware-auth">borne/middleware/auth.js</a>).
+    <code>roles</code> est un <strong>tableau JSON sérialisé en texte</strong> (défaut <code>'[]'</code>)
+    — SQLite n'a pas de type tableau, on stocke <code>'["tech_borne"]'</code> et on le
+    <code>JSON.parse</code> à la lecture. C'est volontairement le <strong>seul</strong> endroit où des
+    identifiants de connexion vivent : ce sont des comptes <em>organisateur</em>, pas des invités, et
+    ils restent isolés dans le dossier de l'événement (jamais dans <code>registry.sqlite</code>,
+    invariant RGPD §11.13).
   </li>
 </ul>
 

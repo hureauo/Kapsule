@@ -202,11 +202,12 @@ describe('GET /api/event', () => {
     assert.equal(res.body.requiresLogin, false);
   });
 
-  test('requiresLogin = true si preview + user general en event_users', async () => {
+  test('requiresLogin = true si preview + requires_login dans event_meta (§11.24)', async () => {
     const eventDir = join(ctx.dir, 'events', 'ev-preview-req');
     mkdirSync(join(eventDir, 'videos'), { recursive: true });
     const edb = createEventDb(join(eventDir, 'db.sqlite'));
-    edb.prepare("INSERT INTO event_users (email, password_hash, roles) VALUES ('g@test.com', 'x', ?)").run(JSON.stringify(['general']));
+    // pull.js écrit requires_login dans event_meta — les general ne sont plus dans event_users
+    edb.prepare("INSERT OR REPLACE INTO event_meta (key, value) VALUES ('requires_login', 'true')").run();
     edb.close();
     insertEvent({ id: 'ev-preview-req', name: 'Evt Preview Req', origin: 'hub', status: 'loaded', is_preview: 1 });
     setActiveEvent('ev-preview-req');

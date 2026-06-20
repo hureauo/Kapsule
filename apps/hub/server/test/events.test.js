@@ -9,6 +9,7 @@ import argon2 from 'argon2';
 import { createApp } from '../src/index.js';
 import { getDb, closeRegistry, insertUser, insertBoxToken } from '../src/registry.js';
 import { closeAllEventDbs } from '../src/eventStore.js';
+import { dockerCli } from '../src/preview/provisioner.js';
 
 let dir;
 let request;
@@ -68,6 +69,15 @@ describe('POST /api/events', () => {
     assert.equal(res.body.name, 'Mariage Alice');
     assert.equal(res.body.status, 'draft');
     assert.ok(res.body.id);
+  });
+
+  it('retourne preview_url dans la réponse (null si docker absent en test)', async () => {
+    const res = await request.post('/api/events')
+      .set(auth(tokenAlice))
+      .send({ name: 'Événement preview url' });
+    assert.equal(res.status, 201);
+    // En environnement de test, docker CLI absent → provision échoue silencieusement → null
+    assert.ok('preview_url' in res.body, 'preview_url doit être présent dans la réponse');
   });
 
   it('retourne 400 si name manquant', async () => {
@@ -197,7 +207,15 @@ describe('PUT /api/events/:eventId/status', () => {
     eventId = res.body.id;
   });
 
-  it('passe draft → ready', async () => {
+  it('passe draft → preview', async () => {
+    const res = await request.put(`/api/events/${eventId}/status`)
+      .set(auth(tokenAlice))
+      .send({ status: 'preview' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'preview');
+  });
+
+  it('passe preview → ready', async () => {
     const res = await request.put(`/api/events/${eventId}/status`)
       .set(auth(tokenAlice))
       .send({ status: 'ready' });
@@ -205,7 +223,15 @@ describe('PUT /api/events/:eventId/status', () => {
     assert.equal(res.body.status, 'ready');
   });
 
-  it('passe ready → draft', async () => {
+  it('passe ready → preview', async () => {
+    const res = await request.put(`/api/events/${eventId}/status`)
+      .set(auth(tokenAlice))
+      .send({ status: 'preview' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'preview');
+  });
+
+  it('passe preview → draft', async () => {
     const res = await request.put(`/api/events/${eventId}/status`)
       .set(auth(tokenAlice))
       .send({ status: 'draft' });
@@ -217,6 +243,13 @@ describe('PUT /api/events/:eventId/status', () => {
     const res = await request.put(`/api/events/${eventId}/status`)
       .set(auth(tokenAlice))
       .send({ status: 'loaded' });
+    assert.equal(res.status, 400);
+  });
+
+  it('refuse une transition non manuelle (draft → ready direct)', async () => {
+    const res = await request.put(`/api/events/${eventId}/status`)
+      .set(auth(tokenAlice))
+      .send({ status: 'ready' });
     assert.equal(res.status, 400);
   });
 
@@ -273,11 +306,11 @@ describe('DELETE /api/events/:eventId', () => {
     assert.equal(res.body.ok, true);
   });
 
-  it('l\'événement est marqué purged après suppression', async () => {
-    // L'événement existe toujours en DB mais en statut purged
+  it('l\'événement est marqué waiting après suppression', async () => {
+    // L'événement existe toujours en DB mais en statut waiting (purge manuelle)
     const res = await request.get(`/api/events/${eventId}`).set(auth(tokenAlice));
     assert.equal(res.status, 200);
-    assert.equal(res.body.status, 'purged');
+    assert.equal(res.body.status, 'waiting');
   });
 });
 
@@ -494,4 +527,162 @@ describe('POST /api/events/:eventId/config', () => {
     const res = await request.post(`/api/events/${eventId}/config`).send(payload);
     assert.equal(res.status, 401);
   });
+});
+
+// ── preview/status, preview/start, preview/stop ───────────────────────────────
+// Docker CLI mocké pour ne pas dépendre d'un daemon réel en test.
+
+describe('GET /api/events/:eventId/preview/status', () => {
+  let req2, tokenAdmin, eventId;
+
+  before(async () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'kapsule-preview-status-'));
+    const mockDocker = {
+      async exists() { return true; },
+      async running() { return true; },
+      async start() {},
+      async stop() {},
+    };
+    const app2 = createApp(dir2, {}, { docker: mockDocker });
+    req2 = supertest(app2);
+    const db2 = getDb();
+    const hash = await argon2.hash('pass-admin', { type: argon2.argon2id });
+    insertUser(db2, { email: 'admin-ps@test.com', password_hash: hash, role: 'superuser' });
+    tokenAdmin = (await req2.post('/api/auth/login').send({ email: 'admin-ps@test.com', password: 'pass-admin' })).body.token;
+    eventId = (await req2.post('/api/events').set('Authorization', `Bearer ${tokenAdmin}`).send({ name: 'Ev preview' })).body.id;
+  });
+
+  it('retourne up:true et preview_url quand container running', async () => {
+    const res = await req2.get(`/api/events/${eventId}/preview/status`).set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.up, true);
+    assert.match(res.body.preview_url, /^https:\/\/essai-/);
+  });
+
+  it('retourne 401 sans token', async () => {
+    const res = await req2.get(`/api/events/${eventId}/preview/status`);
+    assert.equal(res.status, 401);
+  });
+});
+
+describe('POST /api/events/:eventId/preview/start', () => {
+  let req2, tokenAdmin, eventId;
+
+  before(async () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'kapsule-preview-start-'));
+    const mockDocker = {
+      async exists() { return true; },
+      async running() { return false; },
+      async start() {},
+      async stop() {},
+    };
+    const app2 = createApp(dir2, {}, { docker: mockDocker });
+    req2 = supertest(app2);
+    const db2 = getDb();
+    const hash = await argon2.hash('pass-admin', { type: argon2.argon2id });
+    insertUser(db2, { email: 'admin-pstart@test.com', password_hash: hash, role: 'superuser' });
+    tokenAdmin = (await req2.post('/api/auth/login').send({ email: 'admin-pstart@test.com', password: 'pass-admin' })).body.token;
+    eventId = (await req2.post('/api/events').set('Authorization', `Bearer ${tokenAdmin}`).send({ name: 'Ev start' })).body.id;
+  });
+
+  it('démarre le container et retourne up:true', async () => {
+    const res = await req2.post(`/api/events/${eventId}/preview/start`).set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.up, true);
+  });
+
+  it('provisionne la preview si le container est absent', async () => {
+    const dir3 = mkdtempSync(join(tmpdir(), 'kapsule-preview-start-prov-'));
+    let runCount = 0;
+    const mockDocker = {
+      async exists() { return false; },     // container absent → déclenche provision
+      async running() { return false; },
+      async start() {}, async stop() {},
+      async run() { runCount++; },          // provisionPreview lance les containers
+      async networkExists() { return true; },
+      async networkCreate() {},
+      async networkConnect() {},
+      async networkRm() {},
+    };
+    const app3 = createApp(dir3, {}, { docker: mockDocker });
+    const req3 = supertest(app3);
+    const db3 = getDb();
+    const hash = await argon2.hash('pass-admin', { type: argon2.argon2id });
+    insertUser(db3, { email: 'admin-pprov@test.com', password_hash: hash, role: 'superuser' });
+    const tok = (await req3.post('/api/auth/login').send({ email: 'admin-pprov@test.com', password: 'pass-admin' })).body.token;
+    const evId = (await req3.post('/api/events').set('Authorization', `Bearer ${tok}`).send({ name: 'Ev prov' })).body.id;
+    const res = await req3.post(`/api/events/${evId}/preview/start`).set('Authorization', `Bearer ${tok}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.provisioned, true);
+    assert.ok(runCount >= 2, 'doit lancer au moins frontend + backend');
+  });
+
+  it('retourne 403 pour un client non superuser', async () => {
+    const dir4 = mkdtempSync(join(tmpdir(), 'kapsule-preview-start-403-'));
+    const mockDocker = { async exists() { return true; }, async running() { return false; }, async start() {}, async stop() {} };
+    const app4 = createApp(dir4, {}, { docker: mockDocker });
+    const req4 = supertest(app4);
+    const db4 = getDb();
+    const hashA = await argon2.hash('pass-su', { type: argon2.argon2id });
+    const hashB = await argon2.hash('pass-cli', { type: argon2.argon2id });
+    insertUser(db4, { email: 'su-403@test.com', password_hash: hashA, role: 'superuser' });
+    insertUser(db4, { email: 'cli-403@test.com', password_hash: hashB, role: 'client' });
+    const tokSu  = (await req4.post('/api/auth/login').send({ email: 'su-403@test.com',  password: 'pass-su' })).body.token;
+    const tokCli = (await req4.post('/api/auth/login').send({ email: 'cli-403@test.com', password: 'pass-cli' })).body.token;
+    const evId = (await req4.post('/api/events').set('Authorization', `Bearer ${tokSu}`).send({ name: 'Ev 403' })).body.id;
+    const res = await req4.post(`/api/events/${evId}/preview/start`).set('Authorization', `Bearer ${tokCli}`);
+    assert.equal(res.status, 403);
+  });
+});
+
+describe('POST /api/events/:eventId/preview/stop', () => {
+  let req2, tokenAdmin, eventId;
+
+  before(async () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'kapsule-preview-stop-'));
+    const mockDocker = {
+      async exists() { return true; },
+      async running() { return true; },
+      async start() {},
+      async stop() {},
+    };
+    const app2 = createApp(dir2, {}, { docker: mockDocker });
+    req2 = supertest(app2);
+    const db2 = getDb();
+    const hash = await argon2.hash('pass-admin', { type: argon2.argon2id });
+    insertUser(db2, { email: 'admin-pstop@test.com', password_hash: hash, role: 'superuser' });
+    tokenAdmin = (await req2.post('/api/auth/login').send({ email: 'admin-pstop@test.com', password: 'pass-admin' })).body.token;
+    eventId = (await req2.post('/api/events').set('Authorization', `Bearer ${tokenAdmin}`).send({ name: 'Ev stop' })).body.id;
+  });
+
+  it('arrête le container et retourne up:false', async () => {
+    const res = await req2.post(`/api/events/${eventId}/preview/stop`).set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.up, false);
+  });
+
+  it('retourne 401 sans token', async () => {
+    const res = await req2.post(`/api/events/${eventId}/preview/stop`);
+    assert.equal(res.status, 401);
+  });
+
+  it('retourne 403 pour un client non superuser', async () => {
+    const res = await req2.post(`/api/events/${eventId}/preview/stop`).set('Authorization', `Bearer ${tokenBob}`);
+    assert.equal(res.status, 403);
+  });
+});
+
+// ── Interface réelle dockerCli ─────────────────────────────────────────────────
+// Vérifie que dockerCli expose toutes les méthodes requises par les routes preview,
+// y compris running/start/stop (régression détectée en phase 8E : manquaient en prod).
+
+describe('dockerCli — contrat d\'interface', () => {
+  const REQUIRED = ['run', 'rm', 'exists', 'running', 'start', 'stop',
+                    'networkCreate', 'networkConnect', 'networkRm', 'networkExists'];
+
+  for (const method of REQUIRED) {
+    it(`expose dockerCli.${method}()`, () => {
+      assert.equal(typeof dockerCli[method], 'function', `dockerCli.${method} manquant`);
+    });
+  }
 });

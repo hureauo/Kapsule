@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client.js';
 
-const STATUS_ORDER = ['draft', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'purged'];
+const STATUS_ORDER = ['draft', 'preview', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'waiting'];
+
+const STATUS_TIMELINE_LABEL = {
+  draft: 'Brouillon', preview: 'Preview', ready: 'Prêt', loaded: 'Chargé',
+  live: 'En cours', closed: 'Terminé', pushed: 'Poussé',
+  processed: 'Traité', waiting: 'En attente',
+};
 
 function formatDate(d) {
   if (!d) return null;
@@ -20,7 +26,7 @@ function StatusTimeline({ status, pulledAt, pushedAt, processedAt }) {
         if (s === 'processed' && processedAt) date = formatDate(processedAt);
         return (
           <div key={s} className={`timeline-step${done ? ' timeline-step--done' : ''}`}>
-            <span className="timeline-step__label">{s}</span>
+            <span className="timeline-step__label">{STATUS_TIMELINE_LABEL[s] ?? s}</span>
             {date && <span className="timeline-step__date">{date}</span>}
           </div>
         );

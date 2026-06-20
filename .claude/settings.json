@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Agent",
       "Bash(npm test:*)",
       "Bash(npm run:*)",
       "Bash(npm install:*)",
@@ -12,7 +13,8 @@
       "Bash(git show:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Read(./.env.example)"
+      "Read(./.env.example)",
+      "Bash(git pull *)"
     ],
     "deny": [
       "Read(./.env)",

@@ -1,0 +1,127 @@
+<div class="page-kicker">3 — Le serveur Hub</div>
+<h1>hub/eventConfig.js — application de config partagée</h1>
+
+<p>
+  Trois endroits du Hub écrivent la configuration d'un événement (questions + <code>event_meta</code>)
+  dans sa <code>db.sqlite</code> : le <code>PUT /:eventId</code> (édition depuis l'UI client), l'import
+  de config UI et la remontée de config poussée par la Borne (<code>POST /events/:id/config</code> de
+  <a href="#/hub-routes-sync">sync.js</a>). Avant la phase 8R, la logique d'écriture — quelles clés
+  meta accepter, comment se comportent les modes <em>overwrite</em> et <em>merge</em>, le clamp à 500
+  caractères — était <strong>dupliquée à l'identique</strong> dans chacun. Ce module la centralise :
+  une seule fonction <code>applyEventConfig</code> et une seule liste <code>META_KEYS</code> font foi.
+</p>
+
+<h2>La source unique des clés meta</h2>
+<pre><code class="js">import { THEMES, TEXT_FIELDS } from '@kapsule/core';
+
+// Clés event_meta gérées par applyEventConfig — source unique pour les routes config.
+export const META_KEYS = ['theme', 'idle_timeout', ...Object.keys(TEXT_FIELDS)];</code></pre>
+<p>
+  <code>META_KEYS</code> est la liste blanche des clés <code>event_meta</code> que le Hub accepte
+  d'écrire : <code>theme</code>, <code>idle_timeout</code>, plus tous les
+  <a href="#/core-constants">textes éditables (<code>TEXT_FIELDS</code>)</a>. La dériver de
+  <code>TEXT_FIELDS</code> (via <code>Object.keys</code> + spread) évite qu'une nouvelle clé de texte
+  ajoutée dans le core soit oubliée ici. Elle est aussi réexportée vers
+  <a href="#/hub-routes-admin">admin.js</a>, dont le <code>configHash</code> dérive son
+  <code>META_HASH_KEYS = META_KEYS</code> : les clés hashées pour comparer deux configs sont donc
+  exactement celles qu'on sait écrire — impossible de désynchroniser les deux listes.
+</p>
+
+<h2>La fonction <code>applyEventConfig</code></h2>
+<pre><code class="js">export function applyEventConfig(edb, { mode, meta, questions }) {
+  const upsert = edb.prepare(
+    'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'
+  );
+
+  if (meta &amp;&amp; typeof meta === 'object') {
+    for (const key of META_KEYS) {                 // on n'itère QUE la liste blanche
+      if (meta[key] === undefined) continue;
+      if (mode === 'merge') {
+        const existing = edb.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value;
+        if (existing &amp;&amp; existing.trim() !== '') continue;   // merge : ne pas écraser une valeur déjà posée
+      }
+      if (key === 'theme' &amp;&amp; !THEMES.includes(meta[key])) continue;  // thème inconnu → ignoré
+      upsert.run(key, String(meta[key]));
+    }
+  }
+
+  if (Array.isArray(questions)) {
+    if (mode === 'overwrite') edb.prepare('DELETE FROM questions').run();   // overwrite : table vidée d'abord
+    const existingTexts = new Set(edb.prepare('SELECT text FROM questions').all().map(q =&gt; q.text));
+    const insert = edb.prepare(
+      'INSERT INTO questions (text, max_duration, countdown, order_index, enabled) VALUES (?, ?, ?, ?, ?)'
+    );
+    const maxRow = edb.prepare('SELECT MAX(order_index) as m FROM questions').get();
+    let nextOrder = (maxRow?.m ?? -1) + 1;
+    for (const q of questions) {
+      if (!q.text || typeof q.text !== 'string') continue;
+      if (mode === 'merge' &amp;&amp; existingTexts.has(q.text)) continue;   // merge : pas de doublon de texte
+      insert.run(q.text.slice(0, 500), q.max_duration ?? 60, q.countdown ?? 3, nextOrder++, q.enabled !== undefined ? (q.enabled ? 1 : 0) : 1);
+    }
+  }
+}</code></pre>
+
+<h2>Les deux modes</h2>
+<ul>
+  <li><strong><code>overwrite</code></strong> : la source fait foi. Les questions sont
+      <strong>vidées</strong> (<code>DELETE FROM questions</code>) puis réinsérées ; les
+      <code>event_meta</code> connues présentes dans <code>meta</code> sont écrasées.</li>
+  <li><strong><code>merge</code></strong> : on ne fait qu'<em>ajouter</em>. Une valeur de meta déjà
+      non vide n'est pas touchée, et une question dont le texte existe déjà est ignorée (dédoublonnage
+      par texte via un <code>Set</code>). Rien n'est effacé.</li>
+</ul>
+
+<div class="js-note">
+  <div class="js-note-head">
+    <span class="js-badge">JS</span>
+    <span class="js-note-title">Une fonction qui reçoit le handle DB en paramètre</span>
+  </div>
+  <p>
+    <code>applyEventConfig</code> ne sait pas <em>quelle</em> base elle écrit : l'<code>edb</code>
+    (le handle <code>better-sqlite3</code> déjà ouvert) lui est passé par l'appelant. C'est le même
+    pattern que <a href="#/hub-registry">registry.js</a>, où chaque fonction prend <code>db</code> en
+    argument plutôt que d'ouvrir elle-même la base. Avantage : la fonction reste
+    <strong>pure de tout effet d'ouverture/fermeture</strong> (c'est l'appelant qui gère le cache
+    <a href="#/hub-eventstore">eventStore</a>), donc testable en isolation avec une base temporaire —
+    ce que font les tests unitaires <code>eventConfig.test.js</code>.
+  </p>
+  <div class="js-deep">
+    <p>
+      C'est de l'<em>injection de dépendance</em> minimaliste : au lieu d'un import global vers une
+      base, on passe la ressource. En Python on parlerait d'une fonction prenant une
+      <code>connection</code> en argument plutôt que d'utiliser un singleton de module. Cela découple
+      la logique métier (overwrite/merge) de la gestion du cycle de vie du handle.
+    </p>
+  </div>
+</div>
+
+<a class="see-also" href="#/core-eventdbschema">→ notion JS : better-sqlite3 prepare/run/get/all, ON CONFLICT, transaction (vue dans core/eventDbSchema.js)</a>
+
+<h2>API</h2>
+<table class="api-table">
+  <tr><th>Export</th><th>Rôle</th></tr>
+  <tr><td>META_KEYS</td><td>Liste blanche des clés <code>event_meta</code> écrivables (<code>theme</code>, <code>idle_timeout</code>, <code>TEXT_FIELDS</code>). Source unique réutilisée par <a href="#/hub-routes-admin">admin.js</a> (<code>META_HASH_KEYS</code>) et le <code>PUT /:eventId</code> de <a href="#/hub-routes-events">events.js</a>.</td></tr>
+  <tr><td>applyEventConfig(edb, { mode, meta, questions })</td><td>Écrit meta + questions sur une event DB ouverte selon le mode <code>overwrite</code> ou <code>merge</code>. Thème invalide ignoré, texte de question tronqué à 500 caractères.</td></tr>
+</table>
+
+<h2>Ce qu'il ne fait pas</h2>
+<ul>
+  <li>Il <strong>n'ouvre ni ne ferme</strong> la base : c'est l'appelant qui fournit l'<code>edb</code>
+      (via <a href="#/hub-eventstore">openEventDb</a>).</li>
+  <li>Il <strong>ne valide pas le mode</strong> ni le statut de l'événement (gel ≥ live) : ces gardes
+      restent dans les routes appelantes (<code>400</code> mode invalide, <code>409</code> statut figé),
+      car elles dépendent du contexte HTTP.</li>
+  <li>Il <strong>ne trace rien</strong> dans <code>sync_log</code> : l'<code>insertSyncLog('config_import')</code>
+      reste côté route.</li>
+</ul>
+
+<div class="callout info">
+  <div class="callout-title">ℹ Trois appelants, une seule logique</div>
+  <p>
+    <code>applyEventConfig</code> est appelé par le <code>PUT /:eventId</code> et l'import UI de
+    <a href="#/hub-routes-events">events.js</a> (mode <code>overwrite</code>), et par la remontée
+    <code>POST /events/:id/config</code> de <a href="#/hub-routes-sync">sync.js</a> (overwrite ou merge,
+    selon ce que pousse la Borne). Toute évolution du comportement de config se fait désormais ici, en
+    un seul endroit.
+  </p>
+</div>

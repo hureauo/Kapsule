@@ -3,8 +3,9 @@
 
 <p>
   Ce fichier contient deux middlewares d'authentification : <code>requireUser</code> (vérifie le
-  jeton JWT) et <code>requireOwner</code> (vérifie que l'utilisateur possède bien l'événement
-  ciblé). C'est la page où l'on explique <strong>JWT</strong> et la vérification de jeton.
+  jeton JWT) et <code>requireOwner</code> (vérifie que l'utilisateur est <strong>membre</strong> de
+  l'événement ciblé, ou superuser). C'est la page où l'on explique <strong>JWT</strong> et la
+  vérification de jeton.
 </p>
 
 <h2>Extraction du jeton : header OU query</h2>
@@ -104,15 +105,16 @@
 
 <a class="see-also" href="#/hub-index">→ notion JS : req / res / next et la chaîne de middleware (vue dans hub/index.js)</a>
 
-<h2><code>requireOwner</code> : le cloisonnement</h2>
+<h2><code>requireOwner</code> : le cloisonnement par appartenance</h2>
 <pre><code class="js">export function requireOwner(req, res, next) {
   const { eventId } = req.params;
   if (!eventId) return res.status(400).json({ error: 'eventId manquant' });
   const db = getDb();
   const event = getEvent(db, eventId);
   if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-  if (req.user.role !== 'admin' &amp;&amp; event.owner_id !== req.user.sub) {
-    return res.status(403).json({ error: 'Accès interdit' });
+  if (req.user.role !== 'superuser') {
+    const membership = getEventUser(db, { event_id: eventId, user_id: req.user.sub });
+    if (!membership) return res.status(403).json({ error: 'Accès interdit' });
   }
   req.event = event;     // mémorise l'événement pour le handler suivant
   next();
@@ -120,18 +122,22 @@
 <p>
   Ce middleware s'exécute <strong>après</strong> <code>requireUser</code> (qui a posé
   <code>req.user</code>) et lit <code>eventId</code> dans l'URL. Règle d'accès : un
-  <strong>admin</strong> passe toujours ; un <strong>client</strong> ne passe que s'il est le
-  propriétaire (<code>event.owner_id === req.user.sub</code>). En bonus, il range l'événement déjà
-  chargé dans <code>req.event</code> pour éviter au handler de le relire — un pattern « charger une
-  fois, réutiliser » fréquent dans Express.
+  <strong>superuser</strong> passe toujours ; sinon, on exige que l'utilisateur soit
+  <strong>membre</strong> de l'événement — c'est-à-dire qu'une ligne existe dans la table
+  <a href="#/hub-registry"><code>event_users</code></a> pour ce couple
+  <code>(event_id, user.sub)</code>. Pas de notion de « propriétaire unique » au niveau de l'accès :
+  un événement peut avoir plusieurs membres (chacun avec ses rôles), et <code>events.owner_id</code>
+  ne sert qu'à mémoriser le client principal, pas à autoriser. En bonus, le middleware range
+  l'événement déjà chargé dans <code>req.event</code> pour éviter au handler de le relire — un pattern
+  « charger une fois, réutiliser » fréquent dans Express.
 </p>
 
 <table class="api-table">
   <tr><th>Réponse</th><th>Cas</th></tr>
   <tr><td>400</td><td><code>eventId</code> absent de l'URL.</td></tr>
   <tr><td>404</td><td>Événement inexistant.</td></tr>
-  <tr><td>403</td><td>Événement existant mais appartenant à un autre client.</td></tr>
-  <tr><td>(passe)</td><td>Admin, ou propriétaire légitime → <code>req.event</code> peuplé.</td></tr>
+  <tr><td>403</td><td>Événement existant mais <code>req.user</code> n'en est pas membre (aucune ligne <code>event_users</code>).</td></tr>
+  <tr><td>(passe)</td><td>Superuser, ou membre de l'événement → <code>req.event</code> peuplé.</td></tr>
 </table>
 
 <div class="callout warn">

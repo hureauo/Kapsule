@@ -45,6 +45,9 @@ before(async () => {
 
   await request.put(`/api/events/${eventId}/status`)
     .set('Authorization', `Bearer ${tokenAdmin}`)
+    .send({ status: 'preview' });
+  await request.put(`/api/events/${eventId}/status`)
+    .set('Authorization', `Bearer ${tokenAdmin}`)
     .send({ status: 'ready' });
 
   // Token de borne lié à cet événement (modèle 6C : token = événement §11.20)
@@ -118,6 +121,88 @@ describe('GET /api/sync/event', () => {
   });
 });
 
+// ── POST /api/sync/event/login ────────────────────────────────────────────────
+
+describe('POST /api/sync/event/login', () => {
+  let previewEventId, previewBoxToken, generalUserHash;
+
+  before(async () => {
+    const db = getDb();
+    generalUserHash = await argon2.hash('guest-pass', { type: argon2.argon2id });
+
+    // Event en statut 'preview' avec un token preview
+    const evRes = await request.post('/api/events')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Event Preview Login', event_date: '2026-10-01' });
+    previewEventId = evRes.body.id;
+    await request.put(`/api/events/${previewEventId}/status`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ status: 'preview' });
+
+    const raw = 'p'.repeat(64);
+    const hash = createHash('sha256').update(raw).digest('hex');
+    insertBoxToken(db, { event_id: previewEventId, token_hash: hash, token_clear: raw, label: 'Preview Login Token', is_preview: 1 });
+    previewBoxToken = raw;
+
+    // Créer un user 'general' et l'assigner à l'event preview
+    insertUser(db, { email: 'guest@preview.test', password_hash: generalUserHash, role: 'client' });
+    const guestUser = db.prepare("SELECT id FROM users WHERE email = 'guest@preview.test'").get();
+    upsertEventUser(db, { event_id: previewEventId, user_id: guestUser.id, roles: ['general'] });
+  });
+
+  it('retourne 400 si email manquant', async () => {
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ password: 'guest-pass' });
+    assert.equal(res.status, 400);
+  });
+
+  it('retourne 400 si password manquant', async () => {
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ email: 'guest@preview.test' });
+    assert.equal(res.status, 400);
+  });
+
+  it('retourne 403 si event non en preview (token réel)', async () => {
+    // boxToken pointe sur eventId qui est en 'loaded' après le bundle pull
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', boxToken)
+      .send({ email: 'guest@preview.test', password: 'guest-pass' });
+    assert.equal(res.status, 403);
+  });
+
+  it('retourne 401 si mdp incorrect', async () => {
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ email: 'guest@preview.test', password: 'mauvais' });
+    assert.equal(res.status, 401);
+  });
+
+  it('retourne 401 si email inconnu', async () => {
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ email: 'inconnu@test.com', password: 'guest-pass' });
+    assert.equal(res.status, 401);
+  });
+
+  it('retourne 403 si user non assigné à cet event avec rôle general', async () => {
+    // client@sync.test existe mais n'est pas assigné à previewEventId
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ email: 'client@sync.test', password: 'client-pass' });
+    assert.equal(res.status, 403);
+  });
+
+  it('retourne 200 si user assigné general + mdp correct', async () => {
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ email: 'guest@preview.test', password: 'guest-pass' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+  });
+});
+
 // ── GET /api/sync/events/:id/bundle ─────────────────────────────────────────
 
 describe('GET /api/sync/events/:id/bundle', () => {
@@ -185,7 +270,7 @@ describe('GET /api/sync/events/:id/bundle', () => {
     assert.equal(res.status, 409);
   });
 
-  it('inclut users dans le bundle — superusers avec tous les rôles, clients sans hash exclus', async () => {
+  it('inclut users dans le bundle — superusers (sans general), clients sans hash exclus, requiresLogin', async () => {
     const db = getDb();
 
     // Créer un événement dédié avec token
@@ -194,12 +279,16 @@ describe('GET /api/sync/events/:id/bundle', () => {
       .send({ name: 'Événement users bundle' });
     await request.put(`/api/events/${evU.body.id}/status`)
       .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ status: 'preview' });
+    await request.put(`/api/events/${evU.body.id}/status`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ status: 'ready' });
     const rawU = 'u'.repeat(64);
     const hashU = createHash('sha256').update(rawU).digest('hex');
     insertBoxToken(db, { event_id: evU.body.id, token_hash: hashU, token_clear: rawU, label: 'Borne U' });
 
-    // Ajouter un client sans hash → ne doit PAS apparaître dans le bundle
+    // Ajouter un client sans hash avec rôle general → ne doit PAS être dans users,
+    // mais déclenche requiresLogin: true (auth wall proxié vers Hub)
     const noHashId = insertUser(db, { email: 'nohash@sync.test', role: 'client' });
     upsertEventUser(db, { event_id: evU.body.id, user_id: noHashId.lastInsertRowid, roles: ['general'] });
 
@@ -209,14 +298,17 @@ describe('GET /api/sync/events/:id/bundle', () => {
     assert.ok(Array.isArray(res.body.users), 'users doit être un tableau');
 
     const emails = res.body.users.map(u => u.email);
-    // admin@sync.test est superuser → toujours dans le bundle avec tous les rôles borne
+    // admin@sync.test est superuser → toujours dans le bundle avec rôles borne (sans general)
     assert.ok(emails.includes('admin@sync.test'), 'superuser doit être dans le bundle');
     assert.ok(!emails.includes('nohash@sync.test'), 'client sans hash ne doit pas être dans le bundle');
 
     const adminUser = res.body.users.find(u => u.email === 'admin@sync.test');
     assert.ok(adminUser.password_hash, 'password_hash doit être présent');
-    // Les superusers ont toujours les 3 rôles borne, peu importe event_users
-    assert.deepEqual(adminUser.roles, ['admin_borne', 'tech_borne', 'general']);
+    // Les superusers ont admin_borne + tech_borne (sans general — général proxié vers Hub, §11.24)
+    assert.deepEqual(adminUser.roles, ['admin_borne', 'tech_borne']);
+
+    // requiresLogin = true car un user avec rôle general est assigné
+    assert.equal(res.body.requiresLogin, true);
   });
 
   it('bundle.users contient toujours les superusers actifs, même sans event_users', async () => {
@@ -224,6 +316,9 @@ describe('GET /api/sync/events/:id/bundle', () => {
     const evEmpty = await request.post('/api/events')
       .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ name: 'Événement sans users client' });
+    await request.put(`/api/events/${evEmpty.body.id}/status`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ status: 'preview' });
     await request.put(`/api/events/${evEmpty.body.id}/status`)
       .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ status: 'ready' });
@@ -235,7 +330,7 @@ describe('GET /api/sync/events/:id/bundle', () => {
     const adminRow = db.prepare("SELECT id FROM users WHERE email = 'admin@sync.test'").get();
     deleteEventUser(db, { event_id: evEmpty.body.id, user_id: adminRow.id });
 
-    // Assigner uniquement un client sans hash
+    // Assigner uniquement un client sans hash (rôle general)
     const noHash2 = insertUser(db, { email: 'nohash2@sync.test', role: 'client' });
     upsertEventUser(db, { event_id: evEmpty.body.id, user_id: noHash2.lastInsertRowid, roles: ['general'] });
 
@@ -246,6 +341,8 @@ describe('GET /api/sync/events/:id/bundle', () => {
     const emails = res.body.users.map(u => u.email);
     assert.ok(emails.includes('admin@sync.test'), 'superuser toujours présent dans le bundle');
     assert.ok(!emails.includes('nohash2@sync.test'), 'client sans hash absent du bundle');
+    // requiresLogin = true car nohash2 a le rôle general
+    assert.equal(res.body.requiresLogin, true);
   });
 });
 

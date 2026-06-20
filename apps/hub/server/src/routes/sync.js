@@ -2,10 +2,13 @@ import { Router } from 'express';
 import { existsSync, mkdirSync, renameSync, writeFileSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import multer from 'multer';
+import rateLimit from 'express-rate-limit';
+import argon2 from 'argon2';
 import { sha256File } from '@kapsule/core/src/checksum.js';
-import { LIMITS, THEMES, TEXT_FIELDS } from '@kapsule/core';
-import { getDb, getEvent, updateEvent, insertSyncLog } from '../registry.js';
+import { LIMITS } from '@kapsule/core';
+import { getDb, getEvent, updateEvent, insertSyncLog, getUserByEmail } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
+import { applyEventConfig } from '../eventConfig.js';
 import { requireBox } from '../middleware/boxAuth.js';
 import { validateUuidParams } from '../middleware/validateParams.js';
 
@@ -21,7 +24,7 @@ function syncLog(req, status, detail = '') {
 }
 
 // Ordre des statuts pour les transitions avant uniquement (heartbeat)
-const STATUS_ORDER = ['draft', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'purged'];
+const STATUS_ORDER = ['draft', 'preview', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'waiting'];
 
 function statusRank(s) {
   const i = STATUS_ORDER.indexOf(s);
@@ -94,8 +97,8 @@ export function makeSyncRouter(dataDir, opts = {}) {
       if (!event) { syncLog(req, 404); return res.status(404).json({ error: 'Événement introuvable' }); }
       if (req.params.id !== req.box.event_id) { syncLog(req, 403); return res.status(403).json({ error: 'Non assigné à cette borne' }); }
 
-      const FROZEN = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
-      if (FROZEN.has(event.status)) {
+      const CONTENT_FROZEN = new Set(['ready', 'live', 'closed', 'pushed', 'processed', 'waiting']);
+      if (CONTENT_FROZEN.has(event.status)) {
         syncLog(req, 409, `statut ${event.status}`);
         return res.status(409).json({ error: `Import impossible : événement en statut ${event.status}` });
       }
@@ -105,38 +108,8 @@ export function makeSyncRouter(dataDir, opts = {}) {
         return res.status(400).json({ error: 'mode doit être overwrite ou merge' });
       }
 
-      const META_KEYS = ['theme', 'idle_timeout', ...Object.keys(TEXT_FIELDS)];
       const edb = openEventDb(event.id, dataDir);
-      const upsert = edb.prepare(
-        'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value'
-      );
-
-      if (meta && typeof meta === 'object') {
-        for (const key of META_KEYS) {
-          if (meta[key] === undefined) continue;
-          if (mode === 'merge') {
-            const existing = edb.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value;
-            if (existing && existing.trim() !== '') continue;
-          }
-          if (key === 'theme' && !THEMES.includes(meta[key])) continue;
-          upsert.run(key, String(meta[key]));
-        }
-      }
-
-      if (Array.isArray(questions)) {
-        if (mode === 'overwrite') edb.prepare('DELETE FROM questions').run();
-        const existingTexts = new Set(edb.prepare('SELECT text FROM questions').all().map(q => q.text));
-        const insert = edb.prepare(
-          'INSERT INTO questions (text, max_duration, countdown, order_index, enabled) VALUES (?, ?, ?, ?, ?)'
-        );
-        const maxRow = edb.prepare('SELECT MAX(order_index) as m FROM questions').get();
-        let nextOrder = (maxRow?.m ?? -1) + 1;
-        for (const q of questions) {
-          if (!q.text || typeof q.text !== 'string') continue;
-          if (mode === 'merge' && existingTexts.has(q.text)) continue;
-          insert.run(q.text.slice(0, 500), q.max_duration ?? 60, q.countdown ?? 3, nextOrder++, q.enabled !== undefined ? (q.enabled ? 1 : 0) : 1);
-        }
-      }
+      applyEventConfig(edb, { mode, meta, questions });
 
       insertSyncLog(db, { event_id: event.id, action: 'config_import', detail: { mode, questions: questions?.length ?? 0 } });
       syncLog(req, 200, `mode=${mode}  questions=${questions?.length ?? 0}`);
@@ -144,15 +117,80 @@ export function makeSyncRouter(dataDir, opts = {}) {
     } catch (err) { next(err); }
   });
 
+  // ── POST /api/sync/event/login ───────────────────────────────────────────
+  // Auth wall preview (§11.24, option B) : authentifie email/mdp côté Hub ET
+  // vérifie que l'utilisateur est assigné à l'événement du token avec le rôle 'general'.
+  // La borne n'a ainsi jamais à stocker ni divulguer la liste des emails assignés.
+  // Déclarée avant GET /event pour éviter tout conflit de routing.
+  router.post('/event/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, skip: () => opts.skipRateLimits === true }), async (req, res) => {
+    const { email, password } = req.body ?? {};
+    if (!email || !password) {
+      syncLog(req, 400, 'email ou password manquant');
+      return res.status(400).json({ error: 'email et password requis' });
+    }
+
+    const db = getDb();
+    const event = getEvent(db, req.box.event_id);
+    if (!event || event.status !== 'preview') {
+      syncLog(req, 403, `statut ${event?.status ?? 'introuvable'} — preview requis`);
+      return res.status(403).json({ error: 'Cet événement n\'est pas en cours de preview' });
+    }
+
+    // Vérifier les credentials Hub
+    const user = getUserByEmail(db, email);
+    if (!user || !user.active || !user.password_hash) {
+      syncLog(req, 401, `email=${email} inconnu ou inactif`);
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+    let valid;
+    try {
+      valid = await argon2.verify(user.password_hash, password);
+    } catch {
+      valid = false;
+    }
+    if (!valid) {
+      syncLog(req, 401, `email=${email} mdp incorrect`);
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+
+    // Vérifier l'assignation à cet événement avec le rôle 'general'
+    const assignment = db.prepare(`
+      SELECT eu.roles FROM event_users eu
+      WHERE eu.event_id = ? AND eu.user_id = ?
+    `).get(event.id, user.id);
+    const roles = assignment ? JSON.parse(assignment.roles) : [];
+    if (!roles.includes('general')) {
+      syncLog(req, 403, `email=${email} non assigné general`);
+      return res.status(403).json({ error: 'Utilisateur non autorisé pour cet événement' });
+    }
+
+    syncLog(req, 200, `email=${email} login preview OK`);
+    res.json({ ok: true });
+  });
+
   // ── GET /api/sync/event ───────────────────────────────────────────────────
   // Remplace GET /assigned (liste) — un token = un événement (§11.20)
   router.get('/event', (req, res) => {
     const db = getDb();
     const event = getEvent(db, req.box.event_id);
-    if (!event || !['ready', 'loaded'].includes(event.status)) {
-      syncLog(req, 404, 'aucun événement pullable');
+    if (!event) {
+      syncLog(req, 404, 'événement introuvable');
       return res.status(404).json({ error: 'Aucun événement pullable pour ce token' });
     }
+
+    // §11.25 : token preview → statut preview requis ; token réel → ready ou loaded
+    if (req.box.is_preview) {
+      if (event.status !== 'preview') {
+        syncLog(req, 403, `token preview mais statut=${event.status}`);
+        return res.status(403).json({ error: `Token d'essai uniquement utilisable en statut preview (statut actuel : ${event.status})` });
+      }
+    } else {
+      if (!['ready', 'loaded'].includes(event.status)) {
+        syncLog(req, 404, `statut non pullable: ${event.status}`);
+        return res.status(404).json({ error: 'Aucun événement pullable pour ce token' });
+      }
+    }
+
     syncLog(req, 200, `name="${event.name}"  status=${event.status}`);
     res.json({
       id: event.id, name: event.name, event_date: event.event_date,
@@ -169,11 +207,13 @@ export function makeSyncRouter(dataDir, opts = {}) {
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
       // Invariant §11.20 : un token ne peut tirer que son propre événement
       if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Token non autorisé sur cet événement' });
-      if (!['ready', 'loaded'].includes(event.status)) {
+      const pullableStatuses = req.box.is_preview ? ['preview'] : ['ready', 'loaded'];
+      if (!pullableStatuses.includes(event.status)) {
         return res.status(409).json({ error: `Statut ${event.status} — bundle non disponible` });
       }
 
-      if (event.status === 'ready') {
+      // Token réel : ready→loaded. Token preview : statut inchangé (données jetables).
+      if (!req.box.is_preview && event.status === 'ready') {
         updateEvent(db, event.id, { status: 'loaded', pulled_at: new Date().toISOString() });
         insertSyncLog(db, { event_id: event.id, action: 'pull', detail: { from: 'ready', to: 'loaded' } });
       }
@@ -186,9 +226,8 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const metaRows = edb.prepare('SELECT key, value FROM event_meta').all();
       const meta = Object.fromEntries(metaRows.map(r => [r.key, r.value]));
 
-      // Bundle users : users assignés à l'événement + tous les superusers actifs.
-      // Les superusers ont tous les rôles borne implicitement.
-      // L'auth borne rejette naturellement si password_hash est null.
+      // Bundle users : uniquement les rôles borne (admin_borne, tech_borne).
+      // Le rôle 'general' n'est pas pullé — son auth est proxiée vers le Hub à chaque login (§11.24).
       const assignedUsers = db.prepare(`
         SELECT u.email, u.password_hash, eu.roles
         FROM event_users eu
@@ -204,19 +243,28 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const superusers = db.prepare(`
         SELECT email, password_hash FROM users
         WHERE role = 'superuser' AND active = 1
-      `).all().map(u => ({ email: u.email, password_hash: u.password_hash, roles: ['admin_borne', 'tech_borne', 'general'] }));
+      `).all().map(u => ({ email: u.email, password_hash: u.password_hash, roles: ['admin_borne', 'tech_borne'] }));
 
-      // Fusionner : les superusers ont toujours tous les rôles borne, même s'ils
-      // sont dans event_users avec des rôles restreints (leurs rôles explicites sont ignorés).
-      const assignedNonSuperusers = assignedUsers.filter(u => !superuserEmails.has(u.email));
-      const usersWithHash = [
-        ...assignedNonSuperusers,
-        ...superusers,
-      ];
+      // Fusionner : les superusers remplacent leurs éventuels rôles restreints dans event_users.
+      // Filtrer les rôles 'general' des assignés non-superusers.
+      const assignedNonSuperusers = assignedUsers
+        .filter(u => !superuserEmails.has(u.email))
+        .map(u => ({ ...u, roles: u.roles.filter(r => r !== 'general') }))
+        .filter(u => u.roles.length > 0);
+
+      const usersWithHash = [...assignedNonSuperusers, ...superusers];
+
+      // requiresLogin : vrai si au moins un user 'general' est assigné (auth wall preview via Hub)
+      const hasGeneral = db.prepare(`
+        SELECT COUNT(*) AS n FROM event_users eu
+        INNER JOIN users u ON u.id = eu.user_id
+        WHERE eu.event_id = ? AND u.active = 1
+          AND eu.roles LIKE '%general%'
+      `).get(event.id).n > 0;
 
       const freshEvent = getEvent(db, event.id);
-      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  users=${usersWithHash.length}  status=${freshEvent.status}`);
-      res.json({ event: { ...freshEvent, meta }, questions, users: usersWithHash });
+      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  users=${usersWithHash.length}  status=${freshEvent.status}  requiresLogin=${hasGeneral}`);
+      res.json({ event: { ...freshEvent, meta }, questions, users: usersWithHash, requiresLogin: hasGeneral });
     } catch (err) {
       next(err);
     }

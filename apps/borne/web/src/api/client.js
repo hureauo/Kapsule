@@ -27,7 +27,6 @@ export function isTechAuthenticated() { return Boolean(getTechToken()) && hasTec
 // general_token : sessionStorage (durée d'onglet, pas de persistance) — preview seulement
 export function getGeneralToken() { return sessionStorage.getItem(GENERAL_TOKEN_KEY); }
 export function saveGeneralToken(token) { sessionStorage.setItem(GENERAL_TOKEN_KEY, token); }
-export function clearGeneralToken() { sessionStorage.removeItem(GENERAL_TOKEN_KEY); }
 
 // ── Wrappers fetch ────────────────────────────────────────────────────────────
 
@@ -107,7 +106,8 @@ export const api = {
 
   // ── Routes client admin (requireAdmin = client OU tech) ───────────────────
 
-  health: () => apiFetch('/api/health'), // public, pas d'auth requise
+  health: () => apiFetch('/api/health'), // public, liveness probe
+  adminHealth: () => apiFetch('/api/admin/health'), // auth requise — retourne disk, eventName, isPreview
 
   listEvents: () => apiFetch('/api/events'),
   activateEvent: (id) =>

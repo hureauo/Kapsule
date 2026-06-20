@@ -224,11 +224,9 @@ describe('POST /api/sessions — preview requiresLogin', () => {
     mkdirSync(join(eventDir, 'videos'), { recursive: true });
     const edb = createEventDb(join(eventDir, 'db.sqlite'));
 
-    // Seeder un user general avec hash argon2
-    const hash = await argon2.hash('guest-pass', { type: argon2.argon2id });
-    edb.prepare("INSERT INTO event_users (email, password_hash, roles) VALUES (?, ?, ?)").run(
-      'guest@test.com', hash, JSON.stringify(['general'])
-    );
+    // Simuler ce que pull.js écrit : requires_login dans event_meta (§11.24)
+    // Les users 'general' ne sont plus dans event_users — auth proxiée vers Hub.
+    edb.prepare("INSERT OR REPLACE INTO event_meta (key, value) VALUES ('requires_login', 'true')").run();
     edb.close();
 
     app = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: true });
@@ -276,6 +274,159 @@ describe('POST /api/sessions — preview requiresLogin', () => {
       .send({ guest_name: 'Alice', consent: true });
     assert.equal(res.status, 201);
     assert.ok(res.body.id);
+  });
+
+  test('retourne 201 avec token general scopé à cet événement', async () => {
+    const token = jwt.sign({ roles: ['general'], event_id: 'ev-preview-login' }, TEST_CFG.jwtSecret, { expiresIn: '1h' });
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ guest_name: 'Bob', consent: true });
+    assert.equal(res.status, 201);
+  });
+
+  test('retourne 403 avec token general scopé à un autre événement (cloisonnement cross-preview)', async () => {
+    const token = jwt.sign({ roles: ['general'], event_id: 'ev-autre-event' }, TEST_CFG.jwtSecret, { expiresIn: '1h' });
+    const res = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ guest_name: 'Mallory', consent: true });
+    assert.equal(res.status, 403);
+  });
+});
+
+// ── Token general → accès refusé aux routes admin ─────────────────────────────
+// Un user général peut créer une session (preview) mais ne peut PAS accéder
+// aux routes admin (videos, sessions list…). Le frontend doit aussi refuser
+// de considérer ce token comme une auth admin valide.
+
+// ── POST /api/preview/login (§11.24) ─────────────────────────────────────────
+// Auth wall preview : proxy vers Hub pour valider email/mdp, retourne JWT local.
+
+describe('POST /api/preview/login', () => {
+  let dir, app, savedFetch;
+
+  beforeEach(async () => {
+    savedFetch = globalThis.fetch;
+    dir = mkdtempSync(join(tmpdir(), 'borne-preview-login-'));
+    const eventDir = join(dir, 'events', 'ev-preview-auth');
+    mkdirSync(join(eventDir, 'videos'), { recursive: true });
+    const edb = createEventDb(join(eventDir, 'db.sqlite'));
+    edb.prepare("INSERT OR REPLACE INTO event_meta (key, value) VALUES ('requires_login', 'true')").run();
+    edb.close();
+    app = createApp(dir, {
+      ...TEST_CFG,
+      dataDir: dir,
+      previewMode: true,
+      hubUrl: 'https://hub.test',
+      boxToken: 'tok-test-123',
+    });
+    insertEvent({ id: 'ev-preview-auth', name: 'Preview Auth', origin: 'hub', status: 'loaded', is_preview: 1 });
+    setActiveEvent('ev-preview-auth');
+  });
+
+  afterEach(() => {
+    globalThis.fetch = savedFetch;
+    closeEventDb();
+    closeRegistry();
+    rmSync(dir, { recursive: true });
+  });
+
+  // Mock du seul endpoint Hub appelé : POST /api/sync/event/login
+  // retourne 200/401/403 selon le scénario, fidèle au vrai endpoint Hub (Option B §11.24)
+  function mockHub({ status = 200 } = {}) {
+    globalThis.fetch = async (url, opts) => {
+      if (url.includes('/api/sync/event/login')) {
+        return { ok: status < 400, status, json: async () => status === 200 ? { ok: true } : { error: 'err' } };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+  }
+
+  test('retourne 404 si aucun événement preview actif', async () => {
+    // Créer un app sans événement preview (is_preview = 0)
+    const dir2 = mkdtempSync(join(tmpdir(), 'borne-prev-noprev-'));
+    const eventDir2 = join(dir2, 'events', 'ev-normal');
+    mkdirSync(join(eventDir2, 'videos'), { recursive: true });
+    const edb2 = createEventDb(join(eventDir2, 'db.sqlite'));
+    edb2.close();
+    closeEventDb(); closeRegistry();
+    try {
+      const app2 = createApp(dir2, { ...TEST_CFG, dataDir: dir2, hubUrl: 'https://hub.test', boxToken: 'tok' });
+      insertEvent({ id: 'ev-normal', name: 'Normal', origin: 'hub', status: 'loaded', is_preview: 0 });
+      setActiveEvent('ev-normal');
+      const res = await request(app2).post('/api/preview/login').send({ email: 'a@b.com', password: 'p' });
+      assert.equal(res.status, 404);
+    } finally {
+      closeEventDb(); closeRegistry();
+      rmSync(dir2, { recursive: true });
+    }
+  });
+
+  test('retourne 404 si requires_login non actif', async () => {
+    const dir3 = mkdtempSync(join(tmpdir(), 'borne-prev-noreq-'));
+    const eventDir3 = join(dir3, 'events', 'ev-prev-noreq');
+    mkdirSync(join(eventDir3, 'videos'), { recursive: true });
+    const edb3 = createEventDb(join(eventDir3, 'db.sqlite'));
+    edb3.prepare("INSERT OR REPLACE INTO event_meta (key, value) VALUES ('requires_login', 'false')").run();
+    edb3.close();
+    closeEventDb(); closeRegistry();
+    try {
+      const app3 = createApp(dir3, { ...TEST_CFG, dataDir: dir3, hubUrl: 'https://hub.test', boxToken: 'tok' });
+      insertEvent({ id: 'ev-prev-noreq', name: 'Prev No Req', origin: 'hub', status: 'loaded', is_preview: 1 });
+      setActiveEvent('ev-prev-noreq');
+      const res = await request(app3).post('/api/preview/login').send({ email: 'a@b.com', password: 'p' });
+      assert.equal(res.status, 404);
+    } finally {
+      closeEventDb(); closeRegistry();
+      rmSync(dir3, { recursive: true });
+    }
+  });
+
+  test('retourne 400 si email manquant', async () => {
+    mockHub();
+    const res = await request(app).post('/api/preview/login').send({ password: 'p' });
+    assert.equal(res.status, 400);
+  });
+
+  test('retourne 400 si password manquant', async () => {
+    mockHub();
+    const res = await request(app).post('/api/preview/login').send({ email: 'a@b.com' });
+    assert.equal(res.status, 400);
+  });
+
+  test('retourne 401 si Hub rejette les identifiants (401)', async () => {
+    mockHub({ status: 401 });
+    const res = await request(app).post('/api/preview/login').send({ email: 'a@b.com', password: 'wrong' });
+    assert.equal(res.status, 401);
+  });
+
+  test('retourne 403 si Hub refuse l\'assignation (403)', async () => {
+    mockHub({ status: 403 });
+    const res = await request(app).post('/api/preview/login').send({ email: 'a@b.com', password: 'p' });
+    assert.equal(res.status, 403);
+  });
+
+  test('retourne un JWT local avec rôle general et event_id si login Hub réussi', async () => {
+    mockHub({ status: 200 });
+    const res = await request(app).post('/api/preview/login').send({ email: 'guest@test.com', password: 'pw' });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.token, 'doit retourner un token JWT');
+    const payload = JSON.parse(Buffer.from(res.body.token.split('.')[1], 'base64').toString());
+    assert.deepEqual(payload.roles, ['general']);
+    assert.equal(payload.event_id, 'ev-preview-auth');
+    assert.equal(payload.email, 'guest@test.com');
+  });
+
+  test('le JWT local permet de créer une session preview', async () => {
+    mockHub({ status: 200 });
+    const loginRes = await request(app).post('/api/preview/login').send({ email: 'guest@test.com', password: 'pw' });
+    assert.equal(loginRes.status, 200);
+    const sessRes = await request(app)
+      .post('/api/sessions')
+      .set('Authorization', `Bearer ${loginRes.body.token}`)
+      .send({ guest_name: 'Alice', consent: true });
+    assert.equal(sessRes.status, 201);
   });
 });
 

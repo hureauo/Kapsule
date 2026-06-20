@@ -1,11 +1,22 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
+import rateLimit from 'express-rate-limit';
 import { validateGuestName } from '@kapsule/core';
 import { getActiveEvent, updateEventStatus } from '../registry.js';
 import { getActiveEventDb } from '../eventDb.js';
+import { config as globalConfig } from '../config.js';
 
 export function makeSessionsRouter(dataDir, cfg) {
+  // Instancié par routeur pour éviter la pollution entre suites de tests (état en mémoire)
+  const createSessionLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Trop de sessions créées, réessayez dans 15 minutes.' },
+    skip: () => cfg.skipRateLimits === true,
+  });
   const router = Router();
   const auth = cfg.requireAdmin;
 
@@ -20,19 +31,18 @@ export function makeSessionsRouter(dataDir, cfg) {
 
   // ── Routes publiques ──────────────────────────────────────────────────────
 
-  router.post('/sessions', (req, res, next) => {
+  router.post('/sessions', createSessionLimiter, (req, res, next) => {
     try {
       const ctx = requireActiveDb(res);
       if (!ctx) return;
       const { active, db } = ctx;
 
-      // Preview avec users general : vérifier JWT general avant de créer la session
+      // Auth wall preview : requiresLogin est stocké dans event_meta au pull (§11.24).
+      // Les users 'general' ne sont plus dans event_users — leur auth est proxiée vers le Hub.
       if (active.is_preview) {
-        const users = db.prepare('SELECT roles FROM event_users').all();
-        const hasGeneral = users.some(u => {
-          try { return JSON.parse(u.roles).includes('general'); } catch { return false; }
-        });
-        if (hasGeneral) {
+        const requiresMeta = db.prepare("SELECT value FROM event_meta WHERE key = 'requires_login'").get();
+        const requiresLogin = requiresMeta?.value === 'true';
+        if (requiresLogin) {
           const authHeader = req.headers['authorization'];
           const token = (authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null) ?? req.query.token ?? null;
           if (!token) return res.status(401).json({ error: 'Login requis pour accéder à cet événement' });
@@ -41,6 +51,9 @@ export function makeSessionsRouter(dataDir, cfg) {
             const roles = Array.isArray(payload.roles) ? payload.roles : [];
             const allowed = ['general', 'admin_borne', 'tech_borne'];
             if (!roles.some(r => allowed.includes(r))) return res.status(403).json({ error: 'Accès refusé' });
+            if (payload.event_id && payload.event_id !== active.id) {
+              return res.status(403).json({ error: 'Token non valide pour cet événement' });
+            }
           } catch {
             return res.status(401).json({ error: 'Token invalide ou expiré' });
           }
@@ -114,6 +127,61 @@ export function makeSessionsRouter(dataDir, cfg) {
         'UPDATE sessions SET completed_at=CURRENT_TIMESTAMP WHERE id=?'
       ).run(id);
       res.json(db.prepare('SELECT * FROM sessions WHERE id=?').get(id));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── POST /api/preview/login — auth wall preview (§11.24, option B) ────────
+  // Délègue l'auth ET la vérification d'assignation au Hub via un seul appel
+  // POST /api/sync/event/login (protégé par box token). Le Hub vérifie que
+  // l'utilisateur est bien assigné à CET événement avec le rôle 'general'.
+  router.post('/preview/login', createSessionLimiter, async (req, res, next) => {
+    try {
+      const active = getActiveEvent();
+      if (!active || !active.is_preview) {
+        return res.status(404).json({ error: 'Endpoint uniquement disponible en mode preview' });
+      }
+
+      const db = getActiveEventDb(dataDir, active);
+      const requiresMeta = db.prepare("SELECT value FROM event_meta WHERE key = 'requires_login'").get();
+      if (requiresMeta?.value !== 'true') {
+        return res.status(404).json({ error: 'Aucun auth wall configuré pour cet événement' });
+      }
+
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: 'email et password requis' });
+      }
+
+      const hubUrl = cfg.hubUrl ?? globalConfig.hubUrl;
+      const boxToken = cfg.boxToken ?? globalConfig.boxToken;
+      if (!hubUrl || !boxToken) {
+        return res.status(503).json({ error: 'Hub non configuré' });
+      }
+
+      // Un seul appel Hub : authentifie ET vérifie l'assignation 'general' sur cet event.
+      let hubRes;
+      try {
+        hubRes = await fetch(`${hubUrl}/api/sync/event/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Box-Token': boxToken },
+          body: JSON.stringify({ email, password }),
+        });
+      } catch {
+        return res.status(503).json({ error: 'Hub inaccessible' });
+      }
+
+      if (hubRes.status === 401) return res.status(401).json({ error: 'Identifiants invalides' });
+      if (hubRes.status === 403) return res.status(403).json({ error: 'Utilisateur non autorisé pour cet événement' });
+      if (!hubRes.ok) return res.status(502).json({ error: 'Erreur Hub inattendue' });
+
+      const token = jwt.sign(
+        { email, roles: ['general'], event_id: active.id },
+        cfg.jwtSecret,
+        { expiresIn: '8h' }
+      );
+      res.json({ token });
     } catch (err) {
       next(err);
     }

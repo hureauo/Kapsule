@@ -243,6 +243,18 @@ docker compose run --rm dev npm test -w @kapsule/hub-server
 
 Le service `dev` monte le dépôt en volume et installe les outils de build natifs (`better-sqlite3`). Rien n'est conservé entre deux exécutions. Les tests qui dépendent de ffmpeg sont automatiquement ignorés s'il n'est pas présent.
 
+### Smoke tests end-to-end (curl)
+
+Les tests ci-dessus sont des tests unitaires/d'intégration en mémoire. Pour vérifier le **câblage réel** (SPA servi par Nginx, proxy `/api/` → Express, codes de retour de chaque endpoint), des smoke tests démarrent les containers réels et les interrogent par `curl` :
+
+```bash
+npm run smoke         # Hub puis Borne
+npm run smoke:hub     # stack docker-compose.hub.yml
+npm run smoke:borne   # stack docker-compose.borne.yml (mode autonome)
+```
+
+Chaque assertion logge `✓`/`✗` ; le script s'arrête sur la première qui casse (code de sortie ≠0) et détruit le stack en sortie (`--keep` pour le conserver). Ces scripts **dépendent de Docker** et sont donc volontairement hors de `npm test` — à lancer manuellement, typiquement avant un déploiement. Le rendu et les interactions React (clics, formulaires, capture caméra) restent une vérification humaine.
+
 ---
 
 ## 7. Variables d'environnement

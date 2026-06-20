@@ -1,20 +1,18 @@
 # Borne d'essai (aperçu distant client, §6D).
 #
-# Usage :
-#   BOX_TOKEN_PREVIEW=<token> PREVIEW_PORT=8081 \
+# Usage prod (auto) : créé par le backend Hub via docker.sock à la création d'événement.
+#   Le nom de container `preview-<slug>` est déterministe : l'edge nginx route
+#   essai-<slug>.kapsule.hureau.com → preview-<slug>:80 sans reload.
+#
+# Usage debug / lancement manuel :
+#   BOX_TOKEN_PREVIEW=<token> PREVIEW_SLUG=monnom \
 #   docker compose -f docker-compose.preview.yml -p preview-monnom up -d
 #
-# PREVIEW_PORT  : port hôte sur lequel la borne est joignable (obligatoire).
 # BOX_TOKEN_PREVIEW : token d'essai généré depuis le Hub (is_preview=1).
-# HUB_URL       : URL interne ou publique du Hub.
-#                 → En interne (même serveur) : http://hub-backend:3001
-#                   La borne rejoint le réseau hub_net du Hub pour parler
-#                   directement au backend sans passer par internet/nginx.
-#                 → En externe : https://hub.tondomaine.com
-#
-# Plusieurs bornes preview peuvent tourner simultanément sur des ports différents :
-#   PREVIEW_PORT=8081 ... -p preview-mariage up -d
-#   PREVIEW_PORT=8082 ... -p preview-gala    up -d
+# PREVIEW_SLUG      : identifiant DNS-safe (ex: "mariage-dupont") — nom du container.
+# HUB_URL           : URL interne ou publique du Hub.
+#                     → En interne (même serveur) : http://hub-backend:3001
+#                     → En externe : https://hub.tondomaine.com
 
 services:
   borne-preview-backend:
@@ -26,12 +24,10 @@ services:
       - MAX_DATA_BYTES=1073741824
       - PREVIEW_MODE=true
       - HUB_URL=${HUB_URL:-http://hub-backend:3001}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD_PREVIEW:-admin123}
-      - TECH_PASSWORD=${TECH_PASSWORD_PREVIEW:-tech123}
-      - JWT_SECRET=${JWT_SECRET:-change-me}
+      - TECH_PASSWORD=${TECH_PASSWORD_PREVIEW}
+      - JWT_SECRET=${JWT_SECRET}
       - DATA_DIR=/app/data
       - PORT=3001
-      - HOST_PORT=${PREVIEW_PORT}
     volumes:
       - borne-preview-data:/app/data
     networks:
@@ -40,16 +36,18 @@ services:
     restart: unless-stopped
 
   borne-preview-frontend:
+    # Nom déterministe : l'edge nginx résout "preview-<slug>" via le DNS Docker.
+    # En lancement manuel : PREVIEW_SLUG doit correspondre au slug utilisé dans l'URL.
+    container_name: preview-${PREVIEW_SLUG:-debug}
     build:
       context: .
       dockerfile: apps/borne/web/Dockerfile.preview
-    ports:
-      # PREVIEW_PORT : port hôte → 80 dans le container (HTTP, pas de TLS)
-      - "${PREVIEW_PORT:-8081}:80"
+    # Pas de ports exposés : l'edge proxy fait le routing par Host.
     depends_on:
       - borne-preview-backend
     networks:
       - preview_internal
+      - hub_net
     restart: unless-stopped
 
 volumes:

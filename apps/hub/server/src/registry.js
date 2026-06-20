@@ -50,11 +50,10 @@ export function openRegistry(dataDir) {
       name         TEXT NOT NULL,
       event_date   DATE,
       status       TEXT NOT NULL DEFAULT 'draft'
-                   CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
+                   CHECK(status IN ('draft','preview','ready','loaded','live','closed','pushed','processed','waiting')),
       pulled_at    DATETIME,
       pushed_at    DATETIME,
       processed_at DATETIME,
-      purged_at    DATETIME,
       created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -87,76 +86,193 @@ export function openRegistry(dataDir) {
       detail     TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS event_versions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      snapshot   TEXT NOT NULL,
+      summary    TEXT NOT NULL,
+      author     TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
-  // Migration 6B.1: add 'active' to users
-  const userCols = db.pragma('table_info(users)').map((c) => c.name);
-  if (!userCols.includes('active')) {
-    db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
-  }
-
-  // Migration 6C: add 'token_clear' to box_tokens
-  const boxCols = db.pragma('table_info(box_tokens)').map((c) => c.name);
-  if (!boxCols.includes('token_clear')) {
-    db.exec("ALTER TABLE box_tokens ADD COLUMN token_clear TEXT NOT NULL DEFAULT ''");
-  }
-
-  // Migration 7A.1: renommer role 'admin' → 'superuser' + relâcher owner_id
-  // SQLite ne supporte pas ALTER COLUMN ni DROP COLUMN de façon portable.
-  // On reconstruit les deux tables concernées si elles portent encore l'ancien schéma.
-  const needsUsersMigration = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n > 0;
-  if (needsUsersMigration) {
-    db.exec('PRAGMA foreign_keys = OFF');
-    db.exec(`
-      DROP TABLE IF EXISTS users_new;
-      CREATE TABLE users_new (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        email         TEXT UNIQUE NOT NULL,
-        password_hash TEXT,
-        name          TEXT,
-        role          TEXT NOT NULL DEFAULT 'client'
-                      CHECK(role IN ('superuser','client')),
-        active        INTEGER NOT NULL DEFAULT 1,
-        created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      INSERT INTO users_new SELECT
-        id, email, password_hash, name,
-        CASE WHEN role = 'admin' THEN 'superuser' ELSE role END,
-        active, created_at
-      FROM users;
-      DROP TABLE users;
-      ALTER TABLE users_new RENAME TO users;
-    `);
-    db.exec('PRAGMA foreign_keys = ON');
-  }
-
-  // Migration 7A.1: owner_id nullable sur events (reconstruit si NOT NULL)
-  const ownerCol = db.pragma('table_info(events)').find(c => c.name === 'owner_id');
-  if (ownerCol && ownerCol.notnull === 1) {
-    db.exec(`
-      DROP TABLE IF EXISTS events_new;
-      CREATE TABLE events_new (
-        id           TEXT PRIMARY KEY,
-        owner_id     INTEGER REFERENCES users(id),
-        name         TEXT NOT NULL,
-        event_date   DATE,
-        status       TEXT NOT NULL DEFAULT 'draft'
-                     CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
-        pulled_at    DATETIME,
-        pushed_at    DATETIME,
-        processed_at DATETIME,
-        purged_at    DATETIME,
-        created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      INSERT INTO events_new SELECT * FROM events;
-      DROP TABLE events;
-      ALTER TABLE events_new RENAME TO events;
-    `);
-  }
+  runMigrations(db);
 
   _db = db;
   return db;
+}
+
+// ── Migrations versionées ─────────────────────────────────────────────────────
+// Chaque migration est appliquée exactement une fois, tracée dans schema_migrations.
+// L'idempotence interne est conservée : safe sur une DB qui aurait appliqué
+// ces migrations avant l'existence du tracker.
+
+const MIGRATIONS = [
+  {
+    version: 1,
+    name: '6B.1_add_active_to_users',
+    up(db) {
+      const cols = db.pragma('table_info(users)').map((c) => c.name);
+      if (!cols.includes('active')) {
+        db.exec('ALTER TABLE users ADD COLUMN active INTEGER NOT NULL DEFAULT 1');
+      }
+    },
+  },
+  {
+    version: 2,
+    name: '6C_add_token_clear_to_box_tokens',
+    up(db) {
+      const cols = db.pragma('table_info(box_tokens)').map((c) => c.name);
+      if (!cols.includes('token_clear')) {
+        db.exec("ALTER TABLE box_tokens ADD COLUMN token_clear TEXT NOT NULL DEFAULT ''");
+      }
+    },
+  },
+  {
+    version: 3,
+    name: '7A.1_users_superuser_role',
+    // SQLite ne supporte pas ALTER COLUMN → reconstruction de table.
+    up(db) {
+      const needs = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n > 0;
+      if (!needs) return;
+      db.exec('PRAGMA foreign_keys = OFF');
+      db.exec(`
+        DROP TABLE IF EXISTS users_new;
+        CREATE TABLE users_new (
+          id            INTEGER PRIMARY KEY AUTOINCREMENT,
+          email         TEXT UNIQUE NOT NULL,
+          password_hash TEXT,
+          name          TEXT,
+          role          TEXT NOT NULL DEFAULT 'client'
+                        CHECK(role IN ('superuser','client')),
+          active        INTEGER NOT NULL DEFAULT 1,
+          created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO users_new SELECT
+          id, email, password_hash, name,
+          CASE WHEN role = 'admin' THEN 'superuser' ELSE role END,
+          active, created_at
+        FROM users;
+        DROP TABLE users;
+        ALTER TABLE users_new RENAME TO users;
+      `);
+      db.exec('PRAGMA foreign_keys = ON');
+    },
+  },
+  {
+    version: 4,
+    name: '7A.1_events_owner_nullable',
+    up(db) {
+      const ownerCol = db.pragma('table_info(events)').find((c) => c.name === 'owner_id');
+      if (!ownerCol || ownerCol.notnull !== 1) return;
+      db.exec(`
+        DROP TABLE IF EXISTS events_new;
+        CREATE TABLE events_new (
+          id           TEXT PRIMARY KEY,
+          owner_id     INTEGER REFERENCES users(id),
+          name         TEXT NOT NULL,
+          event_date   DATE,
+          status       TEXT NOT NULL DEFAULT 'draft'
+                       CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
+          pulled_at    DATETIME,
+          pushed_at    DATETIME,
+          processed_at DATETIME,
+          purged_at    DATETIME,
+          created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO events_new SELECT * FROM events;
+        DROP TABLE events;
+        ALTER TABLE events_new RENAME TO events;
+      `);
+    },
+  },
+  {
+    version: 5,
+    name: '8D_fix_numeric_event_version_authors',
+    // Corrige les author stockés comme id numérique pur (ex. "2") dans event_versions.
+    // NOT GLOB '*[^0-9]*' cible uniquement les chaînes 100 % numériques (vs '[0-9]*' qui matche "2abc").
+    up(db) {
+      const badAuthors = db.prepare(
+        "SELECT DISTINCT author FROM event_versions WHERE author IS NOT NULL AND author NOT GLOB '*[^0-9]*' AND author != ''"
+      ).all();
+      if (badAuthors.length === 0) return;
+      const fix = db.prepare(
+        'UPDATE event_versions SET author = (SELECT email FROM users WHERE id = CAST(? AS INTEGER)) WHERE author = ?'
+      );
+      for (const { author } of badAuthors) fix.run(author, author);
+    },
+  },
+  {
+    version: 6,
+    name: 'WA.2_events_status_preview_waiting',
+    // SQLite ne supporte pas ALTER COLUMN — reconstruction de la table pour modifier le CHECK.
+    // Remplace 'purged' par 'preview' et 'waiting'. Les lignes 'purged' existantes passent en 'waiting'.
+    up(db) {
+      const currentCheck = db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='events'"
+      ).get()?.sql ?? '';
+      if (currentCheck.includes("'preview'")) return; // déjà migré
+      db.exec('PRAGMA foreign_keys = OFF');
+      db.exec(`
+        DROP TABLE IF EXISTS events_new;
+        CREATE TABLE events_new (
+          id           TEXT PRIMARY KEY,
+          owner_id     INTEGER REFERENCES users(id),
+          name         TEXT NOT NULL,
+          event_date   DATE,
+          status       TEXT NOT NULL DEFAULT 'draft'
+                       CHECK(status IN ('draft','preview','ready','loaded','live','closed','pushed','processed','waiting')),
+          pulled_at    DATETIME,
+          pushed_at    DATETIME,
+          processed_at DATETIME,
+          created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO events_new (id, owner_id, name, event_date, status, pulled_at, pushed_at, processed_at, created_at, updated_at)
+        SELECT id, owner_id, name, event_date,
+          CASE WHEN status = 'purged' THEN 'waiting' ELSE status END,
+          pulled_at, pushed_at, processed_at, created_at, updated_at
+        FROM events;
+        DROP TABLE events;
+        ALTER TABLE events_new RENAME TO events;
+      `);
+      db.exec('PRAGMA foreign_keys = ON');
+    },
+  },
+  {
+    version: 7,
+    name: 'preview_desired_state',
+    // État désiré de la borne preview, indépendant de l'état réel du container.
+    // 'running' = doit tourner (réconcilié au boot / make vps-up) ; 'stopped' = éteinte
+    // volontairement (bouton Hub) ou jamais démarrée. Défaut 'stopped' : une preview
+    // ne tourne que sur action explicite, pas dès la création de l'événement.
+    up(db) {
+      const cols = db.pragma('table_info(events)').map((c) => c.name);
+      if (!cols.includes('preview_desired')) {
+        db.exec("ALTER TABLE events ADD COLUMN preview_desired TEXT NOT NULL DEFAULT 'stopped'");
+      }
+    },
+  },
+];
+
+function runMigrations(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version    INTEGER PRIMARY KEY,
+      name       TEXT NOT NULL,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  const applied = new Set(
+    db.prepare('SELECT version FROM schema_migrations').all().map((r) => r.version)
+  );
+  for (const { version, name, up } of MIGRATIONS) {
+    if (applied.has(version)) continue;
+    up(db);
+    db.prepare('INSERT INTO schema_migrations (version, name) VALUES (?, ?)').run(version, name);
+  }
 }
 
 export function getDb() {
@@ -242,6 +358,11 @@ export function getEvent(db, id) {
   return db.prepare('SELECT * FROM events WHERE id = ?').get(id);
 }
 
+// Événements dont la borne preview doit tourner (réconciliation au boot).
+export function listEventsPreviewDesired(db) {
+  return db.prepare("SELECT * FROM events WHERE preview_desired = 'running'").all();
+}
+
 export function insertEvent(db, { id, name, event_date = null }) {
   return db
     .prepare('INSERT INTO events (id, name, event_date) VALUES (?, ?, ?)')
@@ -250,7 +371,7 @@ export function insertEvent(db, { id, name, event_date = null }) {
 
 export function updateEvent(db, id, fields) {
   const allowed = ['name', 'event_date', 'status',
-    'pulled_at', 'pushed_at', 'processed_at', 'purged_at'];
+    'pulled_at', 'pushed_at', 'processed_at', 'preview_desired'];
   const updates = Object.keys(fields)
     .filter((k) => allowed.includes(k))
     .map((k) => `${k} = ?`);
@@ -325,15 +446,6 @@ export function listEventUsers(db, event_id) {
   `).all(event_id);
 }
 
-export function listUserEvents(db, user_id) {
-  return db.prepare(`
-    SELECT e.*, eu.roles FROM events e
-    INNER JOIN event_users eu ON eu.event_id = e.id
-    WHERE eu.user_id = ?
-    ORDER BY e.created_at DESC
-  `).all(user_id);
-}
-
 export function upsertEventUser(db, { event_id, user_id, roles }) {
   return db.prepare(`
     INSERT INTO event_users (event_id, user_id, roles)
@@ -356,4 +468,36 @@ export function insertSyncLog(db, { event_id = null, action, detail = null }) {
   return db
     .prepare('INSERT INTO sync_log (event_id, action, detail) VALUES (?, ?, ?)')
     .run(event_id, action, detail ? JSON.stringify(detail) : null);
+}
+
+// ── event_versions ────────────────────────────────────────────────────────────
+
+export function insertEventVersion(db, { event_id, snapshot, summary, author = null }) {
+  return db
+    .prepare('INSERT INTO event_versions (event_id, snapshot, summary, author) VALUES (?, ?, ?, ?)')
+    .run(event_id, JSON.stringify(snapshot), summary, author);
+}
+
+export function listEventVersions(db, event_id) {
+  return db
+    .prepare('SELECT id, event_id, summary, author, created_at FROM event_versions WHERE event_id = ? ORDER BY created_at DESC, id DESC')
+    .all(event_id);
+}
+
+export function getEventVersion(db, id) {
+  const row = db.prepare('SELECT * FROM event_versions WHERE id = ?').get(id);
+  if (!row) return null;
+  return { ...row, snapshot: JSON.parse(row.snapshot) };
+}
+
+export function getPreviousEventVersion(db, event_id, current_id) {
+  const row = db
+    .prepare('SELECT * FROM event_versions WHERE event_id = ? AND id < ? ORDER BY id DESC LIMIT 1')
+    .get(event_id, current_id);
+  if (!row) return null;
+  return { ...row, snapshot: JSON.parse(row.snapshot) };
+}
+
+export function deleteEventVersions(db, event_id) {
+  return db.prepare('DELETE FROM event_versions WHERE event_id = ?').run(event_id);
 }
