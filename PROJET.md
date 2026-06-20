@@ -356,7 +356,7 @@ sync_log (
 );
 ```
 
-**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` ne stocke que des hash ; `box_tokens` stocke à la fois le hash (auth) et le token en clair (consultation admin, cf. §11.13). Jamais de donnée invité dans le registre. La purge d'un événement : `rm -rf events/<id>` + `status='purged'` + ligne `sync_log` ; le `ON DELETE CASCADE` sur `box_tokens.event_id` retire au passage les tokens de l'événement purgé.
+**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` ne stocke que des hash ; `box_tokens` stocke à la fois le hash (auth) et le token en clair (consultation admin, cf. §11.13). Jamais de donnée invité dans le registre. La purge d'un événement : `rm -rf events/<id>` + `status='waiting'` + ligne `sync_log` ; le `ON DELETE CASCADE` sur `box_tokens.event_id` retire au passage les tokens de l'événement purgé.
 
 ### 5.4 Registre de la Borne — `registry.sqlite`
 
@@ -366,7 +366,7 @@ local_events (
   name TEXT NOT NULL,
   origin TEXT NOT NULL CHECK(origin IN ('hub','local')),
   status TEXT NOT NULL DEFAULT 'loaded'
-    CHECK(status IN ('loaded','live','closed','pushed','purged')),
+    CHECK(status IN ('loaded','live','closed','pushed','waiting')),
   active INTEGER NOT NULL DEFAULT 0,           -- un seul événement actif servi au kiosque
   pulled_at DATETIME, pushed_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -448,7 +448,7 @@ Base `/api`. `GET /api/health`.
 - `POST /api/events` `{ name, event_date }` → uuid, statut `draft`, crée `events/<id>/db.sqlite` avec questions par défaut.
 - `PUT /api/events/:id` — métadonnées, dont `consent_text` et `idle_timeout` ; `PUT /api/events/:id/status` `{ status }` (transitions manuelles Hub : `draft→preview`, `preview→draft`, `preview→ready`, `ready→preview`). Même règle de gel d'édition que les questions (voir ci-dessous).
 - (Plus de `PUT …/assign` : avec token = événement, le lien Borne↔événement se crée en générant un token de borne pour l'événement, voir le super-admin ci-dessous. La Borne s'auto-rattache via son token au moment du pull.)
-- `DELETE /api/events/:id` — **purge RGPD** : `rm -rf events/<id>` + `status='purged'` + `sync_log`. Confirmation `{ confirm: name }`.
+- `DELETE /api/events/:id` — **purge RGPD** : `rm -rf events/<id>` + `status='waiting'` + `sync_log`. Confirmation `{ confirm: name }`.
 
 **Questions** (`routes/questions.js`) — user + owner ; mêmes routes que la Borne mais sur `eventStore.openEventDb(eventId)` : `GET/POST/PUT/DELETE /api/events/:id/questions`, `PUT /api/events/:id/questions/reorder/batch`.
 

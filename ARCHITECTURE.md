@@ -190,13 +190,21 @@ Importé via le barrel `index.js` qui **ne ré-exporte que** `constants.js` + `v
 ## 5. Flux clés (de bout en bout)
 
 **Cycle de vie d'un événement** (statuts) :
-`draft → ready → loaded → live → closed → pushed → processed → purged`
-- `draft/ready` : édition côté Hub.
-- `loaded` : pullé sur la borne.
+`draft → preview → ready → loaded → live → closed → pushed → processed → waiting`
+- `draft` : édition côté Hub.
+- `preview` : test sur la borne d'essai (`is_preview=1`) ; édition encore possible ;
+  transitions manuelles `draft→preview` (« Lancer la preview »), `preview→draft`,
+  `preview→ready` (« Valider la configuration », gèle le contenu).
+- `ready` : config gelée, un token réel peut puller ; `ready→preview` possible (retour en preview).
+- `loaded` : pullé sur la borne (édition à nouveau possible jusqu'au jour J).
 - `live/closed` : déroulement sur la borne (sessions invités).
 - `pushed` : remonté au Hub.
 - `processed` : jobs worker terminés (galerie disponible).
-- `purged` : supprimé (RGPD).
+- `waiting` : état terminal d'attente, données disponibles ; la purge RGPD (`DELETE`) reste **manuelle**.
+
+> Côté front : `EventsPage`/`EventDetailPage`/`SyncStatus` mappent ces statuts en libellés FR
+> (`STATUS_LABEL`/`STATUS_TIMELINE_LABEL`) et badges CSS `status-badge--<status>` ;
+> `FROZEN_STATUSES` (gel d'édition) = `{live, closed, pushed, processed, waiting}` — `preview` reste éditable.
 
 **Pull (Hub → Borne)** : `pullMyEvent` → `GET /api/sync/event` (résout le token) →
 `GET /api/sync/events/:id/bundle` (questions + meta + users, passe `ready`→`loaded`) →
