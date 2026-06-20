@@ -77,7 +77,7 @@ Process séparé optionnel : `worker/index.js` (boucle de jobs).
 | Mount | Fichier | Auth | Contenu |
 |-------|---------|------|---------|
 | `/api/auth` | `routes/auth.js` | publique (rate-limited) | login (JWT), register (si `ALLOW_REGISTER`), set-password (via registration token) |
-| `/api/events` | `routes/events.js` | `requireUser` + `requireOwner` | CRUD événements, config (import depuis UI), owner, **preview/token + preview/status** (owner), **preview/start + preview/stop** (superuser only — `requireAdmin`), purge RGPD (DELETE). `POST /` réservé superuser (`requireAdmin` local). Le router accepte un `docker` injectable (`makeEventsRouter(dataDir, { docker })`) — défaut `dockerCli`. |
+| `/api/events` | `routes/events.js` | `requireUser` + `requireOwner` | CRUD événements, config (route `/config` JWT admin, sans appelant UI depuis le retrait du write-back preview), owner, **preview/token + preview/status** (owner), **preview/start + preview/stop** (superuser only — `requireAdmin`), purge RGPD (DELETE). `POST /` réservé superuser (`requireAdmin` local). Le router accepte un `docker` injectable (`makeEventsRouter(dataDir, { docker })`) — défaut `dockerCli`. |
 | `/api/events/:eventId/questions` | `routes/questions.js` | `requireUser` + `requireOwner` | CRUD questions + reorder |
 | `/api/admin` | `routes/admin.js` | `requireUser` + **`requireSuperuser`** | gestion comptes clients, box_tokens (génération/liste/révocation), event_users (assignation), overview dashboard |
 | `/api/events/:eventId/versions` | `routes/versions.js` (mergeParams) | `requireUser` + `requireOwner` | liste des versions de config, snapshot + diff champ par champ, **restore** (superuser only). Monté **avant** `/api/events/:eventId` (gallery) pour éviter la capture du segment `versions` comme `videoId`. |
@@ -86,8 +86,13 @@ Process séparé optionnel : `worker/index.js` (boucle de jobs).
 
 > **Deux chemins d'auth distincts, ne pas confondre :**
 > `requireUser` (JWT humain : superuser/client) protège l'UI. `requireBox` (token borne) protège
-> *uniquement* `/api/sync`. Une route preview/config existe en double : `/api/events/:id/config`
+> *uniquement* `/api/sync`. Une route config existe en double : `/api/events/:id/config`
 > (JWT admin) et `/api/sync/events/:id/config` (token borne) — c'est volontaire.
+> La config circule **dans un seul sens** Hub → borne (la borne preview *pull* la config du Hub,
+> source de vérité). Le write-back preview → Hub a été retiré : `/api/sync/push-config` est
+> interdit (403) en mode preview, et l'UI Hub n'importe plus la config d'une borne d'essai
+> (le bouton « Importer la config de la preview » de l'onglet Aperçu a été supprimé). La route
+> JWT `/api/events/:id/config` n'a plus d'appelant dans l'UI mais reste exposée (auth admin).
 
 ### Worker (`worker/`)
 

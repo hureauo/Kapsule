@@ -147,12 +147,7 @@ function DesignTab({ event, frozen, onSaved }) {
 }
 
 // ── Onglet Aperçu ─────────────────────────────────────────────────────────────
-function ApercuTab({ event, previewTokens, onConfigImported }) {
-  const [importState, setImportState] = useState(null);
-  const [importError, setImportError] = useState('');
-  const [modal, setModal] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [applyMsg, setApplyMsg] = useState('');
+function ApercuTab({ event }) {
   const [previewUrl, setPreviewUrl] = useState(null);
 
   useEffect(() => {
@@ -160,53 +155,6 @@ function ApercuTab({ event, previewTokens, onConfigImported }) {
       .then(s => setPreviewUrl(s.preview_url))
       .catch(() => {});
   }, [event.id]);
-
-  // Borne preview avec une URL de location valide (pour l'import de config)
-  const previewBorne = previewTokens.find(t => t.location && /^https?:\/\//.test(t.location)) ?? null;
-
-  async function fetchPreviewConfig() {
-    if (!previewBorne) return;
-    setImportState('loading');
-    setImportError('');
-    try {
-      const [eventRes, questionsRes] = await Promise.all([
-        fetch(`${previewBorne.location}/api/event`),
-        fetch(`${previewBorne.location}/api/questions`),
-      ]);
-      if (!eventRes.ok) throw new Error(`Borne preview inaccessible (${eventRes.status})`);
-      const [eventData, questions] = await Promise.all([eventRes.json(), questionsRes.json()]);
-      const meta = {
-        theme: eventData.theme,
-        idle_timeout: String(eventData.idle_timeout),
-        welcome_title: eventData.welcome_title ?? '',
-        welcome_subtitle: eventData.welcome_subtitle ?? '',
-        name_prompt: eventData.name_prompt ?? '',
-        consent_text: eventData.consent_text ?? '',
-        consent_details: eventData.consent_details ?? '',
-        thanks_text: eventData.thanks_text ?? '',
-      };
-      setImportState({ questions, meta });
-      setModal(true);
-    } catch (err) {
-      setImportState('error');
-      setImportError(err.message);
-    }
-  }
-
-  async function applyConfig(mode) {
-    setApplying(true);
-    setApplyMsg('');
-    try {
-      await api.importPreviewConfig(event.id, { ...importState, mode });
-      setApplyMsg('Configuration importée.');
-      setModal(false);
-      onConfigImported();
-    } catch (err) {
-      setApplyMsg(`Erreur : ${err.message}`);
-    } finally {
-      setApplying(false);
-    }
-  }
 
   return (
     <div className="tab-content">
@@ -221,50 +169,6 @@ function ApercuTab({ event, previewTokens, onConfigImported }) {
           : <span className="text--muted" style={{ fontSize: '14px' }}>Chargement…</span>
         }
       </section>
-
-      {previewBorne && (
-        <section className="panel-section">
-          <h3 className="panel-section__title">Importer la configuration de la preview</h3>
-          <p className="text--muted" style={{ marginBottom: '12px', fontSize: '14px' }}>
-            Récupère les questions et le design configurés sur la borne d'essai
-            et les applique à cet événement. Les vidéos ne sont jamais transférées.
-          </p>
-          <button className="btn btn--primary" onClick={fetchPreviewConfig} disabled={importState === 'loading'}>
-            {importState === 'loading' ? 'Récupération…' : 'Importer la config de la preview'}
-          </button>
-          {importState === 'error' && (
-            <p className="text--error" style={{ marginTop: '8px' }}>{importError}</p>
-          )}
-          {applyMsg && <p className="text--muted" style={{ marginTop: '8px' }}>{applyMsg}</p>}
-        </section>
-      )}
-
-      {modal && importState && importState !== 'loading' && importState !== 'error' && (
-        <div className="modal-overlay" onClick={() => setModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <h3 className="modal__title">Importer la config de la preview</h3>
-            <div className="modal__body">
-              <p style={{ marginBottom: '8px' }}>
-                <strong>{importState.questions?.length ?? 0} question(s)</strong> +{' '}
-                thème <strong>{importState.meta?.theme ?? '?'}</strong> récupérés depuis la borne d'essai.
-              </p>
-              <p className="text--muted" style={{ fontSize: '13px', marginBottom: '16px' }}>
-                Choisissez comment appliquer ces données à l'événement :
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <button className="btn btn--primary" onClick={() => applyConfig('overwrite')} disabled={applying}>
-                  Écraser — remplacer questions + design par ceux de la preview
-                </button>
-                <button className="btn btn--ghost" onClick={() => applyConfig('merge')} disabled={applying}>
-                  Fusionner — garder les champs Hub non vides déjà définis
-                </button>
-                <button className="btn btn--ghost" onClick={() => setModal(false)} disabled={applying}>Annuler</button>
-              </div>
-              {applyMsg && <p className="text--muted" style={{ marginTop: '8px' }}>{applyMsg}</p>}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -519,18 +423,13 @@ export default function EventDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [event, setEvent] = useState(null);
-  const [tokens, setTokens] = useState([]);
   const [tab, setTab] = useState('Questions');
   const [error, setError] = useState('');
 
   const loadEvent = useCallback(async () => {
     try {
-      const [ev, syncInfo] = await Promise.all([
-        api.getEvent(id),
-        api.getSyncInfo(id).catch(() => ({ tokens: [] })),
-      ]);
+      const ev = await api.getEvent(id);
       setEvent(ev);
-      setTokens(syncInfo.tokens ?? []);
     } catch (err) {
       if (err.status === 401) { clearToken(); navigate('/login', { replace: true }); }
       else setError(err.message);
@@ -553,7 +452,6 @@ export default function EventDetailPage() {
 
   const frozen = FROZEN_STATUSES.has(event.status);
   const notYetPulled = event.pulled_at && event.updated_at > event.pulled_at;
-  const previewTokens = tokens.filter(t => t.is_preview);
   const isSuperuser = getRole() === 'superuser';
   const TABS = [
     'Questions', 'Design', 'Synchro', 'Galerie',
@@ -663,11 +561,7 @@ export default function EventDetailPage() {
         )}
 
         {tab === 'Aperçu' && (
-          <ApercuTab
-            event={event}
-            previewTokens={previewTokens}
-            onConfigImported={loadEvent}
-          />
+          <ApercuTab event={event} />
         )}
 
         {tab === 'Historique' && (

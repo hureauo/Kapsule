@@ -118,9 +118,12 @@ export function makeSyncRouter(dataDir, cfg) {
 
   // ── POST /api/sync/push-config ───────────────────────────────────────────────
   // Pousse questions + event_meta de l'événement actif vers le Hub (overwrite).
-  // Autorisé en mode preview — usage principal : client ajuste et remonte sa config.
+  // Réservé à la borne réelle : interdit en mode preview (config Hub = source de vérité).
   router.post('/sync/push-config', auth, async (req, res, next) => {
     try {
+      if (isPreviewMode(cfg)) {
+        return res.status(403).json({ error: 'Push config interdit en mode démo (borne d\'essai)' });
+      }
       if (!config.hubUrl && !cfg.hubUrl) {
         return res.status(409).json({ error: 'Borne en mode autonome — aucun Hub configuré' });
       }

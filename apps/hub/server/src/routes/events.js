@@ -206,6 +206,8 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
   // ── POST /api/events/:eventId/config — import config depuis UI Hub (admin) ──
   // body: { mode: 'overwrite'|'merge', questions: [...], meta: { theme, ... } }
   // Protégé par requireUser (JWT) — distinct de POST /api/sync/events/:id/config (box token).
+  // Plus d'appelant UI depuis le retrait du write-back preview (importPreviewConfig supprimé).
+  // Conservé volontairement : utilisable via API directe ou futur outillage admin.
   router.post('/:eventId/config', requireUser, requireOwner, (req, res, next) => {
     try {
       const event = req.event;

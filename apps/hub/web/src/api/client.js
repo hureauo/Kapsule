@@ -59,7 +59,6 @@ export const api = {
   deleteBoxToken: (tokenId) => apiFetch(`/admin/tokens/${tokenId}`, { method: 'DELETE' }),
   updateBoxToken: (tokenId, fields) => apiFetch(`/admin/tokens/${tokenId}`, { method: 'PUT', body: fields }),
   assignEventOwner: (eventId, email) => apiFetch(`/events/${eventId}/owner`, { method: 'PUT', body: { email } }),
-  importPreviewConfig: (eventId, payload) => apiFetch(`/events/${eventId}/config`, { method: 'POST', body: payload }),
   previewStatus: (eventId) => apiFetch(`/events/${eventId}/preview/status`),
   previewStart:  (eventId) => apiFetch(`/events/${eventId}/preview/start`, { method: 'POST' }),
   previewStop:   (eventId) => apiFetch(`/events/${eventId}/preview/stop`,  { method: 'POST' }),

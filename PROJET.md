@@ -428,7 +428,7 @@ Base `/api`. JSON partout sauf flux de fichiers. Gestionnaire d'erreurs global �
 **Synchro** (`routes/sync.js`) — admin :
 - `GET /api/sync/status` — `{ online, hubUrl, lastPull, push: { running, total, done, currentFile } }`.
 - `POST /api/sync/pull` — pull manuel immédiat.
-- `POST /api/sync/push-config` — pousse questions + `event_meta` de l'événement actif vers le Hub (overwrite). Autorisé en mode preview.
+- `POST /api/sync/push-config` — pousse questions + `event_meta` de l'événement actif vers le Hub (overwrite). Interdit en mode preview (403) — réservé à la borne réelle ; la config Hub reste la source de vérité.
 - `POST /api/sync/push/:eventId` — **409 si l'événement n'est pas `closed`** (message : « Clôturez l'événement avant le push ») ; sinon lance `push.js` en tâche de fond ; la progression se lit via `GET /api/sync/status`.
 - `POST /api/sync/purge/:eventId` — refusé si `status != 'pushed'` ; demande une confirmation explicite (`{ confirm: name }`).
 
