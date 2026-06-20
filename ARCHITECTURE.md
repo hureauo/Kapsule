@@ -140,7 +140,7 @@ Point d'entrée : `index.js` → `createApp(dataDir, cfg)`. Pull one-shot au dé
 |---------|---------|
 | `routes/events.js` | event actif (config publique pour le parcours invité), statut, close, pull/push déclenchés manuellement (tech) |
 | `routes/questions.js` | CRUD questions (admin borne) |
-| `routes/sessions.js` | création de session invité (publique, ou JWT general si preview avec login), answers, complete |
+| `routes/sessions.js` | création de session invité (publique, ou JWT general si preview avec login), answers, complete, **`POST /api/preview/login`** (proxy auth wall vers Hub, §11.24) |
 | `routes/videos.js` | upload vidéo (multipart), liste, stream Range-aware, remplacement (DELETE+INSERT transactionnel), suppression |
 | `routes/sync.js` | endpoints déclenchant `pull.js`/`push.js`, status de progression |
 
@@ -149,7 +149,7 @@ Point d'entrée : `index.js` → `createApp(dataDir, cfg)`. Pull one-shot au dé
 | Fichier | Rôle |
 |---------|------|
 | `hubClient.js` | `hubFetch` / `hubFetchJson` : appels au Hub avec `X-Box-Token`, retry backoff `min(2000·2^(n-1), 30000)`, 5 essais, sur erreurs réseau uniquement (pas 4xx). |
-| `pull.js` | `pullMyEvent` (récupère l'unique événement du token) → `pullEvent` (écrit questions/meta/users dans db.sqlite, DELETE+INSERT). Statut local vérifié **au moment d'appliquer** (§11.10). En preview : purge les anciens événements preview. |
+| `pull.js` | `pullMyEvent` (récupère l'unique événement du token) → `pullEvent` (écrit questions/meta/users dans db.sqlite, DELETE+INSERT). **Filtre les users `general` du bundle** (seuls `admin_borne`/`tech_borne` sont stockés en `event_users`) et écrit `requires_login` dans `event_meta` (§11.24). Statut local vérifié **au moment d'appliquer** (§11.10). En preview : purge les anciens événements preview. |
 | `push.js` | `pushConfig` (remonte la config vers le Hub) ; `pushEvent` (checkpoint WAL → manifest → upload des `missing` → upload db.sqlite → finalize → statut `pushed`). État de progression dans `_state`. |
 
 ### Frontend borne (`apps/borne/web/src/`)
@@ -209,9 +209,16 @@ upload des vidéos manquantes (retry) → upload `db.sqlite` (le Hub ferme son h
 
 **Preview (essai client avant l'événement)** : à la création d'un événement, le Hub provisionne
 2 containers Docker (borne + nginx) et un box_token preview. L'edge nginx route
-`essai-<slug>.<domaine>` vers le container nginx. Accès client : login email/mot de passe
-(comptes `event_users`), OU lien JWT signé par le Hub (`POST /api/events/:id/preview/token`,
-payload `{roles:['general'], event_id}`). La borne preview vérifie `event_id` → cloisonnement.
+`essai-<slug>.<domaine>` vers le container nginx. **Auth wall preview (§11.24)** : si un user
+Hub avec le rôle `general` est assigné, le bundle pullé porte `requiresLogin: true` (stocké dans
+`event_meta.requires_login` côté borne — le rôle `general` n'est **jamais** pullé dans
+`event_users`). Le login invité passe par `POST /api/preview/login {email,password}` sur la borne,
+qui délègue en **un seul appel** au Hub `POST /api/sync/event/login` (protégé par le box token) :
+le Hub authentifie email/mot de passe **et** vérifie l'assignation `general` sur l'événement du
+token, puis répond `200` / `401` / `403` sans jamais divulguer la liste des emails à la borne.
+Sur `200`, la borne signe et retourne un JWT local `{email, roles:['general'], event_id}` (8 h),
+et vérifie `event_id` à la création de session → cloisonnement. (Mécanisme antérieur — lien JWT
+signé via `preview/token` — conservé en parallèle.)
 
 **Auth** :
 - *Hub* : JWT `{sub, role}` (superuser/client), 24 h. `requireUser` puis `requireOwner` (membership event_users).

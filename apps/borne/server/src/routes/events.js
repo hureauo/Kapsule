@@ -164,11 +164,10 @@ export function makeEventsRouter(dataDir, cfg) {
       const consent = getMeta('consent_text') ?? DEFAULTS.CONSENT_TEXT;
       const textOrDefault = (key) => getMeta(key) ?? TEXT_FIELDS[key];
 
-      const users = db.prepare('SELECT roles FROM event_users').all();
-      const hasGeneral = users.some(u => {
-        try { return JSON.parse(u.roles).includes('general'); } catch { return false; }
-      });
-      const requiresLogin = !!(activeEvent.is_preview) && hasGeneral;
+      // requiresLogin est stocké dans event_meta au pull (§11.24).
+      // Les users 'general' ne sont plus dans event_users — auth proxiée vers Hub.
+      const requiresLoginMeta = db.prepare("SELECT value FROM event_meta WHERE key = 'requires_login'").get();
+      const requiresLogin = !!(activeEvent.is_preview) && requiresLoginMeta?.value === 'true';
 
       res.json({
         id: activeEvent.id,

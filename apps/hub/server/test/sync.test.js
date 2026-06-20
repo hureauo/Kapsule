@@ -121,6 +121,88 @@ describe('GET /api/sync/event', () => {
   });
 });
 
+// ── POST /api/sync/event/login ────────────────────────────────────────────────
+
+describe('POST /api/sync/event/login', () => {
+  let previewEventId, previewBoxToken, generalUserHash;
+
+  before(async () => {
+    const db = getDb();
+    generalUserHash = await argon2.hash('guest-pass', { type: argon2.argon2id });
+
+    // Event en statut 'preview' avec un token preview
+    const evRes = await request.post('/api/events')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Event Preview Login', event_date: '2026-10-01' });
+    previewEventId = evRes.body.id;
+    await request.put(`/api/events/${previewEventId}/status`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ status: 'preview' });
+
+    const raw = 'p'.repeat(64);
+    const hash = createHash('sha256').update(raw).digest('hex');
+    insertBoxToken(db, { event_id: previewEventId, token_hash: hash, token_clear: raw, label: 'Preview Login Token', is_preview: 1 });
+    previewBoxToken = raw;
+
+    // Créer un user 'general' et l'assigner à l'event preview
+    insertUser(db, { email: 'guest@preview.test', password_hash: generalUserHash, role: 'client' });
+    const guestUser = db.prepare("SELECT id FROM users WHERE email = 'guest@preview.test'").get();
+    upsertEventUser(db, { event_id: previewEventId, user_id: guestUser.id, roles: ['general'] });
+  });
+
+  it('retourne 400 si email manquant', async () => {
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ password: 'guest-pass' });
+    assert.equal(res.status, 400);
+  });
+
+  it('retourne 400 si password manquant', async () => {
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ email: 'guest@preview.test' });
+    assert.equal(res.status, 400);
+  });
+
+  it('retourne 403 si event non en preview (token réel)', async () => {
+    // boxToken pointe sur eventId qui est en 'loaded' après le bundle pull
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', boxToken)
+      .send({ email: 'guest@preview.test', password: 'guest-pass' });
+    assert.equal(res.status, 403);
+  });
+
+  it('retourne 401 si mdp incorrect', async () => {
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ email: 'guest@preview.test', password: 'mauvais' });
+    assert.equal(res.status, 401);
+  });
+
+  it('retourne 401 si email inconnu', async () => {
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ email: 'inconnu@test.com', password: 'guest-pass' });
+    assert.equal(res.status, 401);
+  });
+
+  it('retourne 403 si user non assigné à cet event avec rôle general', async () => {
+    // client@sync.test existe mais n'est pas assigné à previewEventId
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ email: 'client@sync.test', password: 'client-pass' });
+    assert.equal(res.status, 403);
+  });
+
+  it('retourne 200 si user assigné general + mdp correct', async () => {
+    const res = await request.post('/api/sync/event/login')
+      .set('X-Box-Token', previewBoxToken)
+      .send({ email: 'guest@preview.test', password: 'guest-pass' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+  });
+});
+
 // ── GET /api/sync/events/:id/bundle ─────────────────────────────────────────
 
 describe('GET /api/sync/events/:id/bundle', () => {

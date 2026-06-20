@@ -2,9 +2,11 @@ import { Router } from 'express';
 import { existsSync, mkdirSync, renameSync, writeFileSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import multer from 'multer';
+import rateLimit from 'express-rate-limit';
+import argon2 from 'argon2';
 import { sha256File } from '@kapsule/core/src/checksum.js';
 import { LIMITS } from '@kapsule/core';
-import { getDb, getEvent, updateEvent, insertSyncLog } from '../registry.js';
+import { getDb, getEvent, updateEvent, insertSyncLog, getUserByEmail } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { applyEventConfig } from '../eventConfig.js';
 import { requireBox } from '../middleware/boxAuth.js';
@@ -113,6 +115,57 @@ export function makeSyncRouter(dataDir, opts = {}) {
       syncLog(req, 200, `mode=${mode}  questions=${questions?.length ?? 0}`);
       res.json({ ok: true });
     } catch (err) { next(err); }
+  });
+
+  // ── POST /api/sync/event/login ───────────────────────────────────────────
+  // Auth wall preview (§11.24, option B) : authentifie email/mdp côté Hub ET
+  // vérifie que l'utilisateur est assigné à l'événement du token avec le rôle 'general'.
+  // La borne n'a ainsi jamais à stocker ni divulguer la liste des emails assignés.
+  // Déclarée avant GET /event pour éviter tout conflit de routing.
+  router.post('/event/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, skip: () => opts.skipRateLimits === true }), async (req, res) => {
+    const { email, password } = req.body ?? {};
+    if (!email || !password) {
+      syncLog(req, 400, 'email ou password manquant');
+      return res.status(400).json({ error: 'email et password requis' });
+    }
+
+    const db = getDb();
+    const event = getEvent(db, req.box.event_id);
+    if (!event || event.status !== 'preview') {
+      syncLog(req, 403, `statut ${event?.status ?? 'introuvable'} — preview requis`);
+      return res.status(403).json({ error: 'Cet événement n\'est pas en cours de preview' });
+    }
+
+    // Vérifier les credentials Hub
+    const user = getUserByEmail(db, email);
+    if (!user || !user.active || !user.password_hash) {
+      syncLog(req, 401, `email=${email} inconnu ou inactif`);
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+    let valid;
+    try {
+      valid = await argon2.verify(user.password_hash, password);
+    } catch {
+      valid = false;
+    }
+    if (!valid) {
+      syncLog(req, 401, `email=${email} mdp incorrect`);
+      return res.status(401).json({ error: 'Identifiants invalides' });
+    }
+
+    // Vérifier l'assignation à cet événement avec le rôle 'general'
+    const assignment = db.prepare(`
+      SELECT eu.roles FROM event_users eu
+      WHERE eu.event_id = ? AND eu.user_id = ?
+    `).get(event.id, user.id);
+    const roles = assignment ? JSON.parse(assignment.roles) : [];
+    if (!roles.includes('general')) {
+      syncLog(req, 403, `email=${email} non assigné general`);
+      return res.status(403).json({ error: 'Utilisateur non autorisé pour cet événement' });
+    }
+
+    syncLog(req, 200, `email=${email} login preview OK`);
+    res.json({ ok: true });
   });
 
   // ── GET /api/sync/event ───────────────────────────────────────────────────

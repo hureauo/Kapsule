@@ -48,11 +48,24 @@ export function makeSyncRouter(dataDir, cfg) {
   router.get('/sync/status', auth, (req, res) => {
     const hubUrl = cfg.hubUrl || config.hubUrl || null;
     const boxToken = cfg.boxToken || config.boxToken || null;
+
+    // requiresLogin depuis event_meta (stocké au pull, §11.24)
+    let requiresLogin = false;
+    try {
+      const active = getActiveEvent();
+      if (active && active.is_preview) {
+        const db = getActiveEventDb(dataDir, active);
+        const meta = db.prepare("SELECT value FROM event_meta WHERE key = 'requires_login'").get();
+        requiresLogin = meta?.value === 'true';
+      }
+    } catch { /* aucun événement actif */ }
+
     res.json({
       online: !!hubUrl,
       hubUrl,
       token: boxToken ? `${boxToken.slice(0, 8)}…` : null,
       isPreview: isPreviewMode(cfg),
+      requiresLogin,
       lastPull: getLastPull(),
       localConfig: getLocalConfig(dataDir),
       push: getPushState(),
