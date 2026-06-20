@@ -68,14 +68,16 @@ Tu ne lances PAS les tests (Bash en lecture seule, pas de `npm test`/`docker run
 
 Détermine les workspaces touchés à partir du diff : un fichier sous `apps/hub/server/` → `@kapsule/hub-server` ; `apps/hub/web/` → `@kapsule/hub-web` ; `apps/borne/server/` → `@kapsule/borne-server` ; `apps/borne/web/` → `@kapsule/borne-web` ; `packages/core/` → `@kapsule/core`. Si le diff ne touche aucun fichier testable (doc seule, infra seule), liste `workspaces: []`.
 
-Récupère le SHA du HEAD via `git rev-parse HEAD` ; si des fichiers sont non commités, mets `commit: uncommitted`.
+Récupère le **commit de base** via `git rev-parse HEAD` : c'est le dernier commit AVANT le travail en cours. Tu l'enregistres comme `base_commit`. Le travail reviewé est tout ce qui s'ajoute par-dessus — typiquement le working tree sale au moment de la review, plus d'éventuels commits que l'utilisateur ajoutera ENSUITE (avant de lancer `/run-tests`).
+
+> **Pourquoi `base_commit` (HEAD) et pas un statut `uncommitted`** : `kapsule-tester` tourne plus tard, après que l'utilisateur a pu committer son travail (workflow VPS→push→pull→local). Si on ancrait le relais sur l'état exact du moment, le moindre commit le périmerait. En l'ancrant sur le commit *parent* (stable), le tester reconstitue tout le sous-lot avec `git diff <base_commit>` quel que soit le nombre de commits ajoutés depuis. On enregistre donc TOUJOURS un vrai SHA, jamais `uncommitted`.
 
 Format EXACT à écrire :
 
 ```markdown
 ---
 status: tests-pending
-commit: <sha-du-HEAD ou "uncommitted">
+base_commit: <sha de HEAD au moment de la review>
 workspaces: [@kapsule/hub-server, @kapsule/hub-web]
 generated_at: <timestamp ISO 8601, ex. 2026-06-20T14:32:00Z>
 verdict: COMMIT OK | COMMIT À CORRIGER

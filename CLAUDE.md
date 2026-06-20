@@ -33,8 +33,8 @@ Les commandes ci-dessous sont à lancer via `docker compose run` ou des scripts 
 - **`/verif-spec`** — lance `kapsule-reviewer` sur le diff courant. **À faire avant chaque commit de sous-lot.** Le reviewer signale les findings (il ne corrige pas le code) ; c'est l'agent principal qui corrige, sur ton feu vert.
 - **`/run-tests`** — lance `kapsule-tester` (sur la machine de dev, où Docker est rapide) : exécute les tests ciblés par le dernier `/verif-spec`. À faire après avoir pull le code reviewé.
 - **`/sync-doc`** — lance `kapsule-doc-sync` pour synchroniser le site `docs/` avec le diff. Manuel, à la demande (distinct de `/verif-spec`).
-- **Agent `kapsule-reviewer`** — reviewer infra & doc en lecture seule sur le code : vérifie le diff contre CLAUDE.md et les invariants PROJET.md §11, rend un rapport (VERDICT + findings). Il écrit deux choses : `ARCHITECTURE.md` (si le diff change un module/flux) et le relais `.claude/review-pending.md` (liste des workspaces à tester, pour kapsule-tester). Il ne touche jamais au code source ni à l'état git.
-- **Agent `kapsule-tester`** — exécute les tests des workspaces listés dans `.claude/review-pending.md`, puis y inscrit le verdict (`tests-passed` / `tests-failed` + erreurs). Lecture seule sur le code : il rapporte les échecs, ne les corrige pas. Lancé via `/run-tests` sur la machine de dev.
+- **Agent `kapsule-reviewer`** — reviewer infra & doc en lecture seule sur le code : vérifie le diff contre CLAUDE.md et les invariants PROJET.md §11, rend un rapport (VERDICT + findings). Il écrit deux choses : `ARCHITECTURE.md` (si le diff change un module/flux) et le relais `.claude/review-pending.md` (`base_commit` = ancre du sous-lot, workspaces à tester, points d'attention, corrections demandées). Il ne touche jamais au code source ni à l'état git.
+- **Agent `kapsule-tester`** — reconstitue le sous-lot via `git diff <base_commit>` (lu dans le relais), lance les tests des workspaces concernés (+ smoke si l'infra est touchée), puis inscrit le verdict (`tests-passed` / `tests-failed` + erreurs) dans le relais. Tolère les commits ajoutés depuis la review (base_commit reste un ancêtre de HEAD). Lecture seule sur le code : il rapporte les échecs, ne les corrige pas. Lancé via `/run-tests` sur la machine de dev.
 - **Agent `kapsule-doc-sync`** — synchronise le site de doc `docs/` avec le diff : met à jour les pages concernées, ajoute une page + son entrée `pages.js` si un nouveau fichier source apparaît. Écrit uniquement sous `docs/`, jamais le code ni l'état git. Lancé via `/sync-doc`.
 
 ## Règles de travail
@@ -46,6 +46,21 @@ Les commandes ci-dessous sont à lancer via `docker compose run` ou des scripts 
 - **Un endpoint n'est terminé que testé** : chaque route backend a un test supertest (cas nominal + au moins un cas d'erreur) avant de passer à la suivante.
 - **Les tests ne dépendent jamais de Docker** : les serveurs s'instancient en mémoire de test avec un `DATA_DIR` temporaire (`fs.mkdtemp`), nettoyé après.
 - **Vérifications humaines** : tout ce qui touche iPad Safari réel, Raspberry/arm64, module RTC ou certificat à approuver sur l'appareil ne peut PAS être vérifié ici. Ne jamais le marquer comme testé — le signaler explicitement comme « à vérifier par un humain » (cases 🧑 dans ROADMAP.md).
+
+## Workflow review → tests (VPS ↔ local)
+
+Le code se développe/déboge sur le **VPS** (Docker lent → pas de tests lourds), et les tests tournent en **local** (Docker rapide). Le passage de relais entre les deux se fait via `.claude/review-pending.md`.
+
+**Cycle nominal :**
+1. **VPS** — `/verif-spec` : `kapsule-reviewer` relit le diff courant et écrit le relais avec `base_commit` = HEAD au moment de la review (l'ancre stable du sous-lot), ses points d'attention et la liste des corrections demandées.
+2. **VPS** — corriger les findings ❌, puis committer (autant de commits qu'on veut — le relais n'est pas périmé, il est ancré sur `base_commit`, pas sur HEAD).
+3. **VPS → local** — passer le code (voir ci-dessous).
+4. **local** — `/run-tests` : `kapsule-tester` reconstitue le sous-lot avec `git diff <base_commit>`, lance les tests des workspaces (+ smoke si l'infra est touchée), et inscrit le verdict dans le relais.
+
+**Passer le code du VPS au local :**
+- Travail **commité** sur le VPS → `git push` (VPS) puis `git pull` (local). C'est le cas propre ; le relais voyage avec (il est commité).
+- Travail **non commité** sur le VPS → `git push` n'envoie que les commits, pas le working tree : committer d'abord (même un `wip:` temporaire) puis push/pull. Le `rsync` reste une option pour transférer un working tree sans commiter (plus lourd).
+- **Avant `git pull` en local** : vérifier que le working tree local est propre (`git status`). `git pull` refuse d'écraser des fichiers non commités ou non trackés — sinon `git stash` (ou supprimer les fichiers non trackés qui vont arriver) d'abord.
 
 ## Invariants critiques
 
