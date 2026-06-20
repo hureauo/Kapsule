@@ -22,7 +22,7 @@ function syncLog(req, status, detail = '') {
 }
 
 // Ordre des statuts pour les transitions avant uniquement (heartbeat)
-const STATUS_ORDER = ['draft', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'purged'];
+const STATUS_ORDER = ['draft', 'preview', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'waiting'];
 
 function statusRank(s) {
   const i = STATUS_ORDER.indexOf(s);
@@ -95,8 +95,8 @@ export function makeSyncRouter(dataDir, opts = {}) {
       if (!event) { syncLog(req, 404); return res.status(404).json({ error: 'Événement introuvable' }); }
       if (req.params.id !== req.box.event_id) { syncLog(req, 403); return res.status(403).json({ error: 'Non assigné à cette borne' }); }
 
-      const FROZEN = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
-      if (FROZEN.has(event.status)) {
+      const CONTENT_FROZEN = new Set(['ready', 'live', 'closed', 'pushed', 'processed', 'waiting']);
+      if (CONTENT_FROZEN.has(event.status)) {
         syncLog(req, 409, `statut ${event.status}`);
         return res.status(409).json({ error: `Import impossible : événement en statut ${event.status}` });
       }
@@ -120,10 +120,24 @@ export function makeSyncRouter(dataDir, opts = {}) {
   router.get('/event', (req, res) => {
     const db = getDb();
     const event = getEvent(db, req.box.event_id);
-    if (!event || !['ready', 'loaded'].includes(event.status)) {
-      syncLog(req, 404, 'aucun événement pullable');
+    if (!event) {
+      syncLog(req, 404, 'événement introuvable');
       return res.status(404).json({ error: 'Aucun événement pullable pour ce token' });
     }
+
+    // §11.25 : token preview → statut preview requis ; token réel → ready ou loaded
+    if (req.box.is_preview) {
+      if (event.status !== 'preview') {
+        syncLog(req, 403, `token preview mais statut=${event.status}`);
+        return res.status(403).json({ error: `Token d'essai uniquement utilisable en statut preview (statut actuel : ${event.status})` });
+      }
+    } else {
+      if (!['ready', 'loaded'].includes(event.status)) {
+        syncLog(req, 404, `statut non pullable: ${event.status}`);
+        return res.status(404).json({ error: 'Aucun événement pullable pour ce token' });
+      }
+    }
+
     syncLog(req, 200, `name="${event.name}"  status=${event.status}`);
     res.json({
       id: event.id, name: event.name, event_date: event.event_date,
@@ -140,11 +154,13 @@ export function makeSyncRouter(dataDir, opts = {}) {
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
       // Invariant §11.20 : un token ne peut tirer que son propre événement
       if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Token non autorisé sur cet événement' });
-      if (!['ready', 'loaded'].includes(event.status)) {
+      const pullableStatuses = req.box.is_preview ? ['preview'] : ['ready', 'loaded'];
+      if (!pullableStatuses.includes(event.status)) {
         return res.status(409).json({ error: `Statut ${event.status} — bundle non disponible` });
       }
 
-      if (event.status === 'ready') {
+      // Token réel : ready→loaded. Token preview : statut inchangé (données jetables).
+      if (!req.box.is_preview && event.status === 'ready') {
         updateEvent(db, event.id, { status: 'loaded', pulled_at: new Date().toISOString() });
         insertSyncLog(db, { event_id: event.id, action: 'pull', detail: { from: 'ready', to: 'loaded' } });
       }
@@ -157,9 +173,8 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const metaRows = edb.prepare('SELECT key, value FROM event_meta').all();
       const meta = Object.fromEntries(metaRows.map(r => [r.key, r.value]));
 
-      // Bundle users : users assignés à l'événement + tous les superusers actifs.
-      // Les superusers ont tous les rôles borne implicitement.
-      // L'auth borne rejette naturellement si password_hash est null.
+      // Bundle users : uniquement les rôles borne (admin_borne, tech_borne).
+      // Le rôle 'general' n'est pas pullé — son auth est proxiée vers le Hub à chaque login (§11.24).
       const assignedUsers = db.prepare(`
         SELECT u.email, u.password_hash, eu.roles
         FROM event_users eu
@@ -175,19 +190,28 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const superusers = db.prepare(`
         SELECT email, password_hash FROM users
         WHERE role = 'superuser' AND active = 1
-      `).all().map(u => ({ email: u.email, password_hash: u.password_hash, roles: ['admin_borne', 'tech_borne', 'general'] }));
+      `).all().map(u => ({ email: u.email, password_hash: u.password_hash, roles: ['admin_borne', 'tech_borne'] }));
 
-      // Fusionner : les superusers ont toujours tous les rôles borne, même s'ils
-      // sont dans event_users avec des rôles restreints (leurs rôles explicites sont ignorés).
-      const assignedNonSuperusers = assignedUsers.filter(u => !superuserEmails.has(u.email));
-      const usersWithHash = [
-        ...assignedNonSuperusers,
-        ...superusers,
-      ];
+      // Fusionner : les superusers remplacent leurs éventuels rôles restreints dans event_users.
+      // Filtrer les rôles 'general' des assignés non-superusers.
+      const assignedNonSuperusers = assignedUsers
+        .filter(u => !superuserEmails.has(u.email))
+        .map(u => ({ ...u, roles: u.roles.filter(r => r !== 'general') }))
+        .filter(u => u.roles.length > 0);
+
+      const usersWithHash = [...assignedNonSuperusers, ...superusers];
+
+      // requiresLogin : vrai si au moins un user 'general' est assigné (auth wall preview via Hub)
+      const hasGeneral = db.prepare(`
+        SELECT COUNT(*) AS n FROM event_users eu
+        INNER JOIN users u ON u.id = eu.user_id
+        WHERE eu.event_id = ? AND u.active = 1
+          AND eu.roles LIKE '%general%'
+      `).get(event.id).n > 0;
 
       const freshEvent = getEvent(db, event.id);
-      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  users=${usersWithHash.length}  status=${freshEvent.status}`);
-      res.json({ event: { ...freshEvent, meta }, questions, users: usersWithHash });
+      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  users=${usersWithHash.length}  status=${freshEvent.status}  requiresLogin=${hasGeneral}`);
+      res.json({ event: { ...freshEvent, meta }, questions, users: usersWithHash, requiresLogin: hasGeneral });
     } catch (err) {
       next(err);
     }

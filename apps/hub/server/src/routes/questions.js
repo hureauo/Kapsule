@@ -5,7 +5,7 @@ import { openEventDb } from '../eventStore.js';
 import { captureSnapshot, resolveAuthor } from '../versioning.js';
 import { requireUser, requireOwner } from '../middleware/auth.js';
 
-const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
+const FROZEN_STATUSES = new Set(['ready', 'live', 'closed', 'pushed', 'processed', 'waiting']);
 
 // Monté sous /api/events/:eventId/questions (avec mergeParams: true)
 export function makeQuestionsRouter(dataDir) {

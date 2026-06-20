@@ -11,7 +11,7 @@ Un système de **borne d'enregistrement de messages vidéo pour événements** (
 - **La Borne** (Raspberry Pi) : serveur local **100% offline** pendant l'événement. Un iPad en Safari sur le même Wi-Fi sert de kiosque : l'invité saisit son prénom puis répond à une séquence de questions en se filmant. Un admin local permet d'ajuster les questions sur place et de visionner les vidéos brutes immédiatement.
 - **Le Hub** (VPS) : interface web où le **client** (l'organisateur ; à terme plusieurs clients avec des comptes séparés) prépare ses événements et ses questions, puis consulte ses vidéos après coup. Le Hub reçoit les vidéos, génère miniatures et métadonnées, et accueillera plus tard du traitement lourd (fond vert…).
 
-**Cycle de vie** : le client configure sur le Hub → la Borne **tire** (pull) la configuration → l'événement se déroule offline, **la Borne est maître** → de retour sur la fibre, on **pousse** (push, déclenchement manuel) vidéos + configuration finale vers le Hub → traitement → consultation → purge.
+**Cycle de vie** : le client configure sur le Hub → valide via la **borne preview** (conteneur d'essai, étape officielle) → marque l'événement prêt → la Borne **tire** (pull) la configuration → l'événement se déroule offline, **la Borne est maître** → de retour sur la fibre, on **pousse** (push, déclenchement manuel) vidéos + configuration finale vers le Hub → traitement → consultation → purge manuel.
 
 **Contraintes structurantes :**
 - Multi-événements, multi-clients **côté Hub** ; **une Borne (un Raspberry) ne sert qu'un seul événement**. Chaque Raspberry est déployé à un lieu donné pour un événement donné : pas de gestion multi-événements sur la Borne. Le **token d'appairage est lié à l'événement** (table `box_tokens`, §5.3) — fournir ce token à une Borne (réelle ou conteneur d'essai) l'initialise sur cet événement précis, sans étape d'assignation séparée.
@@ -42,11 +42,23 @@ Un système de **borne d'enregistrement de messages vidéo pour événements** (
 - Machine à états d'un événement (stockée dans le registre du Hub ; sous-ensemble sur la Borne) :
 
 ```
-draft → ready → loaded → live → closed → pushed → processed → purged
- hub     hub     pull    1ʳᵉ session  borne   push OK   worker    RGPD
+draft → preview → ready → loaded → live → closed → pushed → processed → waiting
+ hub      hub      hub     pull    1ʳᵉ session  borne   push OK   worker    manuel
 ```
 
+États Hub uniquement : `draft`, `preview`, `ready`, `processed`, `waiting`.
+États Borne : `loaded`, `live`, `closed`, `pushed`.
+
+- `draft` : événement en cours de configuration (questions, consent, timeout…). Édition libre.
+- `preview` : le client teste via la borne d'essai (conteneur `docker-compose.preview.yml`). Édition encore possible. Transition manuelle `draft → preview` (bouton « Lancer la preview »). La borne d'essai associée (token `is_preview=1`) peut puller et recevoir des sessions de test — données jetables. Transition `preview → ready` (bouton « Valider la configuration »).
+- `ready` : configuration gelée. Le Hub peut générer un token de borne réelle. Seule transition possible : `ready → loaded` (au premier pull de la borne réelle).
+- `loaded` → `live` → `closed` → `pushed` : sur la Borne (voir ci-dessous).
+- `processed` : worker a terminé ses jobs (miniatures, ZIP). Vidéos consultables par le client.
+- `waiting` : état terminal d'attente. Les données sont disponibles. La purge reste **manuelle** pour l'instant (pas de RGPD automatique pendant la période de test). Transition : purge manuelle → suppression du dossier `events/<id>/`.
+
 **Règle anti-conflit (à respecter scrupuleusement)** : le pull n'opère que tant que l'événement local est en `loaded`. Dès la première session invitée (`live`), plus aucun pull ; au push, l'état de la Borne **écrase** celui du Hub pour cet événement (tracé dans `sync_log`). Le Hub connaît le statut `live`/`closed` uniquement au moment du push — entre temps, il gèle l'édition dès `loaded` (voir §7).
+
+**Auth wall preview** : le mécanisme est le rôle `general` dans `event_users` (voir §7D). Si au moins un utilisateur Hub avec le rôle `general` est assigné à l'événement et inclus dans le bundle, le kiosque de la borne d'essai affiche un login (email + mot de passe) avant d'accéder au parcours invité. Ce compte `general` est typiquement partagé entre toutes les personnes autorisées à tester. Le kiosque de la borne réelle (physique, Wi-Fi local) n'a jamais d'auth wall.
 
 ---
 
@@ -317,8 +329,8 @@ events (
   name TEXT NOT NULL,                          -- (plus de box_id : le lien Borne↔événement vit dans box_tokens, §1)
   event_date DATE,
   status TEXT NOT NULL DEFAULT 'draft'
-    CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
-  pulled_at DATETIME, pushed_at DATETIME, processed_at DATETIME, purged_at DATETIME,
+    CHECK(status IN ('draft','preview','ready','loaded','live','closed','pushed','processed','waiting')),
+  pulled_at DATETIME, pushed_at DATETIME, processed_at DATETIME,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -434,15 +446,15 @@ Base `/api`. `GET /api/health`.
 **Événements** (`routes/events.js`) — user :
 - `GET /api/events` — ceux du user (tous si admin).
 - `POST /api/events` `{ name, event_date }` → uuid, statut `draft`, crée `events/<id>/db.sqlite` avec questions par défaut.
-- `PUT /api/events/:id` — métadonnées, dont `consent_text` et `idle_timeout` (écrits dans `event_meta` de la BD événement, donc transférés à la Borne via le bundle) ; `PUT /api/events/:id/status` `{ status:'ready' }` (seules transitions manuelles : `draft→ready`, `ready→draft`). Même règle de gel d'édition que les questions (voir ci-dessous).
+- `PUT /api/events/:id` — métadonnées, dont `consent_text` et `idle_timeout` ; `PUT /api/events/:id/status` `{ status }` (transitions manuelles Hub : `draft→preview`, `preview→draft`, `preview→ready`, `ready→preview`). Même règle de gel d'édition que les questions (voir ci-dessous).
 - (Plus de `PUT …/assign` : avec token = événement, le lien Borne↔événement se crée en générant un token de borne pour l'événement, voir le super-admin ci-dessous. La Borne s'auto-rattache via son token au moment du pull.)
 - `DELETE /api/events/:id` — **purge RGPD** : `rm -rf events/<id>` + `status='purged'` + `sync_log`. Confirmation `{ confirm: name }`.
 
 **Questions** (`routes/questions.js`) — user + owner ; mêmes routes que la Borne mais sur `eventStore.openEventDb(eventId)` : `GET/POST/PUT/DELETE /api/events/:id/questions`, `PUT /api/events/:id/questions/reorder/batch`.
 
 **Règle de gel d'édition (Hub)** — le Hub ne voit pas l'événement passer `live` en temps réel (la Borne est offline) ; il l'apprend au push. Donc :
-- Édition **autorisée** en `draft`, `ready` et `loaded` (c'est ce qui permet d'ajuster les questions jusqu'au jour J).
-- Édition **refusée (409)** dès que le Hub connaît un statut ≥ `live` (push effectué).
+- Édition **autorisée** en `draft`, `preview` et `loaded` (c'est ce qui permet d'ajuster les questions jusqu'au jour J).
+- Édition **refusée (409)** en `ready` (configuration gelée, le token borne réelle peut avoir été distribué) et dès que le Hub connaît un statut ≥ `live` (push effectué).
 - Si `updated_at > pulled_at`, l'UI affiche un bandeau **« Modifications non encore récupérées par la borne »** — le client sait que ses changements ne s'appliqueront que si la Borne re-pull avant l'événement. Au push, l'état de la Borne écrase de toute façon celui du Hub (la Borne est maître).
 
 **Galerie** (`routes/gallery.js`) — user + owner, disponible après push :
@@ -467,8 +479,8 @@ Base `/api`. `GET /api/health`.
 - `GET /api/admin/overview` — vue d'ensemble : tous les événements (tous clients), espace disque consommé par événement (`du` sur `events/<id>/`), disque libre du volume, jobs `failed` récents, et pour chaque événement ses tokens de borne (label, location, `is_preview`, `last_seen_at`).
 
 **Synchro** (`routes/sync.js`) — `requireBox` (header `X-Box-Token`) résout le token via `box_tokens`, met à jour `box_tokens.last_seen_at`, écrit `sync_log`, et **expose `req.box = { token_id, event_id, is_preview }`** (le token désigne directement l'événement, §1) :
-- `GET /api/sync/event` — l'**unique** événement de ce token s'il est `status IN ('ready','loaded')` : `{ id, name, event_date, status, updated_at, is_preview }`. **404** si l'événement n'est plus pullable (purgé, ou déjà ≥ `live`). Remplace l'ancien `GET /assigned` (liste) — une borne = un événement.
-- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […], users: [{email, password_hash, roles}] }`. **403 si `:id` ≠ `req.box.event_id`** (un token ne peut tirer que son propre événement). Passe `ready→loaded`, set `pulled_at`. `users` contient les comptes Hub ayant un mot de passe défini et assignés à l'événement — la Borne les stocke dans `event_users` de sa BD événement et les utilise pour l'auth nominative (§6).
+- `GET /api/sync/event` — l'**unique** événement de ce token s'il est `status IN ('preview','ready','loaded')` : `{ id, name, event_date, status, updated_at, is_preview }`. **404** si l'événement n'est plus pullable (en attente, ou déjà ≥ `live`). Remplace l'ancien `GET /assigned` (liste) — une borne = un événement. Un token `is_preview=1` ne peut puller que si le statut est `preview` ; un token réel ne peut puller qu'en `ready` ou `loaded`.
+- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […], users: [{email, password_hash, roles}] }`. **403 si `:id` ≠ `req.box.event_id`** (un token ne peut tirer que son propre événement). Passe `ready→loaded` (token réel) ou ne change pas le statut (token preview, qui reste en `preview`), set `pulled_at`. `users` contient les comptes Hub ayant un mot de passe défini et assignés à l'événement **avec le rôle `admin_borne` ou `tech_borne`** — la Borne les stocke dans `event_users` de sa BD événement et les utilise pour l'auth nominative (§6). Les utilisateurs avec le rôle `general` ne sont **pas** inclus dans le bundle : leur auth est proxiée vers le Hub à chaque login (§11.24). Le bundle inclut aussi `requiresLogin: true` si au moins un user `general` est assigné à l'événement.
 - `POST /api/sync/events/:id/status` `{ status: 'live'|'closed' }` — envoyé par la Borne au moment du push (transitions avant uniquement, jamais de retour en arrière) ; met à jour le statut dans le registre Hub pour déclencher le gel d'édition.
 - `POST /api/sync/events/:id/manifest` — body `{ files: [{ video_id, filename, size, checksum }], db: { size, checksum } }`. Réponse : `{ missing: [video_id…] }` (ceux non encore reçus ou de checksum différent) → **c'est ce qui rend le push reprenable et idempotent**.
 - `PUT /api/sync/events/:id/files/:videoId` — upload multipart d'UN fichier ; le Hub recalcule le sha256, 422 si mismatch (la Borne retentera).
@@ -595,7 +607,8 @@ Base `/api`. `GET /api/health`.
 21. **Borne d'essai** : une borne dont le token est `is_preview=1` (ou `PREVIEW_MODE=true`) **ne doit jamais pouvoir push** (409) — ce sont des données jetables. Quota `MAX_DATA_BYTES` vérifié **avant** d'écrire le fichier d'upload invité (507 si plein), sinon un client peut saturer le disque du VPS via l'aperçu.
 22. **Compte client sans mot de passe** : `users.password_hash` est NULL tant que le client n'a pas suivi le lien d'enregistrement. Le login (argon2) doit gérer ce cas **avant** d'appeler `argon2.verify(null, …)` (sinon exception) ; un compte `active=0` ou sans hash → 401 « identifiants invalides » (ne pas divulguer lequel).
 23. **`event_users` Borne** : les comptes pullés dans `event_users` de la BD événement (`events/<id>/db.sqlite`) ne contiennent que `email`, `password_hash`, `roles` — **RGPD : pas de nom ni d'autre PII** (le nom reste sur le Hub). Ces données sont **écrasées à chaque pull** (DELETE+INSERT en transaction).
-24. **Preview requiresLogin** : si `GET /api/event` retourne `requiresLogin: true` (preview + au moins un user avec rôle `general`), le kiosque doit exiger un login général avant toute session. Le token `general` (JWT `roles: ['general']`) est stocké en `sessionStorage` (durée de la session navigateur uniquement) et envoyé comme Bearer à `POST /api/sessions`.
+24. **Preview requiresLogin (rôle `general`)** : si `GET /api/sync/event` indique `requiresLogin: true` (event en `preview` ET au moins un user `general` assigné côté Hub), le kiosque de la borne d'essai doit exiger un login avant d'afficher le parcours invité. Le login est **proxié vers le Hub** : `POST /api/preview/login` `{ email, password }` sur la borne → la borne appelle `POST /api/auth/login` du Hub, vérifie que le user retourné est bien assigné à l'événement avec le rôle `general`, et retourne un JWT local `{ roles: ['general'] }`. Ce JWT est stocké en `sessionStorage` (durée de session navigateur uniquement) et envoyé en Bearer à `POST /api/sessions`. **Le rôle `general` n'est donc jamais pullé dans le bundle** — la vérification de l'assignation se fait à chaque login en appelant le Hub (la borne preview est toujours connectée).
+25. **Transitions d'état `preview`** : un token `is_preview=1` ne peut puller que si le statut Hub est `preview`. Un token réel (`is_preview=0`) ne peut puller que si le statut est `ready` ou `loaded`. `requireBox` doit vérifier cette cohérence et retourner 403 si le type de token ne correspond pas au statut attendu.
 
 ---
 

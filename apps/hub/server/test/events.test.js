@@ -207,7 +207,15 @@ describe('PUT /api/events/:eventId/status', () => {
     eventId = res.body.id;
   });
 
-  it('passe draft → ready', async () => {
+  it('passe draft → preview', async () => {
+    const res = await request.put(`/api/events/${eventId}/status`)
+      .set(auth(tokenAlice))
+      .send({ status: 'preview' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'preview');
+  });
+
+  it('passe preview → ready', async () => {
     const res = await request.put(`/api/events/${eventId}/status`)
       .set(auth(tokenAlice))
       .send({ status: 'ready' });
@@ -215,7 +223,15 @@ describe('PUT /api/events/:eventId/status', () => {
     assert.equal(res.body.status, 'ready');
   });
 
-  it('passe ready → draft', async () => {
+  it('passe ready → preview', async () => {
+    const res = await request.put(`/api/events/${eventId}/status`)
+      .set(auth(tokenAlice))
+      .send({ status: 'preview' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'preview');
+  });
+
+  it('passe preview → draft', async () => {
     const res = await request.put(`/api/events/${eventId}/status`)
       .set(auth(tokenAlice))
       .send({ status: 'draft' });
@@ -227,6 +243,13 @@ describe('PUT /api/events/:eventId/status', () => {
     const res = await request.put(`/api/events/${eventId}/status`)
       .set(auth(tokenAlice))
       .send({ status: 'loaded' });
+    assert.equal(res.status, 400);
+  });
+
+  it('refuse une transition non manuelle (draft → ready direct)', async () => {
+    const res = await request.put(`/api/events/${eventId}/status`)
+      .set(auth(tokenAlice))
+      .send({ status: 'ready' });
     assert.equal(res.status, 400);
   });
 
@@ -283,11 +306,11 @@ describe('DELETE /api/events/:eventId', () => {
     assert.equal(res.body.ok, true);
   });
 
-  it('l\'événement est marqué purged après suppression', async () => {
-    // L'événement existe toujours en DB mais en statut purged
+  it('l\'événement est marqué waiting après suppression', async () => {
+    // L'événement existe toujours en DB mais en statut waiting (purge manuelle)
     const res = await request.get(`/api/events/${eventId}`).set(auth(tokenAlice));
     assert.equal(res.status, 200);
-    assert.equal(res.body.status, 'purged');
+    assert.equal(res.body.status, 'waiting');
   });
 });
 

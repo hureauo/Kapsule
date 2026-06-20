@@ -209,6 +209,10 @@ committé en `phase 7X.Y: …`.
 
 ### 7D — Preview protégée : rôle general
 
+> ⚠️ **Révisé en Phase W** : l'implémentation ci-dessous pulle les users `general` dans le bundle
+> et vérifie le login en local. La phase W remplace ça par un proxy vers le Hub (§11.24 révisé) —
+> les `general` ne sont plus pullés, le login est délégué au Hub à chaque connexion.
+
 - [x] 7D.1 Borne `routes/sync.js` : `GET /api/sync/status` expose `isPreview` + `requiresLogin` (true si preview ET au moins un user `general` en base)
 - [x] 7D.2 Borne front : si `isPreview && requiresLogin`, afficher un login (email + mdp) devant `/` avant le parcours invité ; JWT stocké en `sessionStorage` (pas `localStorage` — durée de session) ; route publique uniquement `/api/event` (pour savoir si login requis)
 - [x] 7D.3 Borne `routes/sessions.js` : `POST /api/sessions` vérifie le JWT `general` si `requiresLogin` (401 sinon) + tests
@@ -269,6 +273,26 @@ Capture automatique d'un snapshot `{meta, questions}` à chaque modification de 
 - [x] Tests : `versions.test.js` (7 cas : liste vide, création par PUT meta, création par POST question, no-doublon, snapshot+diff, restore, 404)
 
 ---
+
+## Phase W — Révision workflow événement
+
+Refonte de la machine à états pour introduire l'étape `preview` comme phase officielle du cycle
+de vie, et remplacer `purged` par `waiting` (purge manuelle pendant la période de test).
+Référence : PROJET.md §2 (machine d'états révisée) et §11.25–26 (nouveaux invariants).
+
+Mêmes règles : backend testé avant de passer à la suivante, relu par `/verif-spec`, committé.
+
+### WA — Machine d'états : `preview` + `waiting`
+
+- [x] WA.1 `@kapsule/core/constants.js` : ajouter `preview` et `waiting` dans `EVENT_STATUS` ; retirer `purged`. Mettre à jour `assertStatus()` + tests
+- [x] WA.2 Hub `registry.js` : migration schéma — contrainte `CHECK` de `events.status` mise à jour (`preview`, `waiting` ajoutés ; `purged` retiré) + migration idempotente `schema_migrations` + tests registry
+- [x] WA.3 Hub `routes/events.js` : transitions manuelles `draft→preview`, `preview→draft`, `preview→ready`, `ready→preview` via `PUT /api/events/:id/status` ; gel d'édition en `ready` (409) ; `DELETE /api/events/:id` passe en `waiting` au lieu de `purged` + tests (chaque transition valide/invalide)
+- [x] WA.4 Hub `routes/sync.js` : `GET /api/sync/event` accepte `status IN ('preview','ready','loaded')` ; vérifier que le type de token (preview vs réel) correspond au statut (§11.25, 403 sinon) + tests ; `bundle` exclut les users `general` + inclut `requiresLogin: true` si au moins un `general` assigné + tests ; ne change pas le statut si token preview + tests
+- [ ] WA.5 Borne `routes/sessions.js` : `POST /api/preview/login` `{ email, password }` — proxy vers `POST <HUB_URL>/api/auth/login`, vérifie l'assignation `general` via `GET <HUB_URL>/api/sync/event` (le token borne suffit), retourne JWT local `{ roles: ['general'] }` ; 401 si mismatch ou non assigné + tests (mock Hub)
+- [ ] WA.6 Borne `routes/sync.js` : `GET /api/sync/status` calcule `requiresLogin` depuis le bundle reçu au pull (champ `requiresLogin`) au lieu de lire `event_users` local — retirer les users `general` de `event_users` borne au pull (DELETE+INSERT ne garde que `admin_borne`/`tech_borne`) + tests
+- [ ] WA.7 Hub front : `EventsPage` affiche le badge `preview` ; `EventDetailPage` onglet Synchro : boutons « Lancer la preview » (`draft→preview`) et « Valider la configuration » (`preview→ready`) avec confirmation ; timeline mise à jour
+
+**Terminé quand** : la machine d'états reflète le nouveau workflow ; un événement en `preview` peut être testé sur la borne d'essai (l'auth wall est le rôle `general` déjà implémenté en 7D) ; seul `ready` permet le pull d'un token réel ; la purge est manuelle (`waiting`).
 
 ## Phase 9 — Évolutions (au fil de l'eau)
 

@@ -50,11 +50,10 @@ export function openRegistry(dataDir) {
       name         TEXT NOT NULL,
       event_date   DATE,
       status       TEXT NOT NULL DEFAULT 'draft'
-                   CHECK(status IN ('draft','ready','loaded','live','closed','pushed','processed','purged')),
+                   CHECK(status IN ('draft','preview','ready','loaded','live','closed','pushed','processed','waiting')),
       pulled_at    DATETIME,
       pushed_at    DATETIME,
       processed_at DATETIME,
-      purged_at    DATETIME,
       created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -205,6 +204,43 @@ const MIGRATIONS = [
       for (const { author } of badAuthors) fix.run(author, author);
     },
   },
+  {
+    version: 6,
+    name: 'WA.2_events_status_preview_waiting',
+    // SQLite ne supporte pas ALTER COLUMN — reconstruction de la table pour modifier le CHECK.
+    // Remplace 'purged' par 'preview' et 'waiting'. Les lignes 'purged' existantes passent en 'waiting'.
+    up(db) {
+      const currentCheck = db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='events'"
+      ).get()?.sql ?? '';
+      if (currentCheck.includes("'preview'")) return; // déjà migré
+      db.exec('PRAGMA foreign_keys = OFF');
+      db.exec(`
+        DROP TABLE IF EXISTS events_new;
+        CREATE TABLE events_new (
+          id           TEXT PRIMARY KEY,
+          owner_id     INTEGER REFERENCES users(id),
+          name         TEXT NOT NULL,
+          event_date   DATE,
+          status       TEXT NOT NULL DEFAULT 'draft'
+                       CHECK(status IN ('draft','preview','ready','loaded','live','closed','pushed','processed','waiting')),
+          pulled_at    DATETIME,
+          pushed_at    DATETIME,
+          processed_at DATETIME,
+          created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO events_new (id, owner_id, name, event_date, status, pulled_at, pushed_at, processed_at, created_at, updated_at)
+        SELECT id, owner_id, name, event_date,
+          CASE WHEN status = 'purged' THEN 'waiting' ELSE status END,
+          pulled_at, pushed_at, processed_at, created_at, updated_at
+        FROM events;
+        DROP TABLE events;
+        ALTER TABLE events_new RENAME TO events;
+      `);
+      db.exec('PRAGMA foreign_keys = ON');
+    },
+  },
 ];
 
 function runMigrations(db) {
@@ -316,7 +352,7 @@ export function insertEvent(db, { id, name, event_date = null }) {
 
 export function updateEvent(db, id, fields) {
   const allowed = ['name', 'event_date', 'status',
-    'pulled_at', 'pushed_at', 'processed_at', 'purged_at'];
+    'pulled_at', 'pushed_at', 'processed_at'];
   const updates = Object.keys(fields)
     .filter((k) => allowed.includes(k))
     .map((k) => `${k} = ?`);

@@ -392,6 +392,9 @@ describe('boxAuth — middleware', () => {
     // Passer l'event en ready pour que GET /api/sync/event retourne 200
     await request.put(`/api/events/${eventIdBox}/status`)
       .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ status: 'preview' });
+    await request.put(`/api/events/${eventIdBox}/status`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ status: 'ready' });
 
     const tokenRes = await request.post(`/api/admin/events/${eventIdBox}/tokens`)

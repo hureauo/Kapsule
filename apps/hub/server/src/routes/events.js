@@ -20,17 +20,20 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Statuts à partir desquels l'édition est gelée (Hub connaît un statut ≥ live)
-const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
+// Statuts à partir desquels l'édition de contenu (questions, meta) est gelée.
+// 'ready' gèle le contenu (config validée), mais autorise encore un retour à 'preview'.
+// Les statuts live+ gèlent aussi les transitions de statut (Borne maître ou push effectué).
+const CONTENT_FROZEN = new Set(['ready', 'live', 'closed', 'pushed', 'processed', 'waiting']);
+const STATUS_FROZEN  = new Set(['live', 'closed', 'pushed', 'processed', 'waiting']);
 
-function isFrozen(status) {
-  return FROZEN_STATUSES.has(status);
-}
+function isContentFrozen(status) { return CONTENT_FROZEN.has(status); }
+function isStatusFrozen(status)  { return STATUS_FROZEN.has(status); }
 
-// Transitions manuelles autorisées : draft↔ready uniquement
+// Transitions manuelles Hub : depuis chaque statut, les statuts cibles autorisés (§2)
 const MANUAL_TRANSITIONS = new Map([
-  ['draft', 'ready'],
-  ['ready', 'draft'],
+  ['draft',   new Set(['preview'])],
+  ['preview', new Set(['draft', 'ready'])],
+  ['ready',   new Set(['preview'])],
 ]);
 
 // Enrichit un événement avec ses event_meta (thème, textes, idle_timeout).
@@ -104,7 +107,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
   router.put('/:eventId', requireUser, requireOwner, (req, res, next) => {
     try {
       const event = req.event;
-      if (isFrozen(event.status)) {
+      if (isContentFrozen(event.status)) {
         return res.status(409).json({ error: `Édition impossible : événement en statut ${event.status}` });
       }
       const { name, event_date } = req.body;
@@ -146,14 +149,14 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       const { status } = req.body;
       if (!status) return res.status(400).json({ error: 'status requis' });
 
-      if (isFrozen(event.status)) {
+      if (isStatusFrozen(event.status)) {
         return res.status(409).json({ error: `Transition impossible : événement en statut ${event.status}` });
       }
 
       const allowed = MANUAL_TRANSITIONS.get(event.status);
-      if (allowed !== status) {
+      if (!allowed || !allowed.has(status)) {
         return res.status(400).json({
-          error: `Transition non autorisée : ${event.status} → ${status}. Seules draft↔ready sont manuelles.`,
+          error: `Transition non autorisée : ${event.status} → ${status}. Transitions manuelles : draft↔preview, preview↔ready.`,
         });
       }
 
@@ -193,7 +196,6 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
         pulled_at: event.pulled_at,
         pushed_at: event.pushed_at,
         processed_at: event.processed_at,
-        purged_at: event.purged_at,
       },
       tokens,
       jobs: { total: jobs.length, done: jobsDone, failed: jobsFailed, list: jobs },
@@ -207,8 +209,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
   router.post('/:eventId/config', requireUser, requireOwner, (req, res, next) => {
     try {
       const event = req.event;
-      const FROZEN = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
-      if (FROZEN.has(event.status)) {
+      if (isContentFrozen(event.status)) {
         return res.status(409).json({ error: `Import impossible : événement en statut ${event.status}` });
       }
 
@@ -350,7 +351,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
 
       const db = getDb();
       deleteEventVersions(db, event.id);
-      updateEvent(db, event.id, { status: 'purged', purged_at: new Date().toISOString() });
+      updateEvent(db, event.id, { status: 'waiting' });
       insertSyncLog(db, { event_id: event.id, action: 'purge', detail: { name: event.name } });
 
       res.json({ ok: true });
