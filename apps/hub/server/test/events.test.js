@@ -591,18 +591,30 @@ describe('POST /api/events/:eventId/preview/start', () => {
     assert.equal(res.body.up, true);
   });
 
-  it('retourne 404 si container inexistant', async () => {
-    const dir3 = mkdtempSync(join(tmpdir(), 'kapsule-preview-start-404-'));
-    const mockDocker = { async exists() { return false; }, async running() { return false; }, async start() {}, async stop() {} };
+  it('provisionne la preview si le container est absent', async () => {
+    const dir3 = mkdtempSync(join(tmpdir(), 'kapsule-preview-start-prov-'));
+    let runCount = 0;
+    const mockDocker = {
+      async exists() { return false; },     // container absent → déclenche provision
+      async running() { return false; },
+      async start() {}, async stop() {},
+      async run() { runCount++; },          // provisionPreview lance les containers
+      async networkExists() { return true; },
+      async networkCreate() {},
+      async networkConnect() {},
+      async networkRm() {},
+    };
     const app3 = createApp(dir3, {}, { docker: mockDocker });
     const req3 = supertest(app3);
     const db3 = getDb();
     const hash = await argon2.hash('pass-admin', { type: argon2.argon2id });
-    insertUser(db3, { email: 'admin-p404@test.com', password_hash: hash, role: 'superuser' });
-    const tok = (await req3.post('/api/auth/login').send({ email: 'admin-p404@test.com', password: 'pass-admin' })).body.token;
-    const evId = (await req3.post('/api/events').set('Authorization', `Bearer ${tok}`).send({ name: 'Ev 404' })).body.id;
+    insertUser(db3, { email: 'admin-pprov@test.com', password_hash: hash, role: 'superuser' });
+    const tok = (await req3.post('/api/auth/login').send({ email: 'admin-pprov@test.com', password: 'pass-admin' })).body.token;
+    const evId = (await req3.post('/api/events').set('Authorization', `Bearer ${tok}`).send({ name: 'Ev prov' })).body.id;
     const res = await req3.post(`/api/events/${evId}/preview/start`).set('Authorization', `Bearer ${tok}`);
-    assert.equal(res.status, 404);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.provisioned, true);
+    assert.ok(runCount >= 2, 'doit lancer au moins frontend + backend');
   });
 
   it('retourne 403 pour un client non superuser', async () => {

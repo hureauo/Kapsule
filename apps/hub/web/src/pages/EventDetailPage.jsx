@@ -146,30 +146,42 @@ function DesignTab({ event, frozen, onSaved }) {
   );
 }
 
-// ── Onglet Aperçu ─────────────────────────────────────────────────────────────
-function ApercuTab({ event }) {
-  const [previewUrl, setPreviewUrl] = useState(null);
+// ── Box borne d'essai (haut de page) ──────────────────────────────────────────
+// Box d'état de la borne d'essai, affichée en haut de la page événement.
+function PreviewBox({ event }) {
+  const [status, setStatus] = useState(null); // { up, preview_url } | null pendant le chargement
 
   useEffect(() => {
     api.previewStatus(event.id)
-      .then(s => setPreviewUrl(s.preview_url))
-      .catch(() => {});
+      .then(setStatus)
+      .catch(() => setStatus({ up: false, preview_url: null }));
   }, [event.id]);
 
   return (
-    <div className="tab-content">
-      <section className="panel-section">
-        <h3 className="panel-section__title">Borne d'essai</h3>
-        <p className="text--muted" style={{ marginBottom: '12px', fontSize: '14px' }}>
-          Accédez à votre borne d'essai pour tester le parcours avant l'événement.
-          Connectez-vous avec votre email et mot de passe.
-        </p>
-        {previewUrl
-          ? <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="btn btn--primary">Ouvrir la borne d'essai ↗</a>
-          : <span className="text--muted" style={{ fontSize: '14px' }}>Chargement…</span>
+    <section className="event-meta-section">
+      <div className="event-meta-row" style={{ gap: '10px', flexWrap: 'wrap' }}>
+        <span className="panel-section__title" style={{ margin: 0 }}>Borne d'essai</span>
+        {status === null
+          ? <span className="text--muted" style={{ fontSize: '14px' }}>Vérification…</span>
+          : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '14px' }}>
+              <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', background: status.up ? '#16a34a' : '#9ca3af' }} />
+              {status.up ? 'En ligne' : 'Hors ligne'}
+            </span>
+          )
         }
-      </section>
-    </div>
+        {status?.up && status.preview_url && (
+          <a href={status.preview_url} target="_blank" rel="noopener noreferrer" className="btn btn--primary btn--sm">
+            Ouvrir la borne d'essai ↗
+          </a>
+        )}
+      </div>
+      {status && !status.up && (
+        <p className="text--muted" style={{ fontSize: '13px', marginTop: '6px' }}>
+          La borne d'essai n'est pas démarrée. Un administrateur peut la lancer depuis le panneau d'administration.
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -455,7 +467,7 @@ export default function EventDetailPage() {
   const isSuperuser = getRole() === 'superuser';
   const TABS = [
     'Questions', 'Design', 'Synchro', 'Galerie',
-    'Aperçu', 'Historique',
+    'Historique',
     ...(isSuperuser ? ['Utilisateurs'] : []),
   ];
 
@@ -480,6 +492,8 @@ export default function EventDetailPage() {
             Modifications non encore récupérées par la borne
           </div>
         )}
+
+        <PreviewBox event={event} />
 
         <section className="event-meta-section">
           <div className="event-meta-row">
@@ -558,10 +572,6 @@ export default function EventDetailPage() {
               <VideoGallery eventId={id} eventName={event.name} />
             )}
           </div>
-        )}
-
-        {tab === 'Aperçu' && (
-          <ApercuTab event={event} />
         )}
 
         {tab === 'Historique' && (

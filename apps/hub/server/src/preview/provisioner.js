@@ -110,11 +110,32 @@ export async function provisionPreview(eventId, docker = dockerCli) {
   const frontendImage = process.env.PREVIEW_IMAGE         ?? 'kapsule-borne-preview-frontend';
   const hubUrl        = process.env.HUB_URL_INTERNAL      ?? 'http://hub-backend:3001';
   const jwtSecret     = process.env.JWT_SECRET            ?? 'change-me';
+  // Le backend borne refuse de démarrer si TECH_PASSWORD vaut la valeur par défaut.
+  // On le fournit depuis l'env du Hub, sinon on génère un secret jetable (la preview
+  // n'a pas vocation à ce qu'on s'y connecte en technicien).
+  const techPassword  = process.env.TECH_PASSWORD_PREVIEW || randomBytes(16).toString('hex');
 
   // Réseau isolé pour ce binôme (évite toute collision entre previews)
   if (!await docker.networkExists(netName)) {
     await docker.networkCreate(netName);
   }
+
+  // Token inséré AVANT le lancement du backend : celui-ci pull dès le démarrage,
+  // donc le token doit déjà être valide en base (sinon 401 « Token borne invalide »
+  // pendant la fenêtre de boot → "aucun événement actif"). Un token sans container
+  // est inoffensif (il ne donne accès à rien), donc l'ordre inverse est préférable.
+  const db = getDb();
+  // Purge d'éventuels tokens preview-auto orphelins du même event (reprovision)
+  db.prepare(
+    "DELETE FROM box_tokens WHERE event_id = ? AND is_preview = 1 AND label = 'preview-auto'"
+  ).run(eventId);
+  insertBoxToken(db, {
+    event_id: eventId,
+    token_hash: tokenHash,
+    token_clear: tokenClear,
+    label: 'preview-auto',
+    is_preview: 1,
+  });
 
   // Backend borne sur le réseau interne + connecté à hub_net pour synchro
   await docker.run([
@@ -128,6 +149,7 @@ export async function provisionPreview(eventId, docker = dockerCli) {
     '--env', 'PREVIEW_MODE=true',
     '--env', `HUB_URL=${hubUrl}`,
     '--env', `JWT_SECRET=${jwtSecret}`,
+    '--env', `TECH_PASSWORD=${techPassword}`,
     '--env', 'DATA_DIR=/app/data',
     '--env', 'PORT=3001',
     backendImage,
@@ -143,16 +165,6 @@ export async function provisionPreview(eventId, docker = dockerCli) {
     frontendImage,
   ]);
   await docker.networkConnect('kapsule_hub_net', frontendName);
-
-  // Token inséré après que les deux containers sont lancés : pas de token orphelin
-  const db = getDb();
-  insertBoxToken(db, {
-    event_id: eventId,
-    token_hash: tokenHash,
-    token_clear: tokenClear,
-    label: 'preview-auto',
-    is_preview: 1,
-  });
 
   return buildPreviewUrl(slug);
 }

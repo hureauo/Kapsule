@@ -296,14 +296,18 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
   });
 
   // ── POST /api/events/:eventId/preview/start ───────────────────────────────
-  // Réservé aux superusers : démarre les containers preview existants (pas de provision).
+  // Réservé aux superusers : démarre les containers preview. S'ils n'existent pas
+  // encore (événement créé avant l'auto-provisioning, ou provision échouée), on
+  // les provisionne à la volée — provisionPreview est idempotent.
   router.post('/:eventId/preview/start', requireUser, requireAdmin, requireOwner, async (req, res, next) => {
     try {
       const slug = slugFor(req.event.id);
       const frontend = `preview-${slug}`;
       const backend  = `preview-backend-${slug}`;
       if (!await docker.exists(frontend)) {
-        return res.status(404).json({ error: 'container_not_found', detail: 'Recréer l\'événement pour reprovisionner la preview.' });
+        // Pas de container → on provisionne (crée les deux containers + token).
+        await provisionPreview(req.event.id, docker);
+        return res.json({ up: true, provisioned: true });
       }
       if (!await docker.running(frontend)) await docker.start(frontend);
       if (await docker.exists(backend) && !await docker.running(backend)) await docker.start(backend);
