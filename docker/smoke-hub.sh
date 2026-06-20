@@ -78,12 +78,11 @@ EID=$(json_get "$EV" id)
   || { echo "  ✗ création event KO : $EV"; FAIL=$((FAIL+1)); false; }
 expect GET "$BASE/api/events/$EID" 200 "détail event" "$TOKEN"
 expect PUT "$BASE/api/events/$EID" 200 "update event" "$TOKEN" '{"name":"Smoke Event 2"}'
-expect PUT "$BASE/api/events/$EID/status" 200 "statut draft→ready" "$TOKEN" '{"status":"ready"}'
 
 # ── 4. Questions (CRUD + reorder) ─────────────────────────────────────────────
+# Questions créées en draft (avant passage en ready qui gèle l'édition — PROJET.md §7).
 echo "[Questions]"
 QB="$BASE/api/events/$EID/questions"
-# ready gèle l'édition ? Non : ready est éditable, seul live+ gèle. On crée donc une question.
 Q=$(http_body POST "$QB" "$TOKEN" '{"text":"Question smoke ?","max_duration":60,"countdown":3}')
 QID=$(json_get "$Q" id)
 [ -n "$QID" ] && echo "  ✓ création question ($QID)" && PASS=$((PASS+1)) \
@@ -91,6 +90,10 @@ QID=$(json_get "$Q" id)
 expect GET "$QB" 200 "liste questions" "$TOKEN"
 expect PUT "$QB/$QID" 200 "update question" "$TOKEN" '{"text":"Question smoke éditée ?","max_duration":90,"countdown":3}'
 expect DELETE "$QB/$QID" 204 "suppression question" "$TOKEN"
+
+# Passage en ready APRÈS l'édition des questions (ready gèle l'édition — PROJET.md §7).
+expect PUT "$BASE/api/events/$EID/status" 200 "statut draft→preview" "$TOKEN" '{"status":"preview"}'
+expect PUT "$BASE/api/events/$EID/status" 200 "statut preview→ready" "$TOKEN" '{"status":"ready"}'
 
 # ── 5. Tokens de borne ────────────────────────────────────────────────────────
 echo "[Tokens]"
