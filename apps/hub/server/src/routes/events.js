@@ -84,7 +84,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       // Auto-provisioning preview (best-effort : un échec Docker ne bloque pas la création)
       let preview_url = null;
       try {
-        preview_url = await provisionPreview(id);
+        preview_url = await provisionPreview(id, docker);
       } catch (err) {
         console.error('[provisioner] échec provision preview pour', id, err.message);
       }
@@ -338,7 +338,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
 
       // Arrêter le container preview avant de supprimer le dossier (best-effort)
       try {
-        await deprovisionPreview(event.id);
+        await deprovisionPreview(event.id, docker);
       } catch (err) {
         console.error('[provisioner] échec deprovision pour', event.id, err.message);
       }

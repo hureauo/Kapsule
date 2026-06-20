@@ -60,7 +60,9 @@ draft → ready → loaded → live → closed → pushed → processed → purg
 
 **Frontends** : React 18 + Vite 5 (`@vitejs/plugin-react`), `react-router-dom` v6, CSS pur (un stylesheet par app, custom properties, pas de framework UI). Capture via l'API native `MediaRecorder` (pas de bibliothèque d'enregistrement).
 
-**Hub en plus** : `argon2` (hash mots de passe), `express-rate-limit` (anti brute force sur le login), `ffmpeg`/`ffprobe` appelés via `child_process.spawn` (pas de wrapper npm), `archiver` (génération des ZIP d'export, mode store).
+**Hub en plus** : `argon2` (hash mots de passe), `express-rate-limit` (anti brute force sur login, sessions et uploads), `ffmpeg`/`ffprobe` appelés via `child_process.spawn` (pas de wrapper npm), `archiver` (génération des ZIP d'export, mode store).
+
+**Borne preview en plus** : `express-rate-limit` (la borne d'essai est Internet-facing : même protection que le Hub sur les sessions et uploads).
 
 **Infra** : Docker + docker-compose. Borne = images **arm64** (`node:20-alpine` multi-arch). Nginx alpine. OpenSSL pour le cert auto-signé de la Borne ; Let's Encrypt (certbot) ou cert fourni pour le Hub.
 
@@ -72,8 +74,10 @@ draft → ready → loaded → live → closed → pushed → processed → purg
 kapsule/
 ├── package.json                      # workspaces: ["packages/*", "apps/*/server", "apps/*/web"]
 ├── .env.example
-├── docker-compose.borne.yml
-├── docker-compose.hub.yml
+├── docker-compose.yml                # dev local (services dev:borne, dev:hub)
+├── docker-compose.borne.yml          # déploiement Borne (production Raspberry)
+├── docker-compose.hub.yml            # déploiement Hub (production VPS)
+├── docker-compose.preview.yml        # borne d'essai manuelle (BOX_TOKEN_PREVIEW + HUB_URL)
 ├── PROJET.md                         # ce document
 ├── packages/
 │   └── core/                         # @kapsule/core — tout ce qui est partagé
@@ -98,14 +102,15 @@ kapsule/
 │   │   │       ├── routes/
 │   │   │       │   ├── events.js     # admin : gestion des événements locaux, activation, clôture
 │   │   │       │   ├── questions.js  # CRUD + reorder (sur l'événement actif)
-│   │   │       │   ├── sessions.js
-│   │   │       │   ├── videos.js     # upload/replace, stream, download, csv, delete
+│   │   │       │   ├── sessions.js   # sessions invités (rate-limit, cloisonnement event)
+│   │   │       │   ├── videos.js     # upload/replace (rate-limit), stream (Range), download, csv, delete
 │   │   │       │   └── sync.js       # admin : état synchro, déclenchement pull/push, purge
 │   │   │       └── sync/
 │   │   │           ├── hubClient.js  # fetch vers le Hub avec token borne + retry/backoff + borneLog
 │   │   │           ├── pull.js       # pullMyEvent() : pull one-shot ; pullEvent(id) : écrit bundle
 │   │   │           └── push.js       # pushEvent(eventId) + pushConfig(eventId) — manifest, uploads, finalize, reprise
 │   │   └── web/
+│   │       ├── Dockerfile.preview    # image borne preview (SPA + nginx, arm64/amd64)
 │   │       ├── package.json, vite.config.js, index.html
 │   │       └── src/
 │   │           ├── main.jsx, App.jsx # routes : "/" → GuestPage, "/admin/*" → AdminPage
@@ -134,18 +139,27 @@ kapsule/
 │       │   ├── package.json
 │       │   └── src/
 │       │       ├── index.js, config.js
-│       │       ├── registry.js              # users, box_tokens, events, jobs, sync_log
+│       │       ├── registry.js              # users, box_tokens, events, event_users, jobs,
+│       │       │                            # sync_log, event_versions, schema_migrations
+│       │       │                            # + runMigrations() versionné
 │       │       ├── eventStore.js            # openEventDb(eventId) avec cache LRU + closeEventDb()
-│       │       ├── middleware/auth.js       # requireUser (JWT), requireOwner(eventId)
+│       │       ├── versioning.js            # saveVersion(), listVersions(), restoreVersion()
+│       │       ├── eventConfig.js           # readSnapshot(), applyConfig() — lecture/écriture config événement
+│       │       ├── middleware/auth.js       # requireUser (JWT), requireOwner(eventId), requireAdmin
 │       │       ├── middleware/boxAuth.js    # requireBox : header X-Box-Token → sha256 → box_tokens
 │       │       ├── routes/
 │       │       │   ├── auth.js              # login/register
-│       │       │   ├── events.js            # CRUD événements du client + transitions d'état
+│       │       │   ├── events.js            # CRUD événements + transitions d'état + routes preview
+│       │       │   │                        # (status/token : owner ; start/stop : superuser)
 │       │       │   ├── questions.js         # CRUD questions (écrit dans la BD de l'événement)
+│       │       │   ├── versions.js          # historique config : list, get, restore
 │       │       │   ├── admin.js             # super-admin : bornes (token affiché une fois),
 │       │       │   │                        # overview (stockage/événement, jobs en erreur, bornes)
 │       │       │   ├── gallery.js           # vidéos : list, stream (Range), download, zip, csv
 │       │       │   └── sync.js              # endpoints appelés par la Borne (requireBox)
+│       │       ├── preview/
+│       │       │   └── provisioner.js       # DockerClient (typedef + dockerCli réel),
+│       │       │                            # provisionPreview(), deprovisionPreview(), slugFor()
 │       │       └── worker/
 │       │           ├── index.js             # boucle : prend un job 'pending', l'exécute
 │       │           ├── ffmpeg.js            # runFfprobe(file), makeThumbnail(file, out)
@@ -164,7 +178,7 @@ kapsule/
 │           │   │   └── format.js            # formatBytes/formatDate/formatDuration/formatSize
 │           │   ├── pages/LoginPage.jsx
 │           │   ├── pages/EventsPage.jsx     # liste + création + statuts
-│           │   ├── pages/EventDetailPage.jsx# onglets : Questions | Synchro | Galerie
+│           │   ├── pages/EventDetailPage.jsx# onglets : Questions | Synchro | Galerie | Versions
 │           │   ├── pages/AdminPage.jsx      # super-admin : bornes, stockage, jobs, tous les événements
 │           │   ├── components/QuestionEditor.jsx
 │           │   ├── components/VideoGallery.jsx
@@ -174,8 +188,20 @@ kapsule/
 │               ├── roles.test.js            # node:test — decodeJwtPayload + getRole
 │               └── format.test.js           # node:test — les 4 formateurs
 └── docker/
-    ├── borne-nginx.conf, borne-entrypoint.sh   # cert auto-signé CN borne.local
-    └── hub-nginx.conf
+    ├── borne-nginx.conf              # nginx borne (cert auto-signé, proxy /api/*)
+    ├── borne-entrypoint.sh           # génère cert auto-signé CN=borne.local au démarrage
+    ├── hub-nginx.conf                # nginx Hub interne (proxy /api/* → backend:3001)
+    ├── hub-entrypoint.sh             # attend que le backend soit prêt avant de démarrer nginx
+    ├── edge-nginx.conf.template      # edge TLS : Hub principal + bornes preview (essai-<slug>)
+    │                                 # server_tokens off, HSTS, resolver Docker, proxy paresseux
+    ├── edge-entrypoint.sh            # substitue EDGE_DOMAIN dans le template au démarrage
+    ├── Dockerfile.edge               # image edge nginx (envsubst + template)
+    ├── preview-nginx.conf            # nginx borne preview (proxy vers borne-preview-backend:3001)
+    ├── preview-start.sh              # opérateur : provisionne + démarre une borne preview
+    ├── preview-stop.sh               # opérateur : arrête + déprovisionne une borne preview
+    ├── smoke-hub.sh                  # smoke tests Hub (curl health + auth + endpoint garde)
+    ├── smoke-borne.sh                # smoke tests Borne (curl health + endpoint garde)
+    └── smoke-common.sh               # helpers partagés (assert_status, wait_for)
 ```
 
 ---

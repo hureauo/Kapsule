@@ -5,6 +5,7 @@
 # Avec une variable + resolver, la résolution est paresseuse (à chaque requête) — idéal
 # pour les containers preview qui apparaissent/disparaissent sans redémarrer l'edge.
 
+server_tokens off;               # ne pas exposer la version nginx dans l'en-tête Server
 resolver 127.0.0.11 valid=10s;  # DNS interne Docker
 
 # ── Redirect HTTP → HTTPS ─────────────────────────────────────────────────────

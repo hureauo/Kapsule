@@ -64,7 +64,8 @@ Process séparé optionnel : `worker/index.js` (boucle de jobs).
 | Fichier | Responsabilité |
 |---------|---------------|
 | `config.js` | Lecture des variables d'env (port, jwtSecret, adminEmail…) |
-| `registry.js` | **Toute** la couche d'accès à `registry.sqlite` : schéma + migrations + helpers CRUD (users, events, box_tokens, event_users, registration_tokens, jobs, sync_log). Singleton `_db`. |
+| `registry.js` | **Toute** la couche d'accès à `registry.sqlite` : schéma + migrations + helpers CRUD (users, events, box_tokens, event_users, registration_tokens, jobs, sync_log, **event_versions**). Singleton `_db`. **Migrations versionées** : tableau `MIGRATIONS` appliqué via `runMigrations` + table `schema_migrations` (chaque migration jouée une seule fois ; idempotence interne conservée). |
+| `versioning.js` | Historique de config éditoriale. `readSnapshot(edb)` lit **uniquement** `event_meta` + `questions` (jamais sessions/vidéos/invités — RGPD). `captureSnapshot` insère une version si le contenu a changé ; `resolveAuthor` résout l'email depuis `req.user`. Appelé par `events.js` (PUT/config) et `versions.js` (restore). |
 | `eventStore.js` | Cache **LRU (10)** de handles `db.sqlite` par événement. `openEventDb` / `closeEventDb` / `closeAllEventDbs`. `closeEventDb` **obligatoire** avant `rm -rf` ou écrasement (§11.11). |
 | `eventConfig.js` | Logique d'application config partagée par les 3 sites (`events.js` PUT, `events.js` import, `sync.js` push). `META_KEYS` (source unique des clés `event_meta`) + `applyEventConfig(edb, {mode, meta, questions})` (overwrite/merge). `admin.js` dérive son `META_HASH_KEYS` de `META_KEYS`. |
 | `middleware/auth.js` | `requireUser` (vérifie JWT → `req.user`), `requireOwner` (vérifie que `req.user` est superuser OU membre `event_users` → pose `req.event`). |
@@ -79,6 +80,7 @@ Process séparé optionnel : `worker/index.js` (boucle de jobs).
 | `/api/events` | `routes/events.js` | `requireUser` + `requireOwner` | CRUD événements, config (import depuis UI), owner, **preview/token + preview/status** (owner), **preview/start + preview/stop** (superuser only — `requireAdmin`), purge RGPD (DELETE). `POST /` réservé superuser (`requireAdmin` local). Le router accepte un `docker` injectable (`makeEventsRouter(dataDir, { docker })`) — défaut `dockerCli`. |
 | `/api/events/:eventId/questions` | `routes/questions.js` | `requireUser` + `requireOwner` | CRUD questions + reorder |
 | `/api/admin` | `routes/admin.js` | `requireUser` + **`requireSuperuser`** | gestion comptes clients, box_tokens (génération/liste/révocation), event_users (assignation), overview dashboard |
+| `/api/events/:eventId/versions` | `routes/versions.js` (mergeParams) | `requireUser` + `requireOwner` | liste des versions de config, snapshot + diff champ par champ, **restore** (superuser only). Monté **avant** `/api/events/:eventId` (gallery) pour éviter la capture du segment `versions` comme `videoId`. |
 | `/api/sync` | `routes/sync.js` | **`requireBox`** (token borne) | pull (event/bundle), push (manifest/files/db/finalize), heartbeat status, config push |
 | `/api/events/:eventId` | `routes/gallery.js` | `requireUser` + `requireOwner` + `requirePushed` | galerie : liste vidéos, file (Range-aware), download, thumbnail, archive zip, CSV, DELETE vidéo |
 
@@ -235,3 +237,5 @@ et qu'il ne faut pas casser en refactorant :
 - **Login : vérifier `active` + `password_hash` non-null AVANT `argon2.verify`** — `auth.js` (§11.22).
 - **Upload kiosque en XMLHttpRequest avec retry backoff** — frontend borne.
 - **JWT preview scopé par `event_id`** vérifié dans `requireRole` ET `POST /api/sessions` (borne).
+- **Durcissement exposition publique** (Hub + Borne preview Internet-facing) : `express.json({ limit: '1mb' })`, `trust proxy 1`, `express-rate-limit` (Hub login 10/15min ; Borne login 10, sessions 20, uploads 50 — `skip` via `cfg.skipRateLimits` en test), en-têtes de sécurité (HSTS/X-Frame/nosniff/CSP) posés au niveau **edge** et borne-nginx, TLS terminé par le service `edge`. `validateConfig` **refuse de démarrer** si `JWT_SECRET`/`TECH_PASSWORD` restent par défaut en production/preview.
+- **`/api/health` public minimal** (`{ok:true}`) ; les infos disque passent par `/api/admin/health` (authentifié) — ne pas réexposer le disque sans auth.

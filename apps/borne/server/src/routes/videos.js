@@ -11,7 +11,6 @@ import { getActiveEvent } from '../registry.js';
 import { config } from '../config.js';
 import { getActiveEventDb } from '../eventDb.js';
 
-
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.avi', '.mkv']);
 
 function dirSize(dir) {
