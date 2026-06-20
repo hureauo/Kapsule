@@ -6,7 +6,13 @@ import QuestionEditor from '../components/QuestionEditor.jsx';
 import SyncStatus from '../components/SyncStatus.jsx';
 import VideoGallery from '../components/VideoGallery.jsx';
 
-const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'purged']);
+const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'waiting']);
+
+const STATUS_LABEL = {
+  draft: 'Brouillon', preview: 'Preview', ready: 'Prêt', loaded: 'Chargé',
+  live: 'En cours', closed: 'Terminé', pushed: 'Poussé',
+  processed: 'Traité', waiting: 'En attente',
+};
 
 const THEME_OPTIONS = [
   { value: 'cute',   label: '🫧 Cutealism', hint: 'Doux, coloré, rassurant (défaut)' },
@@ -580,18 +586,35 @@ export default function EventDetailPage() {
         <section className="event-meta-section">
           <div className="event-meta-row">
             <span className="text--muted">Date : {formatDate(event.event_date)}</span>
-            <span className={`status-badge status-badge--${event.status}`}>{event.status}</span>
+            <span className={`status-badge status-badge--${event.status}`}>
+              {STATUS_LABEL[event.status] ?? event.status}
+            </span>
           </div>
           {!frozen && (
-            <div className="event-meta-row">
+            <div className="event-meta-row" style={{ gap: '8px', flexWrap: 'wrap' }}>
               {event.status === 'draft' && (
-                <button className="btn btn--primary" onClick={() => handleStatusChange('ready')}>
-                  Marquer prêt
+                <button className="btn btn--primary" onClick={() => handleStatusChange('preview')}>
+                  Lancer la preview
                 </button>
               )}
-              {event.status === 'ready' && (
+              {event.status === 'preview' && (<>
                 <button className="btn btn--ghost" onClick={() => handleStatusChange('draft')}>
                   Repasser en brouillon
+                </button>
+                <button
+                  className="btn btn--primary"
+                  onClick={() => {
+                    if (confirm('Valider la configuration ? Le contenu (questions, design) sera gelé et la borne réelle pourra se connecter.')) {
+                      handleStatusChange('ready');
+                    }
+                  }}
+                >
+                  Valider la configuration
+                </button>
+              </>)}
+              {event.status === 'ready' && (
+                <button className="btn btn--ghost" onClick={() => handleStatusChange('preview')}>
+                  Retour en preview
                 </button>
               )}
             </div>

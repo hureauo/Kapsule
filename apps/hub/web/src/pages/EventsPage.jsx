@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { api, clearToken, getRole } from '../api/client.js';
 
 const STATUS_LABEL = {
-  draft: 'Brouillon', ready: 'Prêt', loaded: 'Chargé',
+  draft: 'Brouillon', preview: 'Preview', ready: 'Prêt', loaded: 'Chargé',
   live: 'En cours', closed: 'Terminé', pushed: 'Poussé',
-  processed: 'Traité', purged: 'Purgé',
+  processed: 'Traité', waiting: 'En attente',
 };
 
 function formatDate(d) {
