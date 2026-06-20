@@ -91,7 +91,7 @@ kapsule/
 ├── docker-compose.borne.yml          # déploiement Borne (production Raspberry)
 ├── docker-compose.hub.yml            # déploiement Hub (production VPS)
 ├── docker-compose.preview.yml        # borne d'essai manuelle (BOX_TOKEN_PREVIEW + HUB_URL)
-├── Makefile                          # raccourcis VPS : vps-build/up/down, hub-reset (voir §13)
+├── Makefile                          # raccourcis VPS : vps-build/up/down, hub-reset (voir §10)
 ├── PROJET.md                         # ce document
 ├── packages/
 │   └── core/                         # @kapsule/core — tout ce qui est partagé
@@ -566,10 +566,59 @@ Base `/api`. `GET /api/health`.
 - `borne-entrypoint.sh` : génère un cert auto-signé si absent (`openssl req -x509 -nodes -days 730 -newkey rsa:2048`, CN `borne.local`) puis `nginx -g 'daemon off;'`.
 - `borne-nginx.conf` : `client_max_body_size 600M` ; 80 → redirect 443 ; `/api/` → `proxy_pass http://backend:3001` avec headers forwardés, timeouts read/send **600s**, `proxy_request_buffering off` ; `/` → SPA fallback `try_files $uri $uri/ /index.html`.
 
-### docker-compose.hub.yml (VPS)
-- `backend` : build `apps/hub/server`, env `JWT_SECRET DATA_DIR=/app/data ALLOW_REGISTER PORT=3001`, volume `hub_data:/app/data`.
-- `worker` : **même image** que backend, `command: node src/worker/index.js`, même volume. L'image installe `ffmpeg` (`apk add ffmpeg`).
-- `frontend` : nginx + build Vite, ports `80/443`, certs Let's Encrypt montés `/etc/letsencrypt:ro`. Mêmes réglages proxy que la Borne (`client_max_body_size 600M`, timeouts 600s, buffering off — le push passe par là).
+### docker-compose.hub.yml (VPS) — architecture edge
+
+Le Hub est exposé derrière un **reverse proxy frontal unique** (`edge`) qui termine TLS et
+route par `Host`. Le frontend Hub et les bornes preview passent en **HTTP interne** (plus de
+ports hôte ni de TLS dupliqué). Tous les services partagent le réseau `kapsule_hub_net`
+(nommé en dur, indépendant du projet Compose) ; le frontal les joint par nom de container.
+
+- `backend` : build `apps/hub/server`, `container_name: hub-backend` (nom fixe : les bornes preview le joignent par `http://hub-backend:3001`). Env `JWT_SECRET DATA_DIR PORT ALLOW_REGISTER ADMIN_EMAIL ADMIN_PASSWORD_HUB EDGE_DOMAIN PREVIEW_IMAGE`. Volumes `hub_data:/app/data` **et `/var/run/docker.sock`** (auto-provisioning preview, §10 ci-dessous). Port `3001` publié pour debug.
+- `worker` : **même image** que backend, `command: node src/worker/index.js`, même volume. L'image installe `ffmpeg`.
+- `frontend` : `container_name: hub-frontend`, nginx + build Vite, **plus de ports ni de TLS** — joint par l'edge via le DNS Docker (`proxy_pass http://hub-frontend`).
+- `edge` : build `docker/Dockerfile.edge` (`nginx:alpine` + openssl). **Seul service exposant `80/443`** et seul détenteur du cert. Monte `/etc/letsencrypt:ro`, env `EDGE_DOMAIN`.
+
+**edge — routing par Host** (`docker/edge-nginx.conf.template`, substitué au démarrage) :
+- `${EDGE_DOMAIN}` / `www.${EDGE_DOMAIN}` → `hub-frontend`
+- `essai-<slug>.${EDGE_DOMAIN}` → container `preview-<slug>` (nom déterministe)
+- Comme les sous-domaines preview apparaissent/disparaissent dynamiquement, l'upstream est **variabilisé** (`set $up …; proxy_pass http://$up;`) + `resolver 127.0.0.11` (DNS Docker) : la résolution devient **paresseuse, par requête** — pas besoin de reload nginx quand une preview va et vient. En-têtes sécurité au niveau edge (HSTS, X-Frame-Options, nosniff, CSP), `server_tokens off`, `client_max_body_size 600M`, timeouts 600s.
+- `edge-entrypoint.sh` : si le cert Let's Encrypt (`/etc/letsencrypt/live/kapsule/`) est absent (dev/local), génère un cert **auto-signé** dans un répertoire écrivable ; sinon utilise le vrai cert monté en lecture seule.
+
+### Auto-provisioning de la borne preview (Hub pilote Docker via `docker.sock`)
+
+À la création d'un événement, le backend Hub provisionne **un conteneur preview par
+événement** (cloisonnement RGPD : data dir + db.sqlite séparés) via le socket Docker monté.
+`preview/provisioner.js` (voir ARCHITECTURE.md) : `slugFor(eventId)` → identité DNS-safe
+servant de **sous-domaine** (`essai-<slug>`) et de **nom de container** (`preview-<slug>`).
+Lance deux containers sur un réseau isolé `preview-net-<slug>`, tous deux raccordés à
+`kapsule_hub_net` pour que l'edge les résolve. Les boutons « Démarrer / Éteindre » (superuser)
+et l'**état désiré** `events.preview_desired` pilotent leur cycle de vie (§3) ;
+`reconcile-previews` les relance au boot/`make vps-up`. Images preview à **construire sur le
+VPS** avant le 1er déploiement : `docker compose -f docker-compose.preview.yml build`.
+
+> **Pourquoi monter `docker.sock` est acceptable** : ça donne au backend un pouvoir
+> équivalent root sur l'hôte. Ici le Hub est de confiance (notre propre admin, périmètre
+> contrôlé) et l'alternative (cron/agent externe) ajoute latence + composant hors-app.
+> Risque accepté et documenté.
+
+### Certificat wildcard (Let's Encrypt, DNS-01 manuel)
+
+DNS : **CNAME wildcard** `*.${EDGE_DOMAIN} → ${EDGE_DOMAIN}` (n'importe quel sous-domaine
+atterrit sur le VPS). Cert wildcard + apex, challenge DNS-01 manuel (renouvellement ~60 j ;
+plugin DNS auto = amélioration future) :
+```bash
+sudo certbot certonly --manual --preferred-challenges dns --cert-name kapsule \
+  -d "${EDGE_DOMAIN}" -d "*.${EDGE_DOMAIN}"
+# → créer le TXT _acme-challenge.${EDGE_DOMAIN}, vérifier (dig TXT) puis valider
+```
+Le cert atterrit dans `/etc/letsencrypt/live/kapsule/` → monté `:ro` dans le service `edge`.
+
+### Raccourcis `make` (voir Makefile)
+
+`make vps-build` (images Hub + preview) · `make vps-up` (up + réconciliation des previews) ·
+`make vps-down` (Hub + containers/réseaux preview hors compose) · `make hub-reset` (reset
+volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fixé à `-p kapsule`
+(les previews joignent `hub-backend` par nom, le nom de projet doit être stable).
 
 ### Dockerfile backend (les deux) : `node:20-alpine`, `apk add python3 make g++` (build natif better-sqlite3 — fonctionne en arm64), `npm ci --omit=dev` au niveau workspace, copie de `packages/core` + `src`, `CMD node src/index.js`.
 
@@ -586,6 +635,11 @@ Base `/api`. `GET /api/health`.
 | `MAX_DATA_BYTES` | Borne | _(vide = illimité)_ | Quota disque de l'événement (essai : `1073741824` = 1 Go) ; upload invité → 507 au-delà |
 | `PREVIEW_MODE` | Borne | _(déduit du token `is_preview`)_ | Force le mode démo (bandeau « BORNE D'ESSAI », push interdit). Override optionnel ; normalement déduit du token |
 | `ALLOW_REGISTER` | Hub | `false` | Ouvrir l'inscription publique (indépendant des comptes créés par l'admin) |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD_HUB` | Hub | _(vide)_ | Seed du 1er compte superuser au démarrage si absent (évite `create-admin`) |
+| `EDGE_DOMAIN` | Hub | `kapsule.hureau.com` | Domaine principal : routing wildcard de l'edge + URLs preview (`essai-<slug>.<domaine>`) |
+| `PREVIEW_IMAGE` / `PREVIEW_BACKEND_IMAGE` | Hub | `kapsule-borne-preview-frontend` / `-backend` | Images lancées par le provisioner pour chaque preview |
+| `HUB_URL_INTERNAL` | Hub | `http://hub-backend:3001` | URL interne du backend, injectée aux containers preview (réseau `hub_net`) |
+| `TECH_PASSWORD_PREVIEW` | Hub | _(secret jetable généré)_ | `TECH_PASSWORD` injecté aux backends preview (sinon ils refusent de démarrer → 502) |
 
 > **TLS / iPad** : iOS Safari exige HTTPS pour la caméra. Faire confiance au certificat auto-signé sur l'iPad (Réglages → Général → VPN et gestion de l'appareil) ou fournir un vrai cert. Utiliser Accès Guidé + « Ajouter à l'écran d'accueil » pour le mode kiosque.
 

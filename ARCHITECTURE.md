@@ -91,7 +91,8 @@ Process séparé optionnel : `worker/index.js` (boucle de jobs).
 > La config circule **dans un seul sens** Hub → borne (la borne preview *pull* la config du Hub,
 > source de vérité). Le write-back preview → Hub a été retiré : `/api/sync/push-config` est
 > interdit (403) en mode preview, et l'UI Hub n'importe plus la config d'une borne d'essai
-> (le bouton « Importer la config de la preview » de l'onglet Aperçu a été supprimé). La route
+> (l'onglet « Aperçu » d'`EventDetailPage` a été supprimé ; l'état de la borne d'essai est
+> désormais une box d'en-tête `PreviewBox` — lien + statut, sans import de config). La route
 > JWT `/api/events/:id/config` n'a plus d'appelant dans l'UI mais reste exposée (auth admin).
 
 ### Worker (`worker/`)

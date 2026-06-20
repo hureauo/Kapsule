@@ -1,7 +1,7 @@
 # Makefile Kapsule — raccourcis des commandes Docker du projet.
 #
 # Cible le déploiement VPS (Hub + bornes preview auto-provisionnées) et le reset
-# des données pour les tests. Voir PLAN_VPS.md pour le détail de l'architecture.
+# des données pour les tests. Voir PROJET.md §10 pour le détail de l'architecture.
 #
 # Usage : make <cible>  (ex. make vps-up). `make help` liste tout.
 
