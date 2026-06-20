@@ -16,10 +16,18 @@ sed \
 LE_CERT="/etc/letsencrypt/live/kapsule/fullchain.pem"
 LE_KEY="/etc/letsencrypt/live/kapsule/privkey.pem"
 
-# En dev/local, ce volume est absent ou vide → on génère un cert auto-signé dans
-# un répertoire ÉCRIVABLE (le mount /etc/letsencrypt est :ro, on n'y touche pas)
-# et on réécrit les chemins de cert dans la conf générée.
-if [ ! -f "$LE_CERT" ]; then
+# DEV_CERT_DIR permet d'injecter un répertoire de certs alternatif (ex: mkcert)
+# sans monter dans /etc/letsencrypt (qui est en lecture seule dans l'image nginx).
+# Utilisé par docker-compose.hub.dev.yml.
+if [ -n "${DEV_CERT_DIR:-}" ] && [ -f "${DEV_CERT_DIR}/fullchain.pem" ]; then
+  echo "[edge] Certs dev détectés dans ${DEV_CERT_DIR} — mode dev local"
+  sed -i \
+    -e "s|$LE_CERT|${DEV_CERT_DIR}/fullchain.pem|g" \
+    -e "s|$LE_KEY|${DEV_CERT_DIR}/privkey.pem|g" \
+    /etc/nginx/conf.d/default.conf
+
+# En dev/local, si le volume Let's Encrypt est absent → cert auto-signé.
+elif [ ! -f "$LE_CERT" ]; then
   echo "[edge] Cert Let's Encrypt absent — cert auto-signé pour ${DOMAIN} (dev)"
   SELF_DIR="/etc/nginx/certs"
   mkdir -p "$SELF_DIR"

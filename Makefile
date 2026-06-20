@@ -9,10 +9,11 @@
 # nom de container, donc le projet doit être stable : -p kapsule).
 COMPOSE_HUB     := docker compose -f docker-compose.hub.yml -p kapsule
 COMPOSE_PREVIEW := docker compose -f docker-compose.preview.yml -p kapsule
+COMPOSE_HUB_DEV := docker compose -f docker-compose.hub.yml -f docker-compose.hub.dev.yml -p kapsule
 HUB_NET         := kapsule_hub_net
 
 .DEFAULT_GOAL := help
-.PHONY: help vps-build vps-up vps-down hub-reset
+.PHONY: help vps-build vps-up vps-down hub-reset local-dev-environment local-build local-up local-down local-reset
 
 help: ## Affiche cette aide
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -46,6 +47,36 @@ vps-down: ## Coupe tout le projet : Hub + bornes preview (lancées hors compose)
 	@echo "→ suppression des réseaux isolés preview-net-*"
 	@docker network ls --filter "name=preview-net-" -q | xargs -r docker network rm 2>/dev/null || true
 	@echo "✓ tout coupé"
+
+## ── Dev local (TLS via mkcert, domaine kapsule.localhost) ────────────────────
+
+local-dev-environment: ## Configure le dev local : installe mkcert + génère les certs wildcard (à faire une seule fois)
+	@bash docker/setup-dev-certs.sh
+
+local-build: ## Construit les images Hub dev (edge/frontend/backend/worker)
+	$(COMPOSE_HUB_DEV) build
+
+local-up: ## Lance le Hub en mode dev local (https://kapsule.localhost)
+	@echo "→ vérification des certs dev"
+	@[ -f docker/certs/fullchain.pem ] || { \
+		echo "  ✗ docker/certs/fullchain.pem absent — lance d'abord : make local-dev-environment"; \
+		exit 1; \
+	}
+	@echo "→ up Hub dev (kapsule.localhost)"
+	$(COMPOSE_HUB_DEV) up -d --build --remove-orphans
+	@echo "✓ Hub disponible sur https://kapsule.localhost"
+
+local-down: ## Coupe le Hub dev local
+	$(COMPOSE_HUB_DEV) down --remove-orphans
+
+local-reset: ## ⚠️  Reset volumes + réseaux Hub dev (DESTRUCTIF — jamais en prod)
+	@echo "⚠️  Reset destructif des données Hub dev (volumes + réseaux)."
+	@printf "    Confirmer ? [y/N] " && read ans && [ "$$ans" = "y" ]
+	$(COMPOSE_HUB_DEV) down -v --remove-orphans
+	@docker ps -aq --filter "name=preview-" | xargs -r docker rm -f
+	@docker network ls --filter "name=preview-net-" -q | xargs -r docker network rm 2>/dev/null || true
+	@docker network rm $(HUB_NET) 2>/dev/null || true
+	@echo "✓ volumes et réseaux réinitialisés"
 
 ## ── Tests / dev (NE PAS utiliser en prod) ─────────────────────────────────────
 

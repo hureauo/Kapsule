@@ -15,6 +15,9 @@ node_modules/
 # Builds frontend
 dist/
 
+# Certs TLS locaux (générés par mkcert pour le dev — contiennent une clé privée)
+docker/certs/
+
 # Divers
 *.log
 .DS_Store
