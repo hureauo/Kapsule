@@ -5,6 +5,7 @@ import { DEFAULTS, THEMES, TEXT_FIELDS } from '@kapsule/core';
 import QuestionEditor from '../components/QuestionEditor.jsx';
 import SyncStatus from '../components/SyncStatus.jsx';
 import VideoGallery from '../components/VideoGallery.jsx';
+import PreviewGallery from '../components/PreviewGallery.jsx';
 
 const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'waiting']);
 
@@ -81,6 +82,14 @@ function DesignTab({ event, frozen, onSaved }) {
   return (
     <div className="tab-content">
       <form onSubmit={handleSave}>
+        {!frozen && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+            <button type="submit" className="btn btn--primary" disabled={saving}>
+              {saving ? 'Sauvegarde…' : 'Sauvegarder le design'}
+            </button>
+            {saveMsg && <span className="text--muted" style={{ fontSize: '13px' }}>{saveMsg}</span>}
+          </div>
+        )}
         <section className="panel-section">
           <h3 className="panel-section__title">Thème visuel</h3>
           <div className="theme-picker">
@@ -133,14 +142,6 @@ function DesignTab({ event, frozen, onSaved }) {
           </label>
         </section>
 
-        {!frozen && (
-          <div style={{ marginTop: '8px' }}>
-            <button type="submit" className="btn btn--primary" disabled={saving}>
-              {saving ? 'Sauvegarde…' : 'Sauvegarder le design'}
-            </button>
-          </div>
-        )}
-        {saveMsg && <p className="text--muted" style={{ marginTop: '8px' }}>{saveMsg}</p>}
       </form>
     </div>
   );
@@ -566,9 +567,23 @@ export default function EventDetailPage() {
 
         {tab === 'Galerie' && (
           <div className="tab-content">
-            {!['pushed', 'processed'].includes(event.status) ? (
-              <p className="text--muted">La galerie est disponible après le push de la borne.</p>
+            {event.status === 'draft' ? (
+              // Pas encore de borne lancée — rien à afficher
+              <p className="text--muted">
+                La galerie est disponible une fois l'événement en preview ou après le push de la borne.
+              </p>
+            ) : event.status === 'preview' ? (
+              // Borne d'essai active : galerie proxifiée depuis le container preview
+              <PreviewGallery eventId={id} />
+            ) : ['ready', 'loaded'].includes(event.status) ? (
+              // Borne d'essai arrêtée (preview → ready) : les vidéos de test ne sont plus accessibles
+              <p className="text--muted">
+                La borne d'essai a été arrêtée lors du passage en état « Prêt ». Les vidéos enregistrées
+                pendant la preview ne sont pas conservées — elles serviront uniquement à valider la configuration.
+                La galerie définitive sera disponible après le push de la borne réelle.
+              </p>
             ) : (
+              // Post-push : galerie Hub classique (vidéos dans DATA_DIR Hub)
               <VideoGallery eventId={id} eventName={event.name} />
             )}
           </div>

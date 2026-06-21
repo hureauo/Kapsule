@@ -216,6 +216,21 @@ export default function GuestPage({ isPreview = false }) {
 
   useEffect(() => { loadEvent(); }, [loadEvent]);
 
+  // ── Polling config en mode preview ────────────────────────────────────────
+  // Sur la borne réelle, la config ne change pas en cours d'événement.
+  // En preview, l'admin peut modifier design/questions depuis le Hub à tout moment :
+  // le Hub pousse un pull à la borne (BD mise à jour), et ce poll rafraîchit le SPA.
+  //
+  // Actif uniquement sur START et LOGIN (écrans "salle d'attente" sans session invité
+  // en cours). Désactivé pendant NAME/QUESTIONS/RECAP/THANKS pour ne jamais
+  // interrompre un enregistrement ou un upload.
+  const POLLABLE_SCREENS = new Set([S.START, S.LOGIN]);
+  useEffect(() => {
+    if (!isPreview || !POLLABLE_SCREENS.has(screen)) return;
+    const id = setInterval(loadEvent, 3000);
+    return () => clearInterval(id);
+  }, [isPreview, screen, loadEvent]);
+
   // Récupère les réponses connues pour les pastilles QuestionNav
   const refreshAnswers = useCallback(async () => {
     if (!sessionId) return;

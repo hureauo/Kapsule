@@ -13,7 +13,7 @@ COMPOSE_HUB_DEV := docker compose -f docker-compose.hub.yml -f docker-compose.hu
 HUB_NET         := kapsule_hub_net
 
 .DEFAULT_GOAL := help
-.PHONY: help vps-build vps-up vps-down hub-reset local-dev-environment local-build local-up local-down local-reset
+.PHONY: help vps-build vps-up vps-down vps-restart hub-reset local-dev-environment local-build local-up local-down local-restart local-reset
 
 help: ## Affiche cette aide
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -38,6 +38,14 @@ vps-up: ## Lance le stack Hub + relance les bornes preview arrêtées (retire le
 	$(COMPOSE_HUB) run --rm backend npm run reconcile-previews
 	@echo "→ conteneurs preview actuellement attachés :"
 	@docker ps --filter "name=preview-" --format '  {{.Names}}\t{{.Status}}' || true
+
+vps-restart: ## Recharge le stack Hub en prod sans perdre les données (down + up + réconciliation previews)
+	@echo "→ restart Hub VPS"
+	$(COMPOSE_HUB) down --remove-orphans
+	$(COMPOSE_HUB) up -d --remove-orphans
+	@echo "→ réconciliation des previews"
+	$(COMPOSE_HUB) run --rm backend npm run reconcile-previews
+	@echo "✓ Hub VPS redémarré"
 
 vps-down: ## Coupe tout le projet : Hub + bornes preview (lancées hors compose)
 	@echo "→ down Hub"
@@ -68,6 +76,16 @@ local-up: ## Lance le Hub en mode dev local (https://kapsule.localhost)
 
 local-down: ## Coupe le Hub dev local
 	$(COMPOSE_HUB_DEV) down --remove-orphans
+
+local-restart: ## Recharge le Hub dev local sans perdre les données (down + up)
+	@echo "→ restart Hub dev local"
+	$(COMPOSE_HUB_DEV) down --remove-orphans
+	@[ -f docker/certs/fullchain.pem ] || { \
+		echo "  ✗ docker/certs/fullchain.pem absent — lance d'abord : make local-dev-environment"; \
+		exit 1; \
+	}
+	$(COMPOSE_HUB_DEV) up -d --build --remove-orphans
+	@echo "✓ Hub dev redémarré sur https://kapsule.localhost"
 
 local-reset: ## ⚠️  Reset volumes + réseaux Hub dev (DESTRUCTIF — jamais en prod)
 	@echo "⚠️  Reset destructif des données Hub dev (volumes + réseaux)."

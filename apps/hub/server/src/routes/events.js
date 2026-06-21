@@ -11,7 +11,8 @@ import {
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { META_KEYS, applyEventConfig } from '../eventConfig.js';
 import { requireUser, requireOwner } from '../middleware/auth.js';
-import { provisionPreview, deprovisionPreview, slugFor, dockerCli } from '../preview/provisioner.js';
+import { startPreview, deprovisionPreview, slugFor, dockerCli } from '../preview/provisioner.js';
+import { triggerPreviewPull } from './previewGallery.js';
 import { captureSnapshot, resolveAuthor } from '../versioning.js';
 import { deleteEventVersions } from '../registry.js';
 
@@ -84,18 +85,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       // Initialise db.sqlite avec le schéma + 4 questions par défaut
       openEventDb(id, dataDir);
 
-      // Auto-provisioning preview (best-effort : un échec Docker ne bloque pas la création).
-      // La preview est lancée → on marque l'état désiré 'running' pour qu'elle soit
-      // réconciliée au boot. Un échec laisse 'stopped' (défaut) : pas de fantôme à relancer.
-      let preview_url = null;
-      try {
-        preview_url = await provisionPreview(id, docker);
-        updateEvent(db, id, { preview_desired: 'running' });
-      } catch (err) {
-        console.error('[provisioner] échec provision preview pour', id, err.message);
-      }
-
-      res.status(201).json({ ...getEvent(db, id), preview_url });
+      res.status(201).json(getEvent(db, id));
     } catch (err) {
       next(err);
     }
@@ -140,13 +130,14 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       captureSnapshot(db, edb, { event_id: event.id, author: resolveAuthor(db, req.user) });
 
       res.json(withMeta(getEvent(db, event.id), dataDir));
+      triggerPreviewPull(event.id);
     } catch (err) {
       next(err);
     }
   });
 
   // ── PUT /api/events/:eventId/status ───────────────────────────────────────
-  router.put('/:eventId/status', requireUser, requireOwner, (req, res, next) => {
+  router.put('/:eventId/status', requireUser, requireOwner, async (req, res, next) => {
     try {
       const event = req.event;
       const { status } = req.body;
@@ -165,6 +156,29 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
 
       const db = getDb();
       updateEvent(db, event.id, { status });
+
+      // draft → preview : lancer la borne d'essai si elle n'existe pas encore
+      if (event.status === 'draft' && status === 'preview') {
+        try {
+          await startPreview(event.id, docker, dataDir);
+          updateEvent(db, event.id, { preview_desired: 'running' });
+        } catch (err) {
+          console.error('[preview/start] échec au passage en preview pour', event.id, err.message);
+        }
+      }
+
+      // preview → ready : éteindre la borne d'essai (container stoppé, données conservées)
+      if (event.status === 'preview' && status === 'ready') {
+        try {
+          const slug = slugFor(event.id);
+          if (await docker.running(`preview-${slug}`)) await docker.stop(`preview-${slug}`);
+          if (await docker.running(`preview-backend-${slug}`)) await docker.stop(`preview-backend-${slug}`);
+          updateEvent(db, event.id, { preview_desired: 'stopped' });
+        } catch (err) {
+          console.error('[preview/stop] échec au passage en ready pour', event.id, err.message);
+        }
+      }
+
       res.json(getEvent(db, event.id));
     } catch (err) {
       next(err);
@@ -311,7 +325,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       updateEvent(getDb(), req.event.id, { preview_desired: 'running' });
       if (!await docker.exists(frontend)) {
         // Pas de container → on provisionne (crée les deux containers + token).
-        await provisionPreview(req.event.id, docker);
+        await startPreview(req.event.id, docker, dataDir);
         return res.json({ up: true, provisioned: true });
       }
       if (!await docker.running(frontend)) await docker.start(frontend);
@@ -352,7 +366,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
 
       // Arrêter le container preview avant de supprimer le dossier (best-effort)
       try {
-        await deprovisionPreview(event.id, docker);
+        await deprovisionPreview(event.id, docker, dataDir);
       } catch (err) {
         console.error('[provisioner] échec deprovision pour', event.id, err.message);
       }

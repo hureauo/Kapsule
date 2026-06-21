@@ -24,7 +24,7 @@ async function main() {
   let ok = 0, failed = 0;
   for (const ev of events) {
     try {
-      const url = await startPreview(ev.id);
+      const url = await startPreview(ev.id, undefined, config.dataDir);
       console.log(`  ✓ ${ev.name} (${ev.id}) → ${url}`);
       ok++;
     } catch (err) {

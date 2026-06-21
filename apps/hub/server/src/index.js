@@ -11,6 +11,7 @@ import { makeQuestionsRouter } from './routes/questions.js';
 import { makeAdminRouter } from './routes/admin.js';
 import { makeSyncRouter } from './routes/sync.js';
 import { makeGalleryRouter } from './routes/gallery.js';
+import { makePreviewGalleryRouter } from './routes/previewGallery.js';
 import { makeVersionsRouter } from './routes/versions.js';
 
 async function seedAdminIfNeeded() {
@@ -22,7 +23,7 @@ async function seedAdminIfNeeded() {
   console.log(`[hub] compte admin créé : ${config.adminEmail}`);
 }
 
-export function createApp(dataDir, opts = {}, { docker } = {}) {
+export function createApp(dataDir, opts = {}, { docker, resolvePreviewBase } = {}) {
   openRegistry(dataDir);
 
   const app = express();
@@ -35,6 +36,7 @@ export function createApp(dataDir, opts = {}, { docker } = {}) {
   app.use('/api/admin', makeAdminRouter(dataDir));
   app.use('/api/sync', makeSyncRouter(dataDir, opts.sync));
   app.use('/api/events/:eventId/versions', makeVersionsRouter(dataDir));
+  app.use('/api/events/:eventId', makePreviewGalleryRouter({ resolveBase: resolvePreviewBase }));
   app.use('/api/events/:eventId', makeGalleryRouter(dataDir));
 
   app.get('/api/health', (_req, res) => {

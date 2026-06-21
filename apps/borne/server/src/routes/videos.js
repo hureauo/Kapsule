@@ -13,7 +13,7 @@ import { getActiveEventDb } from '../eventDb.js';
 
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.webm', '.mov', '.avi', '.mkv']);
 
-function dirSize(dir) {
+export function dirSize(dir) {
   let total = 0;
   try {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {

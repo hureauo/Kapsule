@@ -4,6 +4,7 @@ import { getDb, getEvent } from '../registry.js';
 import { openEventDb } from '../eventStore.js';
 import { captureSnapshot, resolveAuthor } from '../versioning.js';
 import { requireUser, requireOwner } from '../middleware/auth.js';
+import { triggerPreviewPull } from './previewGallery.js';
 
 const FROZEN_STATUSES = new Set(['ready', 'live', 'closed', 'pushed', 'processed', 'waiting']);
 
@@ -59,6 +60,7 @@ export function makeQuestionsRouter(dataDir) {
       const db = getDb();
       captureSnapshot(db, edb, { event_id: req.params.eventId, author: resolveAuthor(db, req.user) });
       res.json({ ok: true });
+      triggerPreviewPull(req.params.eventId);
     } catch (err) {
       next(err);
     }
@@ -81,6 +83,7 @@ export function makeQuestionsRouter(dataDir) {
       const db = getDb();
       captureSnapshot(db, edb, { event_id: req.params.eventId, author: resolveAuthor(db, req.user) });
       res.status(201).json(edb.prepare('SELECT * FROM questions WHERE id=?').get(result.lastInsertRowid));
+      triggerPreviewPull(req.params.eventId);
     } catch (err) {
       next(err);
     }
@@ -119,6 +122,7 @@ export function makeQuestionsRouter(dataDir) {
       const rdb = getDb();
       captureSnapshot(rdb, db, { event_id: req.params.eventId, author: resolveAuthor(rdb, req.user) });
       res.json(db.prepare('SELECT * FROM questions WHERE id=?').get(req.params.id));
+      triggerPreviewPull(req.params.eventId);
     } catch (err) {
       next(err);
     }
@@ -135,6 +139,7 @@ export function makeQuestionsRouter(dataDir) {
       const rdb = getDb();
       captureSnapshot(rdb, db, { event_id: req.params.eventId, author: resolveAuthor(rdb, req.user) });
       res.status(204).end();
+      triggerPreviewPull(req.params.eventId);
     } catch (err) {
       next(err);
     }

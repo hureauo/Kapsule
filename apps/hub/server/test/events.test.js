@@ -71,15 +71,6 @@ describe('POST /api/events', () => {
     assert.ok(res.body.id);
   });
 
-  it('retourne preview_url dans la réponse (null si docker absent en test)', async () => {
-    const res = await request.post('/api/events')
-      .set(auth(tokenAlice))
-      .send({ name: 'Événement preview url' });
-    assert.equal(res.status, 201);
-    // En environnement de test, docker CLI absent → provision échoue silencieusement → null
-    assert.ok('preview_url' in res.body, 'preview_url doit être présent dans la réponse');
-  });
-
   it('retourne 400 si name manquant', async () => {
     const res = await request.post('/api/events').set(auth(tokenAlice)).send({});
     assert.equal(res.status, 400);

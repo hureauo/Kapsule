@@ -81,6 +81,12 @@ export const api = {
   // Auth : poser le mot de passe via lien d'enregistrement
   setPassword: (token, password) => apiFetch('/auth/set-password', { method: 'POST', body: { token, password } }),
 
+  // Galerie preview (proxy Hub → borne d'essai)
+  listPreviewVideos: (eventId) => apiFetch(`/events/${eventId}/preview-videos`),
+  previewVideoStreamUrl: (eventId, videoId) =>
+    `/api/events/${eventId}/preview-videos/${videoId}/file?token=${getToken()}`,
+  getPreviewStorage: (eventId) => apiFetch(`/events/${eventId}/preview-storage`),
+
   // URL directe avec ?token= pour téléchargements (invariant §11.2)
   videoStreamUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/file?token=${getToken()}`,
   videoDownloadUrl: (eventId, videoId) => `/api/events/${eventId}/videos/${videoId}/download?token=${getToken()}`,

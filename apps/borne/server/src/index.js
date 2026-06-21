@@ -1,6 +1,7 @@
 import express from 'express';
 import { statfs } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import rateLimit from 'express-rate-limit';
 import { config, validateConfig } from './config.js';
 import { openRegistry, getActiveEvent } from './registry.js';
@@ -8,7 +9,7 @@ import { makeAuthRouter, requireAdmin, requireTech } from './middleware/auth.js'
 import { makeEventsRouter } from './routes/events.js';
 import { makeQuestionsRouter } from './routes/questions.js';
 import { makeSessionsRouter } from './routes/sessions.js';
-import { makeVideosRouter } from './routes/videos.js';
+import { makeVideosRouter, dirSize } from './routes/videos.js';
 import { makeSyncRouter } from './routes/sync.js';
 import { pullMyEvent } from './sync/pull.js';
 
@@ -48,7 +49,16 @@ export function createApp(dataDir, cfg = config) {
       const total_bytes = stats.blocks * stats.bsize;
       const activeEvent = getActiveEvent();
       const isPreview = !!(cfg.previewMode) || !!(activeEvent?.is_preview);
-      res.json({ ok: true, activeEvent: activeEvent?.id ?? null, eventName: activeEvent?.name ?? null, isPreview, disk: { free_bytes, total_bytes } });
+      const quota_bytes = cfg.maxDataBytes || 0;
+      const used_bytes = dirSize(join(dataDir, 'events'));
+      res.json({
+        ok: true,
+        activeEvent: activeEvent?.id ?? null,
+        eventName: activeEvent?.name ?? null,
+        isPreview,
+        disk: { free_bytes, total_bytes },
+        storage: { used_bytes, quota_bytes },
+      });
     } catch (err) {
       next(err);
     }

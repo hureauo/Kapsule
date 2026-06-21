@@ -231,12 +231,17 @@ kapsule/
 ```
 DATA_DIR/
 ├── registry.sqlite               # la SEULE base transverse — AUCUNE donnée invité dedans
-└── events/
-    └── <event-id>/               # event-id = uuid v4, généré par le Hub (ou la Borne en autonome)
-        ├── db.sqlite             # questions, sessions, vidéos de CET événement
-        ├── videos/               # fichiers bruts (<uuid>.<ext>)
-        └── derived/              # Hub uniquement : miniatures <video-id>.jpg + archive zip
+├── events/
+│   └── <event-id>/               # event-id = uuid v4, généré par le Hub (ou la Borne en autonome)
+│       ├── db.sqlite             # questions, sessions, vidéos de CET événement
+│       ├── videos/               # fichiers bruts (<uuid>.<ext>)
+│       └── derived/              # Hub uniquement : miniatures <video-id>.jpg + archive zip
+└── previews/
+    └── <slug>/                   # Hub uniquement — données de la borne d'essai (bind-mount dans le container)
+        └── events/<event-id>/    # même structure que ci-dessus ; PII invité isolée ici (vidéos de test)
 ```
+
+**RGPD** : `previews/<slug>/` contient des données invité (vidéos de test, sessions). Il est purgé automatiquement lors du `DELETE /api/events/:id` (via `deprovisionPreview`) et lors de la suppression du container preview. Ne jamais déplacer ces données vers `events/<id>/` ou le registre.
 
 Toutes les bases : `PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;`. Schémas créés au démarrage avec `CREATE TABLE IF NOT EXISTS` (idempotent).
 

@@ -1,6 +1,8 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { getDb, insertBoxToken } from '../registry.js';
 
 const execFileAsync = promisify(execFile);
@@ -78,6 +80,9 @@ export const dockerCli = {
       return false;
     }
   },
+  async volumeRm(name) {
+    try { await execFileAsync('docker', ['volume', 'rm', name]); } catch { /* déjà absent */ }
+  },
 };
 
 // ── Provision ─────────────────────────────────────────────────────────────────
@@ -93,7 +98,7 @@ export const dockerCli = {
 // Le token preview est inséré en base APRÈS que les deux containers sont lancés :
 // ainsi pas de token orphelin si docker échoue.
 
-export async function provisionPreview(eventId, docker = dockerCli) {
+export async function provisionPreview(eventId, docker = dockerCli, dataDir = null) {
   const slug = slugFor(eventId);
   const frontendName = `preview-${slug}`;
   const backendName  = `preview-backend-${slug}`;
@@ -137,6 +142,18 @@ export async function provisionPreview(eventId, docker = dockerCli) {
     is_preview: 1,
   });
 
+  // Path host pour les données preview : visible sur le filesystem du Hub,
+  // inspecatable/sauvegardable manuellement, supprimé par deprovisionPreview via rm -rf.
+  // Si dataDir est absent (tests sans filesystem), on utilise un volume nommé fallback.
+  let mountArg;
+  if (dataDir) {
+    const hostPath = join(dataDir, 'previews', slug);
+    mkdirSync(hostPath, { recursive: true });
+    mountArg = `type=bind,source=${hostPath},target=/app/data`;
+  } else {
+    mountArg = `type=volume,source=preview-data-${slug},target=/app/data`;
+  }
+
   // Backend borne sur le réseau interne + connecté à hub_net pour synchro
   await docker.run([
     '--detach',
@@ -144,6 +161,7 @@ export async function provisionPreview(eventId, docker = dockerCli) {
     '--network', netName,
     '--network-alias', 'borne-preview-backend', // alias fixe que le nginx frontend attend
     '--restart', 'unless-stopped',
+    '--mount', mountArg,
     '--env', `BOX_TOKEN=${tokenClear}`,
     '--env', 'MAX_DATA_BYTES=1073741824',
     '--env', 'PREVIEW_MODE=true',
@@ -175,13 +193,13 @@ export async function provisionPreview(eventId, docker = dockerCli) {
 // n'existent pas, les provisionne. Utilisé par la route POST /preview/start ET par
 // la réconciliation au boot (script reconcile-previews). Renvoie l'URL preview.
 
-export async function startPreview(eventId, docker = dockerCli) {
+export async function startPreview(eventId, docker = dockerCli, dataDir = null) {
   const slug         = slugFor(eventId);
   const frontendName = `preview-${slug}`;
   const backendName  = `preview-backend-${slug}`;
 
   if (!await docker.exists(frontendName)) {
-    return provisionPreview(eventId, docker);
+    return provisionPreview(eventId, docker, dataDir);
   }
   if (!await docker.running(frontendName)) await docker.start(frontendName);
   if (await docker.exists(backendName) && !await docker.running(backendName)) {
@@ -192,7 +210,7 @@ export async function startPreview(eventId, docker = dockerCli) {
 
 // ── Deprovision ───────────────────────────────────────────────────────────────
 
-export async function deprovisionPreview(eventId, docker = dockerCli) {
+export async function deprovisionPreview(eventId, docker = dockerCli, dataDir = null) {
   const slug         = slugFor(eventId);
   const frontendName = `preview-${slug}`;
   const backendName  = `preview-backend-${slug}`;
@@ -207,6 +225,14 @@ export async function deprovisionPreview(eventId, docker = dockerCli) {
   if (await docker.exists(frontendName)) await docker.rm(frontendName);
   if (await docker.exists(backendName))  await docker.rm(backendName);
   if (await docker.networkExists(netName)) await docker.networkRm(netName);
+
+  // Supprime les données preview du filesystem Hub (purge RGPD)
+  if (dataDir) {
+    try { rmSync(join(dataDir, 'previews', slug), { recursive: true, force: true }); } catch { /* déjà absent */ }
+  } else {
+    // Fallback volume nommé (containers provisionnés sans dataDir)
+    try { await docker.volumeRm(`preview-data-${slug}`); } catch { /* déjà absent */ }
+  }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

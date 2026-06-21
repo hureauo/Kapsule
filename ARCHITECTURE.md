@@ -45,7 +45,16 @@ Chaque app = un **serveur Express** (`server/`) + un **frontend** (`web/`, React
     videos/<videoId>.mp4   # fichiers vidéo bruts
     derived/              # (Hub) miniatures, archive.zip
     push_manifest.json    # (Hub) état du push en cours
+  previews/<slug>/         # (Hub) DATA_DIR bind-monté du container borne preview-<slug>
+                           #   contient db.sqlite + vidéos d'essai (PII invité) — voir §2 Preview.
+                           #   purgé par deprovisionPreview (rm -rf) à la suppression de l'événement.
 ```
+
+> **RGPD — où vivent les données invité.** Hors `registry.sqlite` (invariant strict), les PII
+> invité vivent dans `events/<id>/` (après push) **et**, pendant la phase preview, dans
+> `previews/<slug>/` sur le filesystem du Hub (bind mount du container borne d'essai). Les deux
+> chemins sont supprimés par `DELETE /api/events/:id` (deprovision → `rm previews/<slug>` puis
+> `closeEventDb` → `rm events/<id>`). Toute nouvelle localisation de PII doit garantir cette purge.
 Deux **bases SQLite distinctes** par design :
 - `registry.sqlite` : index global, **jamais** de nom/vidéo/session invité (invariant RGPD).
 - `events/<id>/db.sqlite` : tout le contenu invité, isolé par événement, transférable d'un bloc.
@@ -82,6 +91,7 @@ Process séparé optionnel : `worker/index.js` (boucle de jobs).
 | `/api/admin` | `routes/admin.js` | `requireUser` + **`requireSuperuser`** | gestion comptes clients, box_tokens (génération/liste/révocation), event_users (assignation), overview dashboard |
 | `/api/events/:eventId/versions` | `routes/versions.js` (mergeParams) | `requireUser` + `requireOwner` | liste des versions de config, snapshot + diff champ par champ, **restore** (superuser only). Monté **avant** `/api/events/:eventId` (gallery) pour éviter la capture du segment `versions` comme `videoId`. |
 | `/api/sync` | `routes/sync.js` | **`requireBox`** (token borne) | pull (event/bundle), push (manifest/files/db/finalize), heartbeat status, config push |
+| `/api/events/:eventId` | `routes/previewGallery.js` | `requireUser` + `requireOwner` | galerie **preview** : proxy Hub → backend borne d'essai. `GET /preview-videos` (liste relayée), `GET /preview-videos/:id/file` (proxy Range-aware, accepte `?token=`), `GET /preview-storage` (used/quota depuis `/api/admin/health` borne). Monté **avant** `gallery.js` (préfixes distincts `preview-*` → pas de collision). Aussi : `triggerPreviewPull(eventId)` exporté, fire-and-forget appelé après chaque modif config/questions. |
 | `/api/events/:eventId` | `routes/gallery.js` | `requireUser` + `requireOwner` + `requirePushed` | galerie : liste vidéos, file (Range-aware), download, thumbnail, archive zip, CSV, DELETE vidéo |
 
 > **Deux chemins d'auth distincts, ne pas confondre :**
@@ -123,8 +133,9 @@ Auto-provisioning Docker d'une borne d'essai par événement. Contrôle le démo
 - `startPreview` : idempotent — démarre les containers s'ils existent et sont arrêtés,
   les **provisionne** s'ils n'existent pas. Partagé par la route `preview/start` et le script
   `reconcile-previews`.
-- `deprovisionPreview` : révoque le token, supprime les 2 containers + le réseau.
-- Appelé best-effort par `POST /api/events` (création) et `DELETE /api/events/:id` (purge).
+- `deprovisionPreview(eventId, docker, dataDir)` : révoque le token, supprime les 2 containers + le réseau, puis **purge les données preview** : `rm -rf previews/<slug>` si `dataDir` fourni (prod), sinon `docker volume rm preview-data-<slug>` (fallback sans bind mount).
+- **DATA_DIR du container borne preview** : monté en `--mount type=bind,source=<dataDir>/previews/<slug>,target=/app/data` (visible/sauvegardable sur le filesystem Hub). `startPreview`/`provisionPreview`/`deprovisionPreview` prennent `dataDir` en 3ᵉ argument ; le script `reconcile-previews` passe `config.dataDir`.
+- **Provisioning déclenché au passage `draft → preview`** (`PUT /:eventId/status`), **plus** à la création (`POST /api/events` ne provisionne plus). `preview → ready` arrête les containers (données conservées). La purge (`DELETE`) déprovisionne et efface `previews/<slug>`.
 - **Cycle de vie start/stop + état désiré** : les routes `POST .../preview/start|stop`
   (superuser) démarrent/arrêtent les containers ET écrivent `events.preview_desired`
   (`running`/`stopped`). Cet **état désiré** (en base) est distinct de l'**état réel** (Docker) :
