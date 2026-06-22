@@ -93,6 +93,37 @@ describe('POST /api/videos', () => {
     assert.equal(matching.length, 1);
   });
 
+  test('remplace une vidéo à question_id NULL via fallback question_text (pas de 429, pas de doublon)', async () => {
+    // Simule une vidéo héritée d'un ancien frontend : envoyée sans question_id
+    // (le endpoint stocke question_id = NULL). Avec une seule question dans la
+    // session, le plafond « 1 vidéo / question » est atteint.
+    const res1 = await request(ctx.app)
+      .post('/api/videos')
+      .field('session_id', ctx.sessionId)
+      .field('question_text', ctx.questionText)
+      .attach('video', fakeVideoBuffer(), { filename: 'orphan.mp4', contentType: 'video/mp4' });
+    assert.equal(res1.status, 201);
+    assert.equal(res1.body.question_id, null);
+
+    // Réenregistrement avec le bon question_id : doit être reconnu comme remplacement
+    // (fallback sur question_text) → 201, pas 429.
+    const res2 = await request(ctx.app)
+      .post('/api/videos')
+      .field('session_id', ctx.sessionId)
+      .field('question_id', String(ctx.questionId))
+      .field('question_text', ctx.questionText)
+      .attach('video', fakeVideoBuffer(), { filename: 'fixed.mp4', contentType: 'video/mp4' });
+    assert.equal(res2.status, 201);
+
+    // La vieille ligne NULL a été supprimée : une seule vidéo dans la session.
+    const listRes = await request(ctx.app)
+      .get('/api/videos')
+      .set('Authorization', `Bearer ${ctx.token}`);
+    const inSession = listRes.body.filter((v) => v.session_id === ctx.sessionId);
+    assert.equal(inSession.length, 1);
+    assert.equal(inSession[0].question_id, ctx.questionId);
+  });
+
   test('tolère un mime générique avec extension .mp4 (Safari §11.4)', async () => {
     const res = await request(ctx.app)
       .post('/api/videos')

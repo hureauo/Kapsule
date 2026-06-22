@@ -157,12 +157,28 @@ export function makeVideosRouter(dataDir, cfg) {
       return res.status(400).json({ error: 'Session introuvable' });
     }
 
+    // Recherche de la vidéo que ce upload remplacerait. Clé naturelle = question_id,
+    // mais il peut être NULL (vidéo héritée d'un ancien frontend, ou question supprimée
+    // → ON DELETE SET NULL). Dans ce cas on retombe sur question_text (NOT NULL), qui
+    // identifie la même question. Sans ce fallback, une vidéo à question_id NULL ne
+    // serait jamais reconnue comme remplaçable : chaque réessai créerait un doublon et
+    // finirait par saturer le plafond « 1 vidéo / question » de la session.
+    const findExisting = () => {
+      if (question_id) {
+        const byId = db.prepare(
+          'SELECT id, filename FROM videos WHERE session_id=? AND question_id=?'
+        ).get(session_id, question_id);
+        if (byId) return byId;
+      }
+      return db.prepare(
+        'SELECT id, filename FROM videos WHERE session_id=? AND question_id IS NULL AND question_text=?'
+      ).get(session_id, question_text);
+    };
+
     // Plafond : au plus autant de vidéos que de questions par session
     const questionsCount = db.prepare('SELECT COUNT(*) as n FROM questions').get().n;
     if (questionsCount > 0) {
-      const isReplacement = question_id
-        ? db.prepare('SELECT 1 FROM videos WHERE session_id=? AND question_id=?').get(session_id, question_id)
-        : null;
+      const isReplacement = findExisting();
       if (!isReplacement) {
         const videosCount = db.prepare('SELECT COUNT(*) as n FROM videos WHERE session_id=?').get(session_id).n;
         if (videosCount >= questionsCount) {
@@ -180,18 +196,15 @@ export function makeVideosRouter(dataDir, cfg) {
       const size = req.file.size;
 
       // Remplacement transactionnel §5.2 + §11.9 : DELETE+INSERT en transaction,
-      // unlink de l'ancien fichier APRÈS commit
+      // unlink de l'ancien fichier APRÈS commit. On réutilise findExisting() (même clé
+      // que la détection du plafond : question_id, fallback question_text) et on supprime
+      // par PRIMARY KEY (id) pour cibler exactement la ligne trouvée, NULL inclus.
       let oldFilename = null;
       db.transaction(() => {
-        if (question_id) {
-          const existing = db.prepare(
-            'SELECT filename FROM videos WHERE session_id=? AND question_id=?'
-          ).get(session_id, question_id);
-          if (existing) {
-            oldFilename = existing.filename;
-            db.prepare('DELETE FROM videos WHERE session_id=? AND question_id=?')
-              .run(session_id, question_id);
-          }
+        const existing = findExisting();
+        if (existing) {
+          oldFilename = existing.filename;
+          db.prepare('DELETE FROM videos WHERE id=?').run(existing.id);
         }
         db.prepare(`
           INSERT INTO videos (id, session_id, question_id, question_text, filename, mime_type, size, checksum, recorded_at)
