@@ -86,7 +86,7 @@ Process séparé optionnel : `worker/index.js` (boucle de jobs).
 | Mount | Fichier | Auth | Contenu |
 |-------|---------|------|---------|
 | `/api/auth` | `routes/auth.js` | publique (rate-limited) | login (JWT), register (si `ALLOW_REGISTER`), set-password (via registration token) |
-| `/api/events` | `routes/events.js` | `requireUser` + `requireOwner` | CRUD événements, config (route `/config` JWT admin, sans appelant UI depuis le retrait du write-back preview), owner, **preview/token + preview/status** (owner), **preview/start + preview/stop** (superuser only — `requireAdmin`), purge RGPD (DELETE). `POST /` réservé superuser (`requireAdmin` local). Le router accepte un `docker` injectable (`makeEventsRouter(dataDir, { docker })`) — défaut `dockerCli`. |
+| `/api/events` | `routes/events.js` | `requireUser` + `requireOwner` | CRUD événements, config (route `/config` JWT admin, sans appelant UI depuis le retrait du write-back preview), owner, **preview/token + preview/status** (owner), **preview/start + preview/stop** (superuser only — `requireAdmin`), **suppression totale (DELETE, superuser only)** : chaîne `requireUser → requireOwner → requireAdmin` (requireOwner résout `req.event` → 404 prioritaire sur 403). DELETE déprovisionne le container, `closeEventDb` puis `rm -rf events/<id>`, journalise `sync_log` action `delete`, puis `deleteEventVersions` + `deleteJobsForEvent` + `deleteEvent` (ligne registre). `box_tokens`/`event_users`/`event_versions` partent via `ON DELETE CASCADE` ; `jobs` (pas de FK) et `sync_log` (orphelin volontaire, sans PII) sont gérés explicitement. `POST /` réservé superuser (`requireAdmin` local) ; **provisionne la preview dès la création** (statut initial `preview`). Le router accepte un `docker` injectable (`makeEventsRouter(dataDir, { docker })`) — défaut `dockerCli`. |
 | `/api/events/:eventId/questions` | `routes/questions.js` | `requireUser` + `requireOwner` | CRUD questions + reorder |
 | `/api/admin` | `routes/admin.js` | `requireUser` + **`requireSuperuser`** | gestion comptes clients, box_tokens (génération/liste/révocation), event_users (assignation), overview dashboard |
 | `/api/events/:eventId/versions` | `routes/versions.js` (mergeParams) | `requireUser` + `requireOwner` | liste des versions de config, snapshot + diff champ par champ, **restore** (superuser only). Monté **avant** `/api/events/:eventId` (gallery) pour éviter la capture du segment `versions` comme `videoId`. |
@@ -135,7 +135,7 @@ Auto-provisioning Docker d'une borne d'essai par événement. Contrôle le démo
   `reconcile-previews`.
 - `deprovisionPreview(eventId, docker, dataDir)` : révoque le token, supprime les 2 containers + le réseau, puis **purge les données preview** : `rm -rf previews/<slug>` si `dataDir` fourni (prod), sinon `docker volume rm preview-data-<slug>` (fallback sans bind mount).
 - **DATA_DIR du container borne preview** : monté en `--mount type=bind,source=<dataDir>/previews/<slug>,target=/app/data` (visible/sauvegardable sur le filesystem Hub). `startPreview`/`provisionPreview`/`deprovisionPreview` prennent `dataDir` en 3ᵉ argument ; le script `reconcile-previews` passe `config.dataDir`.
-- **Provisioning déclenché au passage `draft → preview`** (`PUT /:eventId/status`), **plus** à la création (`POST /api/events` ne provisionne plus). `preview → ready` arrête les containers (données conservées). La purge (`DELETE`) déprovisionne et efface `previews/<slug>`.
+- **Provisioning déclenché à la création** (`POST /api/events` : statut initial `preview`, `startPreview` best-effort puis `preview_desired='running'`). `preview → ready` arrête les containers (données conservées). La suppression totale (`DELETE`) déprovisionne et efface `previews/<slug>`.
 - **Cycle de vie start/stop + état désiré** : les routes `POST .../preview/start|stop`
   (superuser) démarrent/arrêtent les containers ET écrivent `events.preview_desired`
   (`running`/`stopped`). Cet **état désiré** (en base) est distinct de l'**état réel** (Docker) :
@@ -219,17 +219,18 @@ contrairement à `event_meta` que `pull.js` fait `DELETE`+`INSERT`). Première c
 ## 5. Flux clés (de bout en bout)
 
 **Cycle de vie d'un événement** (statuts) :
-`draft → preview → ready → loaded → live → closed → pushed → processed → waiting`
-- `draft` : édition côté Hub.
-- `preview` : test sur la borne d'essai (`is_preview=1`) ; édition encore possible ;
-  transitions manuelles `draft→preview` (« Lancer la preview »), `preview→draft`,
-  `preview→ready` (« Valider la configuration », gèle le contenu).
+`preview → ready → loaded → live → closed → pushed → processed → waiting`
+- `preview` (**statut initial** à la création) : test sur la borne d'essai (`is_preview=1`) ;
+  édition encore possible ; transitions manuelles `preview→ready` (« Valider la configuration »,
+  gèle le contenu) et `ready→preview`. Le statut `draft` a été supprimé (migration registry 8).
 - `ready` : config gelée, un token réel peut puller ; `ready→preview` possible (retour en preview).
 - `loaded` : pullé sur la borne (édition à nouveau possible jusqu'au jour J).
 - `live/closed` : déroulement sur la borne (sessions invités).
 - `pushed` : remonté au Hub.
 - `processed` : jobs worker terminés (galerie disponible).
-- `waiting` : état terminal d'attente, données disponibles ; la purge RGPD (`DELETE`) reste **manuelle**.
+- `waiting` : état terminal d'attente, données disponibles.
+- **Suppression** : `DELETE /api/events/:id` (superuser only) est désormais une **suppression totale**
+  (container + `rm -rf events/<id>` + ligne registre), non plus une purge laissant la ligne en `waiting`.
 
 > Côté front : `EventsPage`/`EventDetailPage`/`SyncStatus` mappent ces statuts en libellés FR
 > (`STATUS_LABEL`/`STATUS_TIMELINE_LABEL`) et badges CSS `status-badge--<status>` ;

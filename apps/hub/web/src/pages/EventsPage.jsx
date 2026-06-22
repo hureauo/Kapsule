@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api, clearToken, getRole } from '../api/client.js';
 
 const STATUS_LABEL = {
-  draft: 'Brouillon', preview: 'Preview', ready: 'Prêt', loaded: 'Chargé',
+  preview: 'Preview', ready: 'Prêt', loaded: 'Chargé',
   live: 'En cours', closed: 'Terminé', pushed: 'Poussé',
   processed: 'Traité', waiting: 'En attente',
 };

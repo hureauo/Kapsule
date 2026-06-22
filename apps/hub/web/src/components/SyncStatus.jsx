@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api/client.js';
 
-const STATUS_ORDER = ['draft', 'preview', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'waiting'];
+const STATUS_ORDER = ['preview', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'waiting'];
 
 const STATUS_TIMELINE_LABEL = {
-  draft: 'Brouillon', preview: 'Preview', ready: 'Prêt', loaded: 'Chargé',
+  preview: 'Preview', ready: 'Prêt', loaded: 'Chargé',
   live: 'En cours', closed: 'Terminé', pushed: 'Poussé',
   processed: 'Traité', waiting: 'En attente',
 };

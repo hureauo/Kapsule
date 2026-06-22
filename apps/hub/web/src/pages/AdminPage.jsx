@@ -152,7 +152,7 @@ function CreateEventForm({ onCreated }) {
 const BORNE_ROLES = ['admin_borne', 'tech_borne', 'general'];
 const BORNE_ROLE_LABELS = { admin_borne: 'Admin borne', tech_borne: 'Technicien', general: 'Général' };
 
-function EventPanel({ event, onRefresh }) {
+function EventPanel({ event, onRefresh, canDelete, onDelete }) {
   const [tokens, setTokens] = useState(null);
   const [hubConfigHash, setHubConfigHash] = useState(null);
   const [revoking, setRevoking] = useState(null);
@@ -306,6 +306,7 @@ function EventPanel({ event, onRefresh }) {
           ))
         }
 
+
         {available.length > 0 && (
           <form onSubmit={handleAddUser} style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -336,6 +337,23 @@ function EventPanel({ event, onRefresh }) {
         {usersMsg && <p className="text--muted" style={{ fontSize: '12px', marginTop: '4px' }}>{usersMsg}</p>}
         {usersErr && <p className="error-msg" style={{ fontSize: '12px', marginTop: '4px' }}>{usersErr}</p>}
       </div>
+
+
+      {/* Bloc configuration de l'événement */}
+      <div className="event-panel__section">
+        <p className="event-panel__label">Paramètres de l'événement</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <a
+            href={`/events/${event.id}`}
+            target="_blank"
+            rel="noreferrer"
+            className="btn btn--primary btn--sm"
+          >
+            Configurer ↗
+          </a>
+        </div>
+      </div>
+
 
       {/* Bloc preview */}
       <div className="event-panel__section">
@@ -440,17 +458,34 @@ function EventPanel({ event, onRefresh }) {
           </button>
         )}
       </div>
+
+      {/* Bloc actions destructives sur l'événement */}
+      <div className="event-panel__section">
+        <p className="event-panel__label">Actions</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          {canDelete && (
+            <button className="btn btn--danger btn--sm" onClick={onDelete}>
+              Supprimer l'événement
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 // ── Onglet Événements ─────────────────────────────────────────────────────────
 
-function EventsTab() {
+// onDataChange : notifie le parent (AdminPage) qu'il doit recharger son overview
+// (le Dashboard compte les événements) — sinon il reste figé sur l'ancienne liste.
+function EventsTab({ onDataChange }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState(null);
+  // Suppression réservée aux superusers (garde réelle côté API : requireAdmin sur DELETE).
+  // Ici on cache juste le bouton pour les non-superusers — pure cohérence UX.
+  const isSuperuser = getRole() === 'superuser';
 
   const load = useCallback(async () => {
     try {
@@ -462,10 +497,35 @@ function EventsTab() {
     }
   }, []);
 
+  // Recharge la liste locale ET l'overview du parent (Dashboard).
+  const reload = useCallback(async () => {
+    await load();
+    onDataChange?.();
+  }, [load, onDataChange]);
+
   useEffect(() => { load(); }, [load]);
 
   function toggle(id) {
     setExpanded((prev) => (prev === id ? null : id));
+  }
+
+  async function handleDelete(ev) {
+    // Suppression totale : données invité + vidéos + container preview + ligne registre.
+    // Le backend exige la saisie du nom exact (confirm) → double garde-fou anti-accident.
+    const answer = prompt(
+      `Supprimer définitivement « ${ev.name} » ?\n\n`
+      + 'Cette action efface les vidéos, les données invité, le container preview '
+      + "et toute trace de l'événement. Elle est IRRÉVERSIBLE.\n\n"
+      + "Pour confirmer, tape le nom exact de l'événement :",
+    );
+    if (answer === null) return; // annulé
+    try {
+      await api.deleteEvent(ev.id, answer);
+      if (expanded === ev.id) setExpanded(null);
+      reload();
+    } catch (e) {
+      setError(e.message);
+    }
   }
 
   if (loading) return <p className="text--muted">Chargement…</p>;
@@ -474,7 +534,7 @@ function EventsTab() {
     <section className="panel-section">
       <div className="panel-section-header">
         <h2 className="panel-section__title">Événements</h2>
-        <CreateEventForm onCreated={load} />
+        <CreateEventForm onCreated={reload} />
       </div>
       {error && <p className="error-msg">{error}</p>}
       {events.length === 0 ? (
@@ -509,6 +569,8 @@ function EventsTab() {
                 <EventPanel
                   event={ev}
                   onRefresh={load}
+                  canDelete={isSuperuser}
+                  onDelete={() => handleDelete(ev)}
                 />
               )}
             </div>
@@ -850,7 +912,7 @@ export default function AdminPage() {
         </nav>
 
         {tab === 'dashboard'    && <DashboardTab overview={overview} />}
-        {tab === 'events'       && <EventsTab />}
+        {tab === 'events'       && <EventsTab onDataChange={loadOverview} />}
         {tab === 'tokens'       && <TokensTab />}
         {tab === 'bornes'       && <BornesTab />}
         {tab === 'utilisateurs' && <UsersTab />}

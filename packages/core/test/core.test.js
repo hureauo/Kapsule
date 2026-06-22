@@ -134,7 +134,6 @@ describe('validateGuestName', () => {
 
 describe('assertStatus', () => {
   test('accepte une avance valide', () => {
-    assert.doesNotThrow(() => assertStatus('draft', 'preview'));
     assert.doesNotThrow(() => assertStatus('preview', 'ready'));
     assert.doesNotThrow(() => assertStatus('ready', 'loaded'));
     assert.doesNotThrow(() => assertStatus('closed', 'pushed'));
@@ -142,18 +141,18 @@ describe('assertStatus', () => {
   });
 
   test('refuse un retour en arrière', () => {
-    assert.throws(() => assertStatus('ready', 'draft'));
+    assert.throws(() => assertStatus('ready', 'preview'));
     assert.throws(() => assertStatus('live', 'loaded'));
-    assert.throws(() => assertStatus('preview', 'draft'));
   });
 
   test('refuse un statut identique', () => {
-    assert.throws(() => assertStatus('draft', 'draft'));
+    assert.throws(() => assertStatus('preview', 'preview'));
   });
 
   test('refuse un statut inconnu', () => {
-    assert.throws(() => assertStatus('draft', 'inexistant'));
+    assert.throws(() => assertStatus('preview', 'inexistant'));
     assert.throws(() => assertStatus('inconnu', 'ready'));
-    assert.throws(() => assertStatus('draft', 'purged'));
+    assert.throws(() => assertStatus('preview', 'purged'));
+    assert.throws(() => assertStatus('draft', 'preview')); // draft supprimé
   });
 });

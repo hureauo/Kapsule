@@ -154,7 +154,7 @@ describe('events', () => {
     upsertEventUser(db, { event_id: 'evt-001', user_id: userId, roles: ['admin_borne'] });
     const ev = getEvent(db, 'evt-001');
     assert.equal(ev.name, 'Mariage Alice');
-    assert.equal(ev.status, 'draft');
+    assert.equal(ev.status, 'preview');
   });
 
   it('listEvents retourne les événements du user via event_users', () => {

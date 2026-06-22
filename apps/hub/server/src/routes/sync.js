@@ -24,7 +24,7 @@ function syncLog(req, status, detail = '') {
 }
 
 // Ordre des statuts pour les transitions avant uniquement (heartbeat)
-const STATUS_ORDER = ['draft', 'preview', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'waiting'];
+const STATUS_ORDER = ['preview', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'waiting'];
 
 function statusRank(s) {
   const i = STATUS_ORDER.indexOf(s);

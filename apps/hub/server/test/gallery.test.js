@@ -7,7 +7,7 @@ import supertest from 'supertest';
 import argon2 from 'argon2';
 import { v4 as uuidv4 } from 'uuid';
 import { createApp } from '../src/index.js';
-import { getDb, closeRegistry, insertUser, upsertEventUser } from '../src/registry.js';
+import { getDb, closeRegistry, insertUser, insertEvent, updateEvent, upsertEventUser } from '../src/registry.js';
 import { openEventDb, closeAllEventDbs } from '../src/eventStore.js';
 
 let dir;
@@ -37,10 +37,8 @@ before(async () => {
   // Crée un événement en statut 'pushed'
   eventId = uuidv4();
   const ownerId = res.lastInsertRowid;
-  db.prepare(`
-    INSERT INTO events (id, name, status, pushed_at)
-    VALUES (?, 'Galerie Test', 'pushed', CURRENT_TIMESTAMP)
-  `).run(eventId);
+  insertEvent(db, { id: eventId, name: 'Galerie Test', event_date: null });
+  updateEvent(db, eventId, { status: 'pushed', pushed_at: new Date().toISOString() });
   upsertEventUser(db, { event_id: eventId, user_id: ownerId, roles: ['admin_borne'] });
 
   // Structure de fichiers
@@ -61,6 +59,8 @@ before(async () => {
   // BD événement
   videoId = 'VID1';
   const edb = openEventDb(eventId, dir);
+  // Plus de questions seedées par défaut → en créer une explicitement pour la FK videos.question_id
+  edb.prepare(`INSERT INTO questions (id, text) VALUES (1, 'Question?')`).run();
   edb.prepare(`INSERT INTO sessions (id, guest_name, consent_at) VALUES (?, 'Alice', CURRENT_TIMESTAMP)`).run(SESSION_ID);
   edb.prepare(`
     INSERT INTO videos (id, session_id, question_id, question_text, filename, mime_type, size, checksum)
@@ -127,6 +127,7 @@ describe('GET /api/events/:id/videos/export/csv', () => {
     const malSessId = uuidv4();
     const malVidId = uuidv4();
     const edb = openEventDb(eventId, dir);
+    edb.prepare(`INSERT INTO questions (id, text) VALUES (2, '+formule')`).run();
     edb.prepare(`INSERT INTO sessions (id, guest_name, consent_at) VALUES (?, '=cmd|"/c calc"!A1', CURRENT_TIMESTAMP)`).run(malSessId);
     edb.prepare(`
       INSERT INTO videos (id, session_id, question_id, question_text, filename, mime_type, size, checksum)

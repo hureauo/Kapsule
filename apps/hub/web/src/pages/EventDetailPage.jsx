@@ -10,7 +10,7 @@ import PreviewGallery from '../components/PreviewGallery.jsx';
 const FROZEN_STATUSES = new Set(['live', 'closed', 'pushed', 'processed', 'waiting']);
 
 const STATUS_LABEL = {
-  draft: 'Brouillon', preview: 'Preview', ready: 'Prêt', loaded: 'Chargé',
+  preview: 'Preview', ready: 'Prêt', loaded: 'Chargé',
   live: 'En cours', closed: 'Terminé', pushed: 'Poussé',
   processed: 'Traité', waiting: 'En attente',
 };
@@ -534,15 +534,7 @@ export default function EventDetailPage() {
           </div>
           {!frozen && (
             <div className="event-meta-row" style={{ gap: '8px', flexWrap: 'wrap' }}>
-              {event.status === 'draft' && (
-                <button className="btn btn--primary" onClick={() => handleStatusChange('preview')}>
-                  Lancer la preview
-                </button>
-              )}
-              {event.status === 'preview' && (<>
-                <button className="btn btn--ghost" onClick={() => handleStatusChange('draft')}>
-                  Repasser en brouillon
-                </button>
+              {event.status === 'preview' && (
                 <button
                   className="btn btn--primary"
                   onClick={() => {
@@ -553,7 +545,7 @@ export default function EventDetailPage() {
                 >
                   Valider la configuration
                 </button>
-              </>)}
+              )}
               {event.status === 'ready' && (
                 <button className="btn btn--ghost" onClick={() => handleStatusChange('preview')}>
                   Retour en preview
@@ -596,12 +588,7 @@ export default function EventDetailPage() {
 
         {tab === 'Galerie' && (
           <div className="tab-content">
-            {event.status === 'draft' ? (
-              // Pas encore de borne lancée — rien à afficher
-              <p className="text--muted">
-                La galerie est disponible une fois l'événement en preview ou après le push de la borne.
-              </p>
-            ) : event.status === 'preview' ? (
+            {event.status === 'preview' ? (
               // Borne d'essai active : galerie proxifiée depuis le container preview
               <PreviewGallery eventId={id} />
             ) : ['ready', 'loaded'].includes(event.status) ? (

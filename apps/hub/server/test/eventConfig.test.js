@@ -48,9 +48,8 @@ describe('applyEventConfig — mode overwrite', () => {
 
   it('remplace les questions existantes', () => {
     const edb = freshDb();
-    // Pré-charger une question via le schéma par défaut (4 questions)
-    const existingCount = edb.prepare('SELECT COUNT(*) as n FROM questions').get().n;
-    assert.ok(existingCount > 0, 'doit avoir des questions par défaut');
+    // Insérer une question manuellement (plus de seed par défaut)
+    edb.prepare('INSERT INTO questions (text, max_duration, countdown, order_index) VALUES (?, ?, ?, ?)').run('Q existante', 60, 3, 0);
 
     applyEventConfig(edb, {
       mode: 'overwrite',

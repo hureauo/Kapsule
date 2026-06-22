@@ -1,5 +1,4 @@
 export const EVENT_STATUS = {
-  DRAFT: 'draft',
   PREVIEW: 'preview',
   READY: 'ready',
   LOADED: 'loaded',
@@ -11,10 +10,10 @@ export const EVENT_STATUS = {
 };
 
 // Transitions légales (machine à états) — chaque statut ne peut avancer que vers le suivant.
-// Les transitions manuelles Hub (draft↔preview, preview↔ready) sortent de ce modèle linéaire
+// Les transitions manuelles Hub (preview↔ready) sortent de ce modèle linéaire
 // et sont gérées séparément dans routes/events.js (MANUAL_TRANSITIONS).
 export const STATUS_ORDER = [
-  'draft', 'preview', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'waiting',
+  'preview', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'waiting',
 ];
 
 export const JOB_TYPES = {

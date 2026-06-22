@@ -10,7 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { createApp } from '../src/index.js';
 import {
   getDb, closeRegistry, insertUser, insertBoxToken, getBoxTokenByHash, getEvent,
-  upsertEventUser, deleteEventUser,
+  upsertEventUser, deleteEventUser, updateEvent,
 } from '../src/registry.js';
 import { closeAllEventDbs, openEventDb, cacheSize } from '../src/eventStore.js';
 
@@ -105,18 +105,18 @@ describe('GET /api/sync/event', () => {
     assert.ok('is_preview' in res.body);
   });
 
-  it("retourne 404 si l'événement n'est pas pullable (draft)", async () => {
-    // Créer un event en draft + token pour lui
+  it("retourne 404 si l'événement n'est pas pullable (waiting)", async () => {
     const db = getDb();
-    const evDraft = await request.post('/api/events')
+    const evWaiting = await request.post('/api/events')
       .set('Authorization', `Bearer ${tokenAdmin}`)
-      .send({ name: 'Draft event' });
-    const rawDraft = randomBytes(32).toString('hex');
-    const hashDraft = createHash('sha256').update(rawDraft).digest('hex');
-    insertBoxToken(db, { event_id: evDraft.body.id, token_hash: hashDraft, token_clear: rawDraft, label: 'draft token' });
+      .send({ name: 'Waiting event' });
+    updateEvent(db, evWaiting.body.id, { status: 'waiting' });
+    const rawWaiting = randomBytes(32).toString('hex');
+    const hashWaiting = createHash('sha256').update(rawWaiting).digest('hex');
+    insertBoxToken(db, { event_id: evWaiting.body.id, token_hash: hashWaiting, token_clear: rawWaiting, label: 'waiting token' });
 
     const res = await request.get('/api/sync/event')
-      .set('X-Box-Token', rawDraft);
+      .set('X-Box-Token', rawWaiting);
     assert.equal(res.status, 404);
   });
 });
@@ -212,7 +212,6 @@ describe('GET /api/sync/events/:id/bundle', () => {
     assert.equal(res.status, 200);
     assert.ok(res.body.event, 'event doit être présent');
     assert.ok(Array.isArray(res.body.questions), 'questions doit être un tableau');
-    assert.ok(res.body.questions.length >= 4, '4 questions par défaut au moins');
 
     // Transition ready→loaded
     const db = getDb();
@@ -256,16 +255,16 @@ describe('GET /api/sync/events/:id/bundle', () => {
   });
 
   it("retourne 409 si le statut n'est pas ready ou loaded", async () => {
-    // Créer un événement en draft + token pour lui
+    // Un event en preview avec token réel (non-preview) → 409
     const db = getDb();
-    const evDraft2 = await request.post('/api/events')
+    const evPreview = await request.post('/api/events')
       .set('Authorization', `Bearer ${tokenAdmin}`)
-      .send({ name: 'Événement draft 2' });
+      .send({ name: 'Événement preview non-ready' });
     const rawD = 'd'.repeat(64);
     const hashD = createHash('sha256').update(rawD).digest('hex');
-    insertBoxToken(db, { event_id: evDraft2.body.id, token_hash: hashD, token_clear: rawD, label: 'Draft borne' });
+    insertBoxToken(db, { event_id: evPreview.body.id, token_hash: hashD, token_clear: rawD, label: 'Borne réelle' });
 
-    const res = await request.get(`/api/sync/events/${evDraft2.body.id}/bundle`)
+    const res = await request.get(`/api/sync/events/${evPreview.body.id}/bundle`)
       .set('X-Box-Token', rawD);
     assert.equal(res.status, 409);
   });

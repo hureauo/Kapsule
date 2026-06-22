@@ -49,8 +49,8 @@ export function openRegistry(dataDir) {
       owner_id     INTEGER REFERENCES users(id),
       name         TEXT NOT NULL,
       event_date   DATE,
-      status       TEXT NOT NULL DEFAULT 'draft'
-                   CHECK(status IN ('draft','preview','ready','loaded','live','closed','pushed','processed','waiting')),
+      status       TEXT NOT NULL DEFAULT 'preview'
+                   CHECK(status IN ('preview','ready','loaded','live','closed','pushed','processed','waiting')),
       pulled_at    DATETIME,
       pushed_at    DATETIME,
       processed_at DATETIME,
@@ -246,9 +246,54 @@ const MIGRATIONS = [
     name: 'preview_desired_state',
     // État désiré de la borne preview, indépendant de l'état réel du container.
     // 'running' = doit tourner (réconcilié au boot / make vps-up) ; 'stopped' = éteinte
-    // volontairement (bouton Hub) ou jamais démarrée. Défaut 'stopped' : une preview
-    // ne tourne que sur action explicite, pas dès la création de l'événement.
+    // volontairement (bouton Hub) ou jamais démarrée. Défaut 'stopped' à la migration
+    // (valeur neutre pour les events existants).
+    // NB : depuis la suppression de 'draft', POST /api/events provisionne la preview
+    // dès la création et passe preview_desired='running' — ce défaut ne vaut donc plus
+    // que pour les events déjà présents lors de la migration.
     up(db) {
+      const cols = db.pragma('table_info(events)').map((c) => c.name);
+      if (!cols.includes('preview_desired')) {
+        db.exec("ALTER TABLE events ADD COLUMN preview_desired TEXT NOT NULL DEFAULT 'stopped'");
+      }
+    },
+  },
+  {
+    version: 8,
+    name: 'remove_draft_status',
+    // Suppression du statut draft : les événements démarrent directement en preview.
+    // SQLite ne supporte pas ALTER COLUMN — reconstruction de la table.
+    up(db) {
+      const currentCheck = db.prepare(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='events'"
+      ).get()?.sql ?? '';
+      if (!currentCheck.includes("'draft'")) return; // déjà migré
+      db.exec('PRAGMA foreign_keys = OFF');
+      db.exec(`
+        DROP TABLE IF EXISTS events_new;
+        CREATE TABLE events_new (
+          id           TEXT PRIMARY KEY,
+          owner_id     INTEGER REFERENCES users(id),
+          name         TEXT NOT NULL,
+          event_date   DATE,
+          status       TEXT NOT NULL DEFAULT 'preview'
+                       CHECK(status IN ('preview','ready','loaded','live','closed','pushed','processed','waiting')),
+          pulled_at    DATETIME,
+          pushed_at    DATETIME,
+          processed_at DATETIME,
+          created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        INSERT INTO events_new (id, owner_id, name, event_date, status, pulled_at, pushed_at, processed_at, created_at, updated_at)
+        SELECT id, owner_id, name, event_date,
+          CASE WHEN status = 'draft' THEN 'preview' ELSE status END,
+          pulled_at, pushed_at, processed_at, created_at, updated_at
+        FROM events;
+        DROP TABLE events;
+        ALTER TABLE events_new RENAME TO events;
+      `);
+      db.exec('PRAGMA foreign_keys = ON');
+      // Réajouter la colonne preview_desired (perdue dans la reconstruction)
       const cols = db.pragma('table_info(events)').map((c) => c.name);
       if (!cols.includes('preview_desired')) {
         db.exec("ALTER TABLE events ADD COLUMN preview_desired TEXT NOT NULL DEFAULT 'stopped'");
@@ -500,4 +545,11 @@ export function getPreviousEventVersion(db, event_id, current_id) {
 
 export function deleteEventVersions(db, event_id) {
   return db.prepare('DELETE FROM event_versions WHERE event_id = ?').run(event_id);
+}
+
+// jobs n'a pas de FK ON DELETE CASCADE vers events (event_id est un simple TEXT) :
+// à supprimer explicitement lors d'une suppression totale, sinon le worker pourrait
+// traiter des jobs orphelins pointant vers un event disparu.
+export function deleteJobsForEvent(db, event_id) {
+  return db.prepare('DELETE FROM jobs WHERE event_id = ?').run(event_id);
 }

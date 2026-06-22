@@ -33,6 +33,17 @@ function teardown(dir) {
   rmSync(dir, { recursive: true });
 }
 
+// Plus de questions seedées par défaut : les suites qui manipulent des questions
+// existantes en créent explicitement (4, comme l'ancien seed) via l'API.
+async function seedQuestions(ctx, n = 4) {
+  for (let i = 0; i < n; i++) {
+    await request(ctx.app)
+      .post('/api/questions')
+      .set('Authorization', `Bearer ${ctx.token}`)
+      .send({ text: `Question seed ${i}` });
+  }
+}
+
 // ── GET /api/questions (public) ───────────────────────────────────────────────
 
 describe('GET /api/questions', () => {
@@ -40,10 +51,11 @@ describe('GET /api/questions', () => {
   beforeEach(async () => { ctx = await setup(); });
   afterEach(() => teardown(ctx.dir));
 
-  test('retourne les 4 questions par défaut (seed)', async () => {
+  test('retourne un tableau vide (aucune question seedée par défaut)', async () => {
     const res = await request(ctx.app).get('/api/questions');
     assert.equal(res.status, 200);
-    assert.equal(res.body.length, 4);
+    assert.ok(Array.isArray(res.body));
+    assert.equal(res.body.length, 0);
   });
 
   test('accessible sans token (public)', async () => {
@@ -92,7 +104,7 @@ describe('Accès aux questions par rôle', () => {
 
 describe('POST /api/questions', () => {
   let ctx;
-  beforeEach(async () => { ctx = await setup(); });
+  beforeEach(async () => { ctx = await setup(); await seedQuestions(ctx); });
   afterEach(() => teardown(ctx.dir));
 
   test('crée une question et retourne 201', async () => {
@@ -141,7 +153,7 @@ describe('POST /api/questions', () => {
 
 describe('PUT /api/questions/reorder/batch', () => {
   let ctx;
-  beforeEach(async () => { ctx = await setup(); });
+  beforeEach(async () => { ctx = await setup(); await seedQuestions(ctx); });
   afterEach(() => teardown(ctx.dir));
 
   test('réordonne en transaction', async () => {
@@ -183,7 +195,7 @@ describe('PUT /api/questions/reorder/batch', () => {
 
 describe('PUT /api/questions/:id', () => {
   let ctx;
-  beforeEach(async () => { ctx = await setup(); });
+  beforeEach(async () => { ctx = await setup(); await seedQuestions(ctx); });
   afterEach(() => teardown(ctx.dir));
 
   test('met à jour partiellement une question', async () => {
@@ -228,7 +240,7 @@ describe('PUT /api/questions/:id', () => {
 
 describe('GET /api/questions/all', () => {
   let ctx;
-  beforeEach(async () => { ctx = await setup(); });
+  beforeEach(async () => { ctx = await setup(); await seedQuestions(ctx); });
   afterEach(() => teardown(ctx.dir));
 
   test('retourne toutes les questions y compris désactivées', async () => {
@@ -277,7 +289,7 @@ describe('GET /api/questions/all', () => {
 
 describe('DELETE /api/questions/:id', () => {
   let ctx;
-  beforeEach(async () => { ctx = await setup(); });
+  beforeEach(async () => { ctx = await setup(); await seedQuestions(ctx); });
   afterEach(() => teardown(ctx.dir));
 
   test('supprime une question et retourne 204', async () => {

@@ -42,20 +42,19 @@ Un système de **borne d'enregistrement de messages vidéo pour événements** (
 - Machine à états d'un événement (stockée dans le registre du Hub ; sous-ensemble sur la Borne) :
 
 ```
-draft → preview → ready → loaded → live → closed → pushed → processed → waiting
- hub      hub      hub     pull    1ʳᵉ session  borne   push OK   worker    manuel
+preview → ready → loaded → live → closed → pushed → processed → waiting
+ hub       hub    pull    1ʳᵉ session  borne   push OK   worker    manuel
 ```
 
-États Hub uniquement : `draft`, `preview`, `ready`, `processed`, `waiting`.
+États Hub uniquement : `preview`, `ready`, `processed`, `waiting`.
 États Borne : `loaded`, `live`, `closed`, `pushed`.
 
-- `draft` : événement en cours de configuration (questions, consent, timeout…). Édition libre.
-- `preview` : le client teste via la borne d'essai (conteneur `docker-compose.preview.yml`). Édition encore possible. Transition manuelle `draft → preview` (bouton « Lancer la preview »). La borne d'essai associée (token `is_preview=1`) peut puller et recevoir des sessions de test — données jetables. Transition `preview → ready` (bouton « Valider la configuration »).
-  - **État désiré de la borne preview** : indépendant du statut de l'événement, `events.preview_desired` (`running`/`stopped`) mémorise si le conteneur d'essai *doit* tourner. Les boutons « Démarrer / Éteindre » du Hub le basculent ; il passe `running` à la création (provision auto réussie) et `stopped` à la purge. Au démarrage du serveur ou via `make vps-up`, le script `reconcile-previews` relance uniquement les previews `running` — une borne éteinte volontairement n'est jamais ressuscitée. Distinguer cet **état désiré** (en base) de l'**état réel** du conteneur (Docker) est ce qui rend la réconciliation correcte après un reboot.
+- `preview` : **statut initial** d'un événement à sa création. Le client configure (questions, consent, timeout…) et teste via la borne d'essai (conteneur `docker-compose.preview.yml`), auto-provisionnée dès la création (voir §2 état désiré). Édition libre. La borne d'essai associée (token `is_preview=1`) peut puller et recevoir des sessions de test — données jetables. Transition `preview → ready` (bouton « Valider la configuration »). Il n'existe plus d'état `draft` antérieur : un événement naît directement en `preview`.
+  - **État désiré de la borne preview** : indépendant du statut de l'événement, `events.preview_desired` (`running`/`stopped`) mémorise si le conteneur d'essai *doit* tourner. Les boutons « Démarrer / Éteindre » du Hub le basculent ; il passe `running` à la création (provision auto réussie). Au démarrage du serveur ou via `make vps-up`, le script `reconcile-previews` relance uniquement les previews `running` — une borne éteinte volontairement n'est jamais ressuscitée. Distinguer cet **état désiré** (en base) de l'**état réel** du conteneur (Docker) est ce qui rend la réconciliation correcte après un reboot.
 - `ready` : configuration gelée. Le Hub peut générer un token de borne réelle. Seule transition possible : `ready → loaded` (au premier pull de la borne réelle).
 - `loaded` → `live` → `closed` → `pushed` : sur la Borne (voir ci-dessous).
 - `processed` : worker a terminé ses jobs (miniatures, ZIP). Vidéos consultables par le client.
-- `waiting` : état terminal d'attente. Les données sont disponibles. La purge reste **manuelle** pour l'instant (pas de RGPD automatique pendant la période de test). Transition : purge manuelle → suppression du dossier `events/<id>/`.
+- `waiting` : état terminal d'attente. Les données sont disponibles. La **suppression** d'un événement reste **manuelle** (pas de RGPD automatique pendant la période de test) et se fait via `DELETE /api/events/:id` (voir §7) : suppression *totale* — dossier `events/<id>/` + conteneur preview + ligne du registre. Réservée aux superusers.
 
 **Règle anti-conflit (à respecter scrupuleusement)** : le pull n'opère que tant que l'événement local est en `loaded`. Dès la première session invitée (`live`), plus aucun pull ; au push, l'état de la Borne **écrase** celui du Hub pour cet événement (tracé dans `sync_log`). Le Hub connaît le statut `live`/`closed` uniquement au moment du push — entre temps, il gèle l'édition dès `loaded` (voir §7).
 
@@ -298,7 +297,7 @@ derived (                                      -- rempli par le worker du Hub un
 
 **Réenregistrement** : l'upload d'une vidéo pour un couple (session, question) déjà répondu **remplace** l'existante — transaction : `DELETE` ancienne ligne + `INSERT` nouvelle ; l'ancien fichier est `unlink` **après commit**. C'est ce mécanisme qui permet à un invité de refaire une réponse sans recommencer sa session.
 
-**Seed** : à la création d'un événement (Hub ou Borne), insérer 4 questions par défaut si la table est vide.
+**Questions à la création** : aucune question n'est seedée par défaut. Un événement neuf démarre avec une table `questions` vide ; le client (Hub) ou le technicien (Borne) ajoute ses questions explicitement.
 
 ### 5.3 Registre du Hub — `registry.sqlite`
 
@@ -339,8 +338,8 @@ events (
   owner_id INTEGER NOT NULL REFERENCES users(id),
   name TEXT NOT NULL,                          -- (plus de box_id : le lien Borne↔événement vit dans box_tokens, §1)
   event_date DATE,
-  status TEXT NOT NULL DEFAULT 'draft'
-    CHECK(status IN ('draft','preview','ready','loaded','live','closed','pushed','processed','waiting')),
+  status TEXT NOT NULL DEFAULT 'preview'
+    CHECK(status IN ('preview','ready','loaded','live','closed','pushed','processed','waiting')),
   preview_desired TEXT NOT NULL DEFAULT 'stopped', -- 'running'|'stopped' : état DÉSIRÉ de la borne preview,
                                                    -- réconcilié au boot/vps-up (≠ état réel du container, §3)
   pulled_at DATETIME, pushed_at DATETIME, processed_at DATETIME,
@@ -369,7 +368,7 @@ sync_log (
 );
 ```
 
-**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` ne stocke que des hash ; `box_tokens` stocke à la fois le hash (auth) et le token en clair (consultation admin, cf. §11.13). Jamais de donnée invité dans le registre. La purge d'un événement : `rm -rf events/<id>` + `status='waiting'` + ligne `sync_log` ; le `ON DELETE CASCADE` sur `box_tokens.event_id` retire au passage les tokens de l'événement purgé.
+**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` ne stocke que des hash ; `box_tokens` stocke à la fois le hash (auth) et le token en clair (consultation admin, cf. §11.13). Jamais de donnée invité dans le registre. La suppression d'un événement (`DELETE /api/events/:id`) est **totale** : conteneur preview déprovisionné, `rm -rf events/<id>`, puis suppression de la ligne `events` du registre. Le `ON DELETE CASCADE` (`box_tokens`, `event_users`, `event_versions`) retire au passage tout ce qui dépend de l'événement ; `jobs` (sans FK) est vidé explicitement. Seule une ligne `sync_log` action `delete` subsiste comme trace d'audit — elle ne contient aucune donnée invité (juste l'id et le nom de l'événement).
 
 ### 5.4 Registre de la Borne — `registry.sqlite`
 
@@ -410,7 +409,7 @@ Base `/api`. JSON partout sauf flux de fichiers. Gestionnaire d'erreurs global �
 
 **Événements locaux** (`routes/events.js`) — admin :
 - `GET /api/events` — liste du registre local.
-- `POST /api/events` `{ name, event_date? }` — création **autonome** (origin `local`) : crée `events/<uuid>/` + `db.sqlite` + questions par défaut.
+- `POST /api/events` `{ name, event_date? }` — création **autonome** (origin `local`) : crée `events/<uuid>/` + `db.sqlite` (table `questions` vide ; aucune question seedée).
 - `PUT /api/events/:id/activate` — désactive les autres, active celui-ci. Refusé pendant un push en cours.
 - `PUT /api/events/:id/close` — **clôture** (`live → closed`) : le kiosque cesse d'accepter de nouvelles sessions (écran « événement terminé »). Réservé à l'admin local = l'**opérateur** ; le client n'a jamais accès à l'admin Borne. Le Hub apprend la clôture au moment du push.
 - `GET /api/event` — **public** : `{ id, name, status, consent_text, idle_timeout }` de l'événement actif (consommé par le kiosque ; `consent_text` et `idle_timeout` viennent d'`event_meta`, avec défauts génériques). 404 si aucun.
@@ -458,15 +457,15 @@ Base `/api`. `GET /api/health`.
 
 **Événements** (`routes/events.js`) — user :
 - `GET /api/events` — ceux du user (tous si admin).
-- `POST /api/events` `{ name, event_date }` → uuid, statut `draft`, crée `events/<id>/db.sqlite` avec questions par défaut.
-- `PUT /api/events/:id` — métadonnées, dont `consent_text` et `idle_timeout` ; `PUT /api/events/:id/status` `{ status }` (transitions manuelles Hub : `draft→preview`, `preview→draft`, `preview→ready`, `ready→preview`). Même règle de gel d'édition que les questions (voir ci-dessous).
+- `POST /api/events` `{ name, event_date }` → uuid, statut **`preview`** (plus de `draft`), crée `events/<id>/db.sqlite` (table `questions` vide) et **provisionne le conteneur de borne d'essai** (`preview_desired='running'`). Réservé aux superusers (`requireAdmin`).
+- `PUT /api/events/:id` — métadonnées, dont `consent_text` et `idle_timeout` ; `PUT /api/events/:id/status` `{ status }` (transitions manuelles Hub : `preview→ready`, `ready→preview`). Même règle de gel d'édition que les questions (voir ci-dessous).
 - (Plus de `PUT …/assign` : avec token = événement, le lien Borne↔événement se crée en générant un token de borne pour l'événement, voir le super-admin ci-dessous. La Borne s'auto-rattache via son token au moment du pull.)
-- `DELETE /api/events/:id` — **purge RGPD** : `rm -rf events/<id>` + `status='waiting'` + `sync_log`. Confirmation `{ confirm: name }`.
+- `DELETE /api/events/:id` — **suppression totale** (réservée aux superusers, `requireAdmin`) : déprovisionne le conteneur preview, `rm -rf events/<id>`, supprime versions + jobs + la ligne `events` du registre (cascade sur `box_tokens`/`event_users`/`event_versions`), écrit une ligne `sync_log` action `delete`. Confirmation `{ confirm: name }`. Chaîne d'auth : `requireUser → requireOwner` (résout l'événement, 404 si absent) `→ requireAdmin` (403 pour un non-superuser, même propriétaire).
 
 **Questions** (`routes/questions.js`) — user + owner ; mêmes routes que la Borne mais sur `eventStore.openEventDb(eventId)` : `GET/POST/PUT/DELETE /api/events/:id/questions`, `PUT /api/events/:id/questions/reorder/batch`.
 
 **Règle de gel d'édition (Hub)** — le Hub ne voit pas l'événement passer `live` en temps réel (la Borne est offline) ; il l'apprend au push. Donc :
-- Édition **autorisée** en `draft`, `preview` et `loaded` (c'est ce qui permet d'ajuster les questions jusqu'au jour J).
+- Édition **autorisée** en `preview` et `loaded` (c'est ce qui permet d'ajuster les questions jusqu'au jour J).
 - Édition **refusée (409)** en `ready` (configuration gelée, le token borne réelle peut avoir été distribué) et dès que le Hub connaît un statut ≥ `live` (push effectué).
 - Si `updated_at > pulled_at`, l'UI affiche un bandeau **« Modifications non encore récupérées par la borne »** — le client sait que ses changements ne s'appliqueront que si la Borne re-pull avant l'événement. Au push, l'état de la Borne écrase de toute façon celui du Hub (la Borne est maître).
 
@@ -557,8 +556,8 @@ Base `/api`. `GET /api/health`.
 - `EventsPage` : tableau (nom, date, statut avec badge coloré, borne assignée), bouton « Nouvel événement ».
 - `EventDetailPage` — onglets :
   - **Questions** : `QuestionEditor` = le `QuestionManager` de la Borne (composant dupliqué mais même logique) + un champ **« Texte de consentement RGPD »** (textarea, pré-rempli avec le texte générique par défaut) et le réglage du timeout d'inactivité. Bandeau « lecture seule — événement en cours sur la borne » si le Hub connaît un statut ≥ `live` ; bandeau « **Modifications non encore récupérées par la borne** » si `updated_at > pulled_at` (voir la règle de gel, §7).
-  - **Synchro** : timeline du statut (`draft → … → processed`), dates `pulled_at/pushed_at/processed_at`, assignation de borne, état des jobs (`x/y terminés`), `sync_log` récent.
-  - **Galerie** (statut ≥ `pushed`) : grille de cartes avec **miniatures** (`derived`), durée, invité, question ; modal `<video>` range-aware ; download unitaire ; bouton **« Tout télécharger (ZIP) »** (grisé avec « préparation en cours… » tant que le job `archive` n'est pas terminé) ; export CSV ; suppression unitaire ; bouton « Supprimer l'événement (RGPD) » avec confirmation par saisie du nom.
+  - **Synchro** : timeline du statut (`preview → … → processed`), dates `pulled_at/pushed_at/processed_at`, assignation de borne, état des jobs (`x/y terminés`), `sync_log` récent.
+  - **Galerie** (statut ≥ `pushed`) : grille de cartes avec **miniatures** (`derived`), durée, invité, question ; modal `<video>` range-aware ; download unitaire ; bouton **« Tout télécharger (ZIP) »** (grisé avec « préparation en cours… » tant que le job `archive` n'est pas terminé) ; export CSV ; suppression unitaire. La **suppression totale de l'événement** se fait depuis le panneau d'administration (onglet Événements → panneau déplié → « Supprimer l'événement », superuser uniquement), avec confirmation par saisie du nom exact.
 - `AdminPage` (rôle `admin` uniquement) : vue d'ensemble super-admin — tous les événements avec leur taille disque, disque libre du volume, jobs en erreur, bornes (`last_seen_at`, création avec modal affichant le token une seule fois + bouton copier, révocation).
 
 ---

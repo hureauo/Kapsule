@@ -46,6 +46,8 @@ before(() => {
 
   edb = openEventDb(EVENT_ID, dataDir);
 
+  // Plus de questions seedées par défaut → en créer une explicitement pour la FK videos.question_id
+  edb.prepare(`INSERT INTO questions (id, text) VALUES (1, 'Question test')`).run();
   edb.prepare(`INSERT INTO sessions (id, guest_name, consent_at) VALUES (?, 'Test', CURRENT_TIMESTAMP)`)
     .run(SESSION_ID);
   edb.prepare(`

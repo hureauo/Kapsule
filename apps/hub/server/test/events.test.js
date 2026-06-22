@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import supertest from 'supertest';
 import argon2 from 'argon2';
 import { createApp } from '../src/index.js';
-import { getDb, closeRegistry, insertUser, insertBoxToken } from '../src/registry.js';
+import { getDb, closeRegistry, insertUser, insertBoxToken, upsertEventUser } from '../src/registry.js';
 import { closeAllEventDbs } from '../src/eventStore.js';
 import { dockerCli } from '../src/preview/provisioner.js';
 
@@ -16,6 +16,7 @@ let request;
 let tokenAlice;
 let tokenBob;
 let aliceId;
+let bobId;
 
 before(async () => {
   dir = mkdtempSync(join(tmpdir(), 'kapsule-hub-events-'));
@@ -26,8 +27,9 @@ before(async () => {
   const hashA = await argon2.hash('pass-alice', { type: argon2.argon2id });
   const hashB = await argon2.hash('pass-bob',   { type: argon2.argon2id });
   const resA = insertUser(db, { email: 'alice@ev.test', password_hash: hashA, role: 'superuser' });
-  insertUser(db, { email: 'bob@ev.test', password_hash: hashB, role: 'client' });
+  const resB = insertUser(db, { email: 'bob@ev.test', password_hash: hashB, role: 'client' });
   aliceId = resA.lastInsertRowid;
+  bobId = resB.lastInsertRowid;
 
   const loginA = await request.post('/api/auth/login').send({ email: 'alice@ev.test', password: 'pass-alice' });
   const loginB = await request.post('/api/auth/login').send({ email: 'bob@ev.test',   password: 'pass-bob' });
@@ -67,7 +69,7 @@ describe('POST /api/events', () => {
       .send({ name: 'Mariage Alice', event_date: '2026-09-01' });
     assert.equal(res.status, 201);
     assert.equal(res.body.name, 'Mariage Alice');
-    assert.equal(res.body.status, 'draft');
+    assert.equal(res.body.status, 'preview');
     assert.ok(res.body.id);
   });
 
@@ -198,14 +200,6 @@ describe('PUT /api/events/:eventId/status', () => {
     eventId = res.body.id;
   });
 
-  it('passe draft → preview', async () => {
-    const res = await request.put(`/api/events/${eventId}/status`)
-      .set(auth(tokenAlice))
-      .send({ status: 'preview' });
-    assert.equal(res.status, 200);
-    assert.equal(res.body.status, 'preview');
-  });
-
   it('passe preview → ready', async () => {
     const res = await request.put(`/api/events/${eventId}/status`)
       .set(auth(tokenAlice))
@@ -222,30 +216,21 @@ describe('PUT /api/events/:eventId/status', () => {
     assert.equal(res.body.status, 'preview');
   });
 
-  it('passe preview → draft', async () => {
-    const res = await request.put(`/api/events/${eventId}/status`)
-      .set(auth(tokenAlice))
-      .send({ status: 'draft' });
-    assert.equal(res.status, 200);
-    assert.equal(res.body.status, 'draft');
-  });
-
-  it('refuse une transition non manuelle (draft → loaded)', async () => {
+  it('refuse une transition non manuelle (preview → loaded)', async () => {
     const res = await request.put(`/api/events/${eventId}/status`)
       .set(auth(tokenAlice))
       .send({ status: 'loaded' });
     assert.equal(res.status, 400);
   });
 
-  it('refuse une transition non manuelle (draft → ready direct)', async () => {
+  it('refuse draft (statut supprimé)', async () => {
     const res = await request.put(`/api/events/${eventId}/status`)
       .set(auth(tokenAlice))
-      .send({ status: 'ready' });
+      .send({ status: 'draft' });
     assert.equal(res.status, 400);
   });
 
   it('gèle l\'édition si statut ≥ live (simule via DB)', async () => {
-    // Passer en ready puis simuler un statut live via registry directement
     const { getDb: db, updateEvent } = await import('../src/registry.js');
     updateEvent(db(), eventId, { status: 'live' });
 
@@ -254,14 +239,14 @@ describe('PUT /api/events/:eventId/status', () => {
       .send({ status: 'closed' });
     assert.equal(res.status, 409);
 
-    // Remettre en draft pour ne pas polluer les autres tests
-    updateEvent(db(), eventId, { status: 'draft' });
+    // Remettre en preview pour ne pas polluer les autres tests
+    updateEvent(db(), eventId, { status: 'preview' });
   });
 });
 
 // NOTE: PUT /api/events/:eventId/assign supprimé en 6C (token = événement, §11.20)
 
-// ── DELETE /api/events/:eventId — purge RGPD ─────────────────────────────────
+// ── DELETE /api/events/:eventId — suppression totale ─────────────────────────
 
 describe('DELETE /api/events/:eventId', () => {
   let eventId;
@@ -270,7 +255,7 @@ describe('DELETE /api/events/:eventId', () => {
   before(async () => {
     const res = await request.post('/api/events')
       .set(auth(tokenAlice))
-      .send({ name: 'Événement à purger' });
+      .send({ name: 'Événement à supprimer' });
     eventId = res.body.id;
     eventName = res.body.name;
   });
@@ -289,7 +274,16 @@ describe('DELETE /api/events/:eventId', () => {
     assert.equal(res.status, 403);
   });
 
-  it('purge l\'événement avec la confirmation exacte', async () => {
+  it('retourne 403 pour un client assigné (suppression réservée aux superusers)', async () => {
+    // Bob (client) est membre de l'événement → requireOwner passerait, mais requireAdmin doit bloquer
+    upsertEventUser(getDb(), { event_id: eventId, user_id: bobId, roles: ['admin_borne'] });
+    const res = await request.delete(`/api/events/${eventId}`)
+      .set(auth(tokenBob))
+      .send({ confirm: eventName });
+    assert.equal(res.status, 403);
+  });
+
+  it('supprime l\'événement avec la confirmation exacte', async () => {
     const res = await request.delete(`/api/events/${eventId}`)
       .set(auth(tokenAlice))
       .send({ confirm: eventName });
@@ -297,11 +291,10 @@ describe('DELETE /api/events/:eventId', () => {
     assert.equal(res.body.ok, true);
   });
 
-  it('l\'événement est marqué waiting après suppression', async () => {
-    // L'événement existe toujours en DB mais en statut waiting (purge manuelle)
+  it('l\'événement n\'existe plus en base après suppression totale', async () => {
+    // Suppression totale : la ligne registre est effacée → 404 (et non plus 'waiting')
     const res = await request.get(`/api/events/${eventId}`).set(auth(tokenAlice));
-    assert.equal(res.status, 200);
-    assert.equal(res.body.status, 'waiting');
+    assert.equal(res.status, 404);
   });
 });
 
@@ -406,11 +399,7 @@ describe('POST /api/sync/events/:id/config', () => {
       .set(auth(tokenAlice))
       .send({ name: 'Événement config' });
     eventId = res.body.id;
-
-    // Passe en ready pour que le token soit utilisable
-    await request.put(`/api/events/${eventId}/status`)
-      .set(auth(tokenAlice))
-      .send({ status: 'ready' });
+    // L'event démarre en preview — le contenu n'est pas encore gelé, on peut pusher une config.
 
     rawToken = 'cfg-test-token-' + eventId.slice(0, 8);
     const hash = createHash('sha256').update(rawToken).digest('hex');

@@ -528,6 +528,8 @@ describe('POST /api/sync/reset-preview', () => {
     const eventDir = join(dir, 'events', eventId);
     mkdirSync(join(eventDir, 'videos'), { recursive: true });
     const edb = createEventDb(join(eventDir, 'db.sqlite'));
+    // Plus de questions seedées par défaut → en créer une explicitement pour la FK videos.question_id
+    edb.prepare("INSERT INTO questions (id, text) VALUES (1, 'Q1')").run();
     edb.prepare("INSERT INTO sessions (id, guest_name, consent_at) VALUES ('s1','Alice',CURRENT_TIMESTAMP)").run();
     edb.prepare("INSERT INTO videos (id,session_id,question_id,question_text,filename,mime_type,size,checksum) VALUES ('v1','s1',1,'Q1','f.mp4','video/mp4',100,'abc')").run();
     // Crée un fichier vidéo fictif

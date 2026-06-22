@@ -49,11 +49,10 @@ const base = () => `/api/events/${eventId}/questions`;
 // ── GET /api/events/:eventId/questions ────────────────────────────────────────
 
 describe('GET /api/events/:eventId/questions', () => {
-  it('retourne 200 et les questions (seedées par défaut)', async () => {
+  it('retourne 200 et un tableau vide (aucune question par défaut)', async () => {
     const res = await request.get(base()).set(auth(token));
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.body));
-    assert.ok(res.body.length >= 4); // 4 questions seedées par createEventDb
   });
 
   it('retourne 401 sans token', async () => {
@@ -99,7 +98,7 @@ describe('POST /api/events/:eventId/questions', () => {
     updateEvent(getDb(), eventId, { status: 'live' });
     const res = await request.post(base()).set(auth(token))
       .send({ text: 'Q gelée ?' });
-    updateEvent(getDb(), eventId, { status: 'draft' });
+    updateEvent(getDb(), eventId, { status: 'preview' });
     assert.equal(res.status, 409);
   });
 });
@@ -137,7 +136,7 @@ describe('PUT /api/events/:eventId/questions/:id', () => {
     updateEvent(getDb(), eventId, { status: 'closed' });
     const res = await request.put(`${base()}/${qId}`).set(auth(token))
       .send({ text: 'Bloqué ?' });
-    updateEvent(getDb(), eventId, { status: 'draft' });
+    updateEvent(getDb(), eventId, { status: 'preview' });
     assert.equal(res.status, 409);
   });
 });
@@ -166,7 +165,7 @@ describe('PUT /api/events/:eventId/questions/reorder/batch', () => {
     updateEvent(getDb(), eventId, { status: 'pushed' });
     const res = await request.put(`${base()}/reorder/batch`).set(auth(token))
       .send({ order: [{ id: 1, order_index: 0 }] });
-    updateEvent(getDb(), eventId, { status: 'draft' });
+    updateEvent(getDb(), eventId, { status: 'preview' });
     assert.equal(res.status, 409);
   });
 });
@@ -199,7 +198,7 @@ describe('DELETE /api/events/:eventId/questions/:id', () => {
     const frozenId = createRes.body.id;
     updateEvent(getDb(), eventId, { status: 'live' });
     const res = await request.delete(`${base()}/${frozenId}`).set(auth(token));
-    updateEvent(getDb(), eventId, { status: 'draft' });
+    updateEvent(getDb(), eventId, { status: 'preview' });
     assert.equal(res.status, 409);
   });
 });

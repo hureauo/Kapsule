@@ -1,69 +1,37 @@
 ---
-status: tests-failed
-base_commit: 7447f21768e715b8fb91c2c88101712e89fd0d57
-workspaces: [@kapsule/hub-server, @kapsule/borne-web]
-generated_at: 2026-06-22T18:30:00Z
-verdict: COMMIT OK
-tested_at: 2026-06-22T20:33:32Z
-tested_commit: 7447f21768e715b8fb91c2c88101712e89fd0d57
+status: tests-passed
+base_commit: 2285e8cb951fbd3e7ad19eca7a17bd3d775e9ded
+workspaces: [@kapsule/hub-server, @kapsule/borne-server, @kapsule/core]
+generated_at: 2026-06-23T00:20:00Z
+verdict: COMMIT À CORRIGER
+tested_at: 2026-06-22T22:19:45Z
+tested_commit: 2285e8cb951fbd3e7ad19eca7a17bd3d775e9ded
 commits_since_review: 0
-smoke: non requis (pas de changement infra docker/compose/entrypoint)
 ---
 
 # Relais de review → tests
 
 Workspaces à tester :
-- @kapsule/hub-server (raison : routes/previewGallery.js — regex de validation videoId modifiée)
-- @kapsule/borne-web (raison : useMediaRecorder.js, RecordingScreen.jsx, StartScreen.jsx, GuestPage.jsx modifiés ; suite roles.test.js présente)
+- @kapsule/hub-server (raison : registry.js migration 8 + deleteJobsForEvent, routes/events.js DELETE total + provision à la création, sync.js STATUS_ORDER ; tests events/registry/sync/gallery/questions/worker.jobs/eventConfig adaptés)
+- @kapsule/borne-server (raison : tests questions.test.js + sync.routes.test.js adaptés — seed explicite des questions suite au retrait de DEFAULT_QUESTIONS)
+- @kapsule/core (raison : constants.js EVENT_STATUS/STATUS_ORDER — suppression de draft ; core.test.js adapté)
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- previewGallery : confirmer que `GET /preview-videos/:videoId/file` accepte désormais un videoId UUID (ex. `3f8a1c2e-...`) et renvoie 400 sur un id non-hex ou contenant `/`, `.`, `%` (anti-traversal avant interpolation dans l'URL upstream). L'ancienne regex `^\d+$` rejetait tous les UUID réels (videos.id = uuidv4, TEXT PK) → la route preview/file était cassée pour 100 % des vidéos.
-- borne-web : vérifier que `useMediaRecorder` ré-initialise `accumulatedBytes`/`streamSettings` à chaque reset/discard/start, et que le cycle start(0)+requestData() produit toujours un blob non vide sur onstop (jsdom/mock MediaRecorder).
+- Migration 8 (remove_draft_status) : vérifier idempotence (re-run sur DB déjà migrée → no-op via le garde `'draft'` dans currentCheck) et que preview_desired survit à la reconstruction de table (réajout par ALTER après le rebuild).
+- DELETE total : après suppression, GET /api/events/:id → 404 (plus de ligne 'waiting'). Vérifier que box_tokens/event_users/event_versions partent par CASCADE et que jobs est bien vidé (deleteJobsForEvent), et que la trace sync_log 'delete' (event_id orphelin, sans PII) subsiste.
+- Ordre middlewares DELETE : client assigné → 403 (requireAdmin), event inexistant → 404 (requireOwner avant requireAdmin).
+- Provision à la création : POST /api/events crée l'event en statut 'preview' (plus 'draft') et déclenche startPreview (best-effort, ne doit pas faire échouer le 201 si Docker indispo).
+- Retrait DEFAULT_QUESTIONS : confirmer qu'aucun test n'insère encore une video avec question_id pointant une question seedée disparue (FK videos.question_id), côté hub et borne.
+
+## Résultats des tests
+
+- @kapsule/core : 18 tests, 18 ok, 0 échec (wall: 1s)
+- @kapsule/hub-server : 324 tests, 324 ok, 0 échec (wall: 26s)
+- @kapsule/borne-server : 225 tests, 225 ok, 0 échec (wall: 67s)
+- Smoke : non requis (pas de changement infra — aucun docker-compose*.yml, docker/*.conf, Dockerfile, ni routes preview touchés)
 
 ## Corrections demandées
 
-Aucune correction requise.
-
-## Échecs
-
-### @kapsule/hub-server — previewGallery.test.js
-
-Suite : `GET /api/events/:eventId/preview-videos/:videoId/file — proxy flux`
-Fichier : `/app/apps/hub/server/test/previewGallery.test.js`
-
-- sous-test 2 — `proxifie le flux vidéo (200)` (ligne 205) :
-  `Expected values to be strictly equal: 400 !== 200`
-  `AssertionError [ERR_ASSERTION]: operator: strictEqual, expected: 200, actual: 400`
-
-- sous-test 3 — `proxifie le Range entrant et renvoie 206` (ligne 214) :
-  `Expected values to be strictly equal: 400 !== 206`
-  `AssertionError [ERR_ASSERTION]: operator: strictEqual, expected: 206, actual: 400`
-
-- sous-test 4 — `renvoie 503 si la borne est hors ligne` (ligne 223) :
-  `Expected values to be strictly equal: 400 !== 503`
-  `AssertionError [ERR_ASSERTION]: operator: strictEqual, expected: 503, actual: 400`
-
-La route renvoie systématiquement 400, quel que soit le cas de test — le videoId UUID passé dans les tests est rejeté par la validation dans `previewGallery.js`.
-
-### @kapsule/hub-server — provisioner.test.js
-
-Suite : `deprovisionPreview`
-Fichier : `/app/apps/hub/server/test/provisioner.test.js`
-
-- sous-test 1 — `supprime le frontend et le backend` (ligne 128) :
-  `TypeError: docker.volumeRm is not a function`
-  `stack: deprovisionPreview (provisioner.js:235:16)`
-
-- sous-test 2 — `supprime le réseau isolé` (ligne 137) :
-  `TypeError: docker.volumeRm is not a function`
-  `stack: deprovisionPreview (provisioner.js:235:16)`
-
-- sous-test 3 — `ne plante pas si containers et réseau absents` (ligne 145) :
-  `AssertionError: Got unwanted rejection. Actual message: "docker.volumeRm is not a function"`
-  `stack: deprovisionPreview (provisioner.js:235:16)`
-
-- sous-test 4 — `révoque le token preview en base` (ligne 150) :
-  `TypeError: docker.volumeRm is not a function`
-  `stack: deprovisionPreview (provisioner.js:235:16)`
-
-`deprovisionPreview` appelle `docker.volumeRm` (ligne 235 de `provisioner.js`) qui n'existe pas dans le mock/stub `dockerCli` utilisé par les tests.
+- [x] ⚠️ `PROJET.md` (§2 cycle de vie ~l.45-58, §5 schéma events ~l.342-343, §7 endpoints ~l.461-464) — doc contractuelle devenue fausse : le statut `draft` est supprimé (events créés directement en `preview`, provision Docker à la création), `POST /api/events` ne seed plus de questions par défaut, et `DELETE /api/events/:id` n'est plus une « purge RGPD » laissant la ligne en `waiting` mais une **suppression totale** réservée aux superusers. Mettre à jour : diagramme du cycle de vie, liste des transitions manuelles (plus de `draft↔preview`), CHECK du schéma `events` (sans `draft`), description de `POST /api/events` et de `DELETE`. → FAIT : §2 (cycle `preview → … → waiting`, états Hub sans `draft`, `preview` = statut initial, `waiting`/suppression totale), §5.2 (plus de seed questions), §5.3 (CHECK sans `draft` + note RGPD suppression totale), §6 (POST borne sans seed), §7 (POST=`preview`+provision+superuser, transitions `preview↔ready` seulement, DELETE total + chaîne d'auth), §13 timeline + emplacement du bouton suppression.
+- [x] ⚠️ `apps/hub/web/src/pages/AdminPage.jsx:354` et `:460` — les deux blocs `event-panel__section` portent le même commentaire `{/* Bloc actions sur l'événement */}` alors que le premier expose « Paramètres de l'évenement » (lien Configurer) et le second « Actions » (bouton Supprimer). Commentaire trompeur + faute d'orthographe « évenement » dans le label visible. Corriger commentaire + label. → FAIT : commentaires distincts (« Bloc configuration » / « Bloc actions destructives »), label corrigé « Paramètres de l'événement ».
+- [x] 💡 `registry.js` migration 7 — commentaire devenu trompeur (« preview ne tourne que sur action explicite, pas dès la création ») : ajout d'une note précisant que depuis le retrait de `draft`, `POST /api/events` provisionne dès la création.

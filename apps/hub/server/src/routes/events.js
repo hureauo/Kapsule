@@ -14,7 +14,7 @@ import { requireUser, requireOwner } from '../middleware/auth.js';
 import { startPreview, deprovisionPreview, slugFor, dockerCli } from '../preview/provisioner.js';
 import { triggerPreviewPull } from './previewGallery.js';
 import { captureSnapshot, resolveAuthor } from '../versioning.js';
-import { deleteEventVersions } from '../registry.js';
+import { deleteEventVersions, deleteEvent, deleteJobsForEvent } from '../registry.js';
 
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'superuser') return res.status(403).json({ error: 'Réservé aux admins' });
@@ -32,8 +32,7 @@ function isStatusFrozen(status)  { return STATUS_FROZEN.has(status); }
 
 // Transitions manuelles Hub : depuis chaque statut, les statuts cibles autorisés (§2)
 const MANUAL_TRANSITIONS = new Map([
-  ['draft',   new Set(['preview'])],
-  ['preview', new Set(['draft', 'ready'])],
+  ['preview', new Set(['ready'])],
   ['ready',   new Set(['preview'])],
 ]);
 
@@ -82,8 +81,16 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
         upsertEventUser(db, { event_id: id, user_id: su.id, roles: ['admin_borne', 'tech_borne', 'general'] });
       }
 
-      // Initialise db.sqlite avec le schéma + 4 questions par défaut
+      // Initialise db.sqlite avec le schéma
       openEventDb(id, dataDir);
+
+      // Provision automatique de la borne preview dès la création (statut démarre en preview)
+      try {
+        await startPreview(id, docker, dataDir);
+        updateEvent(db, id, { preview_desired: 'running' });
+      } catch (err) {
+        console.error('[preview/start] échec au provisionnement initial pour', id, err.message);
+      }
 
       res.status(201).json(getEvent(db, id));
     } catch (err) {
@@ -153,22 +160,12 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       const allowed = MANUAL_TRANSITIONS.get(event.status);
       if (!allowed || !allowed.has(status)) {
         return res.status(400).json({
-          error: `Transition non autorisée : ${event.status} → ${status}. Transitions manuelles : draft↔preview, preview↔ready.`,
+          error: `Transition non autorisée : ${event.status} → ${status}. Transitions manuelles : preview↔ready.`,
         });
       }
 
       const db = getDb();
       updateEvent(db, event.id, { status });
-
-      // draft → preview : lancer la borne d'essai si elle n'existe pas encore
-      if (event.status === 'draft' && status === 'preview') {
-        try {
-          await startPreview(event.id, docker, dataDir);
-          updateEvent(db, event.id, { preview_desired: 'running' });
-        } catch (err) {
-          console.error('[preview/start] échec au passage en preview pour', event.id, err.message);
-        }
-      }
 
       // preview → ready : éteindre la borne d'essai (container stoppé, données conservées)
       if (event.status === 'preview' && status === 'ready') {
@@ -358,8 +355,11 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
     }
   });
 
-  // ── DELETE /api/events/:eventId — purge RGPD ──────────────────────────────
-  router.delete('/:eventId', requireUser, requireOwner, async (req, res, next) => {
+  // ── DELETE /api/events/:eventId — suppression totale (données + container + ligne registre) ──
+  // Réservé aux superusers (requireAdmin) : action destructive et irréversible.
+  // requireOwner reste dans la chaîne pour résoudre req.event (et renvoyer 404 si absent)
+  // avant la vérification de rôle.
+  router.delete('/:eventId', requireUser, requireOwner, requireAdmin, async (req, res, next) => {
     try {
       const event = req.event;
       const { confirm } = req.body;
@@ -380,11 +380,15 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       rmSync(eventDir, { recursive: true, force: true });
 
       const db = getDb();
+      // Journaliser AVANT de supprimer la ligne (sync_log.event_id n'a pas de FK,
+      // mais on garde l'ordre logique : trace écrite tant que l'event existe encore).
+      insertSyncLog(db, { event_id: event.id, action: 'delete', detail: { name: event.name } });
+      // Suppression totale : versions + jobs + ligne registre.
+      // box_tokens / event_users / event_versions ont ON DELETE CASCADE sur events(id),
+      // donc deleteEvent suffit pour eux ; deleteEventVersions reste explicite par sûreté.
       deleteEventVersions(db, event.id);
-      // status waiting + preview_desired stopped : l'event purgé ne doit pas être
-      // réconcilié au prochain vps-up (sinon on relancerait une preview fantôme).
-      updateEvent(db, event.id, { status: 'waiting', preview_desired: 'stopped' });
-      insertSyncLog(db, { event_id: event.id, action: 'purge', detail: { name: event.name } });
+      deleteJobsForEvent(db, event.id);
+      deleteEvent(db, event.id);
 
       res.json({ ok: true });
     } catch (err) {
