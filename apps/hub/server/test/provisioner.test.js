@@ -11,17 +11,21 @@ import { closeAllEventDbs } from '../src/eventStore.js';
 
 // ── Mock docker client ─────────────────────────────────────────────────────────
 
-function makeMockDocker({ existsResult = false, networkExistsResult = false } = {}) {
-  const calls = { run: [], rm: [], exists: [], networkCreate: [], networkConnect: [], networkRm: [], networkExists: [] };
+function makeMockDocker({ existsResult = false, networkExistsResult = false, runningResult = false } = {}) {
+  const calls = { run: [], rm: [], exists: [], networkCreate: [], networkConnect: [], networkRm: [], networkExists: [], volumeRm: [], running: [], start: [], stop: [] };
   return {
     calls,
     async run(args)                    { calls.run.push(args); },
     async rm(name)                     { calls.rm.push(name); },
     async exists(name)                 { calls.exists.push(name); return existsResult; },
+    async running(name)                { calls.running.push(name); return runningResult; },
+    async start(name)                  { calls.start.push(name); },
+    async stop(name)                   { calls.stop.push(name); },
     async networkCreate(name)          { calls.networkCreate.push(name); },
     async networkConnect(net, ctr)     { calls.networkConnect.push({ net, ctr }); },
     async networkRm(name)              { calls.networkRm.push(name); },
     async networkExists(name)          { calls.networkExists.push(name); return networkExistsResult; },
+    async volumeRm(name)               { calls.volumeRm.push(name); },
   };
 }
 

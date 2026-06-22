@@ -153,6 +153,7 @@ export default function RecordingScreen({
 
   if (subState === S.INTRO) {
     const cameraReady = recorder.status === REC_STATUS.READY;
+    const si = recorder.streamSettings;
     return (
       <div className="screen screen--recording">
         <h2 className="rec__question">{question.text}</h2>
@@ -173,6 +174,12 @@ export default function RecordingScreen({
             />
           )}
         </div>
+        {cameraReady && (
+          <div style={{ fontSize: '11px', fontFamily: 'monospace', textAlign: 'center', opacity: 0.7, margin: '4px 0' }}>
+            {si?.width && si?.height ? `${si.width}×${si.height}${si.frameRate ? ` · ${si.frameRate}fps` : ''}` : '?×?'}
+            {` · ${recorder.mimeType.split(';')[0].replace('video/', '')}`}
+          </div>
+        )}
         <div className="rec__actions">
           <button
             className="btn btn--record btn--large"
@@ -201,12 +208,15 @@ export default function RecordingScreen({
 
   if (subState === S.RECORDING) {
     const progress = (recorder.duration / (question.max_duration ?? 60));
+    const s = recorder.streamSettings;
+    const resText = (s && s.width && s.height) ? `${s.width}×${s.height}` : null;
     return (
       <div className="screen screen--recording">
         <h2 className="rec__question">{question.text}</h2>
         <div className="rec__live-indicator" aria-live="polite">
           <span className="rec__dot rec__dot--blink" aria-hidden="true" /> REC
           &nbsp;&nbsp;{formatDuration(recorder.duration)}
+          {resText && <>&nbsp;&nbsp;<span style={{ fontSize: '11px', opacity: 0.85, fontFamily: 'monospace' }}>{resText}</span></>}
         </div>
         {/* Caméra live pendant l'enregistrement — l'invité se voit (V2.6).
             playsInline + muted obligatoires pour Safari (invariant §11.5). */}

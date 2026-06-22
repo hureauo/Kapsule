@@ -176,8 +176,8 @@ export default function GuestPage({ isPreview = false }) {
   // dépendance circulaire dans resetIdleTimer (qui est un useCallback stable).
   const handleRestartRef = useRef(null);
 
-  const loadEvent = useCallback(async () => {
-    setScreen(S.LOADING);
+  const loadEvent = useCallback(async (silent = false) => {
+    if (!silent) setScreen(S.LOADING);
     try {
       const [evtData, qData] = await Promise.all([api.getEvent(), api.getQuestions()]);
       setEvent(evtData);
@@ -227,7 +227,7 @@ export default function GuestPage({ isPreview = false }) {
   const POLLABLE_SCREENS = new Set([S.START, S.LOGIN]);
   useEffect(() => {
     if (!isPreview || !POLLABLE_SCREENS.has(screen)) return;
-    const id = setInterval(loadEvent, 3000);
+    const id = setInterval(() => loadEvent(true), 3000);
     return () => clearInterval(id);
   }, [isPreview, screen, loadEvent]);
 

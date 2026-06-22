@@ -40,11 +40,15 @@ export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAUL
   const [blobUrl, setBlobUrl] = useState(null);
   const [mimeType] = useState(() => detectMimeType());
 
-  const streamRef   = useRef(null);   // MediaStream (caméra)
-  const recorderRef = useRef(null);   // MediaRecorder
-  const chunksRef   = useRef([]);     // chunks collectés
-  const timerRef    = useRef(null);   // setInterval du chrono
-  const durationRef = useRef(0);      // copie ref pour le callback timer (closure)
+  const [accumulatedBytes, setAccumulatedBytes] = useState(0);  // octets encodés (chunks)
+  const [streamSettings, setStreamSettings]     = useState(null); // résolution/fps effective
+
+  const streamRef        = useRef(null);
+  const recorderRef      = useRef(null);
+  const chunksRef        = useRef([]);
+  const timerRef         = useRef(null);
+  const durationRef      = useRef(0);
+  const accBytesRef      = useRef(0); // copie ref pour le handler ondataavailable
 
   // Libère le stream caméra et arrête le chrono
   const releaseStream = useCallback(() => {
@@ -76,6 +80,9 @@ export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAUL
     setBlob(null);
     setDuration(0);
     durationRef.current = 0;
+    setAccumulatedBytes(0);
+    accBytesRef.current = 0;
+    setStreamSettings(null);
     setError(null);
     setStatus(REC_STATUS.IDLE);
   }, [releaseStream, revokeBlobUrl]);
@@ -95,6 +102,15 @@ export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAUL
         audio: true,
       });
       streamRef.current = stream;
+      // Lire la résolution et le codec effectifs que le navigateur a accordés.
+      // getSettings() est synchrone une fois le stream actif.
+      const vTrack = stream.getVideoTracks()[0];
+      if (vTrack) {
+        const s = vTrack.getSettings();
+        const settings = { width: s.width, height: s.height, frameRate: s.frameRate ? Math.round(s.frameRate) : null };
+
+        setStreamSettings(settings);
+      }
       setStatus(REC_STATUS.READY);
     } catch (e) {
       // Messages distincts selon l'origine du refus (spec §8 — important pour l'invité)
@@ -120,6 +136,8 @@ export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAUL
     setBlob(null);
     setDuration(0);
     durationRef.current = 0;
+    setAccumulatedBytes(0);
+    accBytesRef.current = 0;
 
     const recorder = new MediaRecorder(streamRef.current, {
       mimeType,
@@ -128,7 +146,12 @@ export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAUL
     });
 
     recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+      if (e.data && e.data.size > 0) {
+        chunksRef.current.push(e.data);
+        accBytesRef.current += e.data.size;
+        setAccumulatedBytes(accBytesRef.current);
+
+      }
     };
 
     recorder.onstop = () => {
@@ -141,20 +164,23 @@ export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAUL
       setStatus(REC_STATUS.STOPPED);
     };
 
-    recorder.start(1000); // chunks de 1 s : robustesse en cas de crash
+    // start(0) = pas d'interval natif ; on appelle requestData() depuis le timer
+    // pour forcer un flush toutes les secondes (Chrome ignore start(1000)).
+    recorder.start(0);
     recorderRef.current = recorder;
     setStatus(REC_STATUS.RECORDING);
 
-    // Chrono + auto-stop : accès direct aux refs pour éviter une dépendance cyclique
-    // entre startRecording et stopRecording dans useCallback.
-    // setStatus(STOPPED) est géré par onstop (asynchrone) pour garantir blob disponible.
     timerRef.current = setInterval(() => {
       durationRef.current += 1;
       setDuration(durationRef.current);
+      // Flush forcé : récupère les données encodées depuis le dernier appel
+      if (recorderRef.current && recorderRef.current.state === 'recording') {
+        recorderRef.current.requestData();
+      }
       if (durationRef.current >= maxDuration) {
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
         if (recorderRef.current && recorderRef.current.state !== 'inactive') {
-          recorderRef.current.stop(); // onstop positionne STOPPED après avoir produit le blob
+          recorderRef.current.stop();
         }
       }
     }, 1000);
@@ -181,6 +207,8 @@ export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAUL
     setBlob(null);
     setDuration(0);
     durationRef.current = 0;
+    setAccumulatedBytes(0);
+    accBytesRef.current = 0;
     setError(null);
     // Retour à READY si le stream est toujours actif, sinon IDLE
     setStatus(streamRef.current ? REC_STATUS.READY : REC_STATUS.IDLE);
@@ -204,6 +232,7 @@ export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAUL
     blob,
     blobUrl,
     mimeType,
+    streamSettings,    // { width, height, frameRate } effectifs accordés par le navigateur
     // Actions
     requestPermission,
     startRecording,

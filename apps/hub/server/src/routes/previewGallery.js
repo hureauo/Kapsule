@@ -157,7 +157,7 @@ export function makePreviewGalleryRouter({ resolveBase } = {}) {
   router.get('/preview-videos/:videoId/file', async (req, res, next) => {
     const { eventId, videoId } = req.params;
     // Valider le format avant interpolation dans l'URL upstream
-    if (!/^\d+$/.test(videoId)) {
+    if (/[/\\%.]/.test(videoId) || videoId.length > 64) {
       return res.status(400).json({ error: 'videoId invalide' });
     }
     try {

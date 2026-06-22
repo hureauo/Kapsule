@@ -1,5 +1,5 @@
 import React from 'react';
-import { VIDEO_QUALITY, mbPerMinFromKey } from '@kapsule/core';
+import { VIDEO_QUALITY } from '@kapsule/core';
 
 // welcome_title / welcome_subtitle viennent de GET /event (déjà résolus avec
 // leurs fallbacks dynamiques par le serveur — voir design/parcours-invite.md §11).
@@ -29,7 +29,7 @@ export default function StartScreen({ event, onStart, onQualityChange }) {
           >
             {Object.entries(VIDEO_QUALITY).map(([key, q]) => (
               <option key={key} value={key}>
-                {q.label} — {q.width}×{q.height} · ≈{mbPerMinFromKey(key)} Mo/min
+                {q.label} — {q.width}×{q.height}
               </option>
             ))}
           </select>

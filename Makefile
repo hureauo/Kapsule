@@ -77,7 +77,12 @@ local-up: ## Lance le Hub en mode dev local (https://kapsule.localhost)
 local-down: ## Coupe le Hub dev local
 	$(COMPOSE_HUB_DEV) down --remove-orphans
 
-local-restart: ## Recharge le Hub dev local sans perdre les données (down + up)
+local-restart: ## Recharge le Hub dev local sans perdre les données (down + rebuild previews + up + réconciliation)
+	@echo "→ suppression des conteneurs + réseaux preview (recréés par reconcile)"
+	@docker ps -aq --filter "name=preview-" | xargs -r docker rm -f
+	@docker network ls --filter "name=preview-net-" -q | xargs -r docker network rm 2>/dev/null || true
+	@echo "→ rebuild images borne preview"
+	$(COMPOSE_PREVIEW) build --no-cache
 	@echo "→ restart Hub dev local"
 	$(COMPOSE_HUB_DEV) down --remove-orphans
 	@[ -f docker/certs/fullchain.pem ] || { \
@@ -85,16 +90,32 @@ local-restart: ## Recharge le Hub dev local sans perdre les données (down + up)
 		exit 1; \
 	}
 	$(COMPOSE_HUB_DEV) up -d --build --remove-orphans
+	@echo "→ réconciliation des previews (reprovisionne avec les nouvelles images)"
+	$(COMPOSE_HUB_DEV) run --rm backend npm run reconcile-previews
 	@echo "✓ Hub dev redémarré sur https://kapsule.localhost"
 
-local-reset: ## ⚠️  Reset volumes + réseaux Hub dev (DESTRUCTIF — jamais en prod)
+local-reset: ## ⚠️  Reset complet dev local : stop tout, rebuild images (Hub + preview), relance (DESTRUCTIF)
 	@echo "⚠️  Reset destructif des données Hub dev (volumes + réseaux)."
 	@printf "    Confirmer ? [y/N] " && read ans && [ "$$ans" = "y" ]
+	@echo "→ arrêt Hub dev + suppression volumes"
 	$(COMPOSE_HUB_DEV) down -v --remove-orphans
+	@echo "→ suppression des conteneurs + réseaux preview"
 	@docker ps -aq --filter "name=preview-" | xargs -r docker rm -f
 	@docker network ls --filter "name=preview-net-" -q | xargs -r docker network rm 2>/dev/null || true
 	@docker network rm $(HUB_NET) 2>/dev/null || true
-	@echo "✓ volumes et réseaux réinitialisés"
+	@echo "→ rebuild images Hub dev"
+	$(COMPOSE_HUB_DEV) build
+	@echo "→ rebuild images borne preview (backend + frontend)"
+	$(COMPOSE_PREVIEW) build --no-cache
+	@echo "→ démarrage Hub dev"
+	@[ -f docker/certs/fullchain.pem ] || { \
+		echo "  ✗ docker/certs/fullchain.pem absent — lance d'abord : make local-dev-environment"; \
+		exit 1; \
+	}
+	$(COMPOSE_HUB_DEV) up -d --remove-orphans
+	@echo "→ réconciliation des previews (redémarre celles marquées actives en base)"
+	$(COMPOSE_HUB_DEV) run --rm backend npm run reconcile-previews
+	@echo "✓ reset + rebuild terminés — Hub disponible sur https://kapsule.localhost"
 
 ## ── Tests / dev (NE PAS utiliser en prod) ─────────────────────────────────────
 
