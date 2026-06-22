@@ -74,6 +74,9 @@ export default function RegisterPage() {
             Mot de passe
             <input
               type="password"
+              name="new-password"
+              id="register-password"
+              autoComplete="new-password"
               className="hub-input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -86,6 +89,9 @@ export default function RegisterPage() {
             Confirmer le mot de passe
             <input
               type="password"
+              name="confirm-password"
+              id="register-confirm"
+              autoComplete="new-password"
               className="hub-input"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}

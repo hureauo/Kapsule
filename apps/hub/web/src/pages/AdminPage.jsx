@@ -786,9 +786,11 @@ function UsersTab() {
       {error && <p className="error-msg">{error}</p>}
 
       <form onSubmit={handleCreate} className="create-user-form">
-        <input type="email" className="hub-input hub-input--sm" placeholder="Email" value={email}
+        {/* autoComplete=off : l'admin crée un compte pour un tiers — ne pas proposer
+            ni enregistrer sa propre adresse dans le trousseau du navigateur. */}
+        <input type="email" autoComplete="off" className="hub-input hub-input--sm" placeholder="Email" value={email}
           onChange={(e) => setEmail(e.target.value)} required />
-        <input type="text" className="hub-input hub-input--sm" placeholder="Nom (optionnel)" value={name}
+        <input type="text" autoComplete="off" className="hub-input hub-input--sm" placeholder="Nom (optionnel)" value={name}
           onChange={(e) => setName(e.target.value)} />
         <button type="submit" className="btn btn--primary btn--sm" disabled={creating || !email.trim()}>
           {creating ? 'Création…' : '+ Créer'}
