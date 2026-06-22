@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api, clearToken, getRole } from '../api/client.js';
-import { DEFAULTS, THEMES, TEXT_FIELDS } from '@kapsule/core';
+import { DEFAULTS, THEMES, TEXT_FIELDS, VIDEO_QUALITY, DEFAULT_VIDEO_QUALITY, mbPerMinFromKey } from '@kapsule/core';
 import QuestionEditor from '../components/QuestionEditor.jsx';
 import SyncStatus from '../components/SyncStatus.jsx';
 import VideoGallery from '../components/VideoGallery.jsx';
@@ -40,9 +40,11 @@ function getMeta(event, key, fallback = '') {
 }
 
 // ── Onglet Design ─────────────────────────────────────────────────────────────
+
 function DesignTab({ event, frozen, onSaved }) {
   const meta = event?.meta ?? {};
   const [theme, setTheme] = useState(meta.theme ?? DEFAULTS.THEME);
+  const [videoQuality, setVideoQuality] = useState(meta.video_quality ?? DEFAULT_VIDEO_QUALITY);
   const [texts, setTexts] = useState(() => {
     const t = {};
     for (const key of Object.keys(TEXT_FIELDS)) t[key] = meta[key] ?? '';
@@ -58,6 +60,7 @@ function DesignTab({ event, frozen, onSaved }) {
   useEffect(() => {
     const m = event?.meta ?? {};
     setTheme(m.theme ?? DEFAULTS.THEME);
+    setVideoQuality(m.video_quality ?? DEFAULT_VIDEO_QUALITY);
     const t = {};
     for (const key of Object.keys(TEXT_FIELDS)) t[key] = m[key] ?? '';
     setTexts(t);
@@ -69,7 +72,7 @@ function DesignTab({ event, frozen, onSaved }) {
     setSaving(true);
     setSaveMsg('');
     try {
-      await api.updateEvent(event.id, { theme, idle_timeout: idleTimeout, ...texts });
+      await api.updateEvent(event.id, { theme, idle_timeout: idleTimeout, video_quality: videoQuality, ...texts });
       setSaveMsg('Sauvegardé.');
       onSaved();
     } catch (err) {
@@ -107,6 +110,27 @@ function DesignTab({ event, frozen, onSaved }) {
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="panel-section">
+          <h3 className="panel-section__title">Qualité vidéo</h3>
+          <label className="field-label">
+            Preset d'enregistrement
+            <select
+              className="hub-input hub-input--sm"
+              value={videoQuality}
+              onChange={(e) => setVideoQuality(e.target.value)}
+              disabled={frozen}
+            >
+              {Object.entries(VIDEO_QUALITY).map(([key, q]) => (
+                <option key={key} value={key}>{q.label} — {q.width}×{q.height} · {(q.videoBitrate / 1e6).toFixed(1)} Mbps</option>
+              ))}
+            </select>
+          </label>
+          <p className="text--muted" style={{ fontSize: '13px', marginTop: '6px' }}>
+            ≈ {mbPerMinFromKey(videoQuality)} Mo/min par vidéo
+            {VIDEO_QUALITY[videoQuality] && ` · résolution ${VIDEO_QUALITY[videoQuality].width}×${VIDEO_QUALITY[videoQuality].height}`}
+          </p>
         </section>
 
         <section className="panel-section">

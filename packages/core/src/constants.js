@@ -61,6 +61,26 @@ export const DEFAULTS = {
   THANKS_TEXT: 'Votre témoignage a bien été enregistré.',
 };
 
+// ── Qualité vidéo ────────────────────────────────────────────────────────────
+// Presets nommés → couples (résolution, bitrate) utilisés par MediaRecorder côté
+// kiosque et validés côté Hub + borne. Source unique pour éviter les désynchronisations.
+// videoBitrate en bits/s ; AUDIO_BITRATE en bits/s (commun à tous les presets).
+export const VIDEO_QUALITY = {
+  eco:      { label: 'Éco',      width: 854,  height: 480,  videoBitrate: 1_000_000 },
+  standard: { label: 'Standard', width: 1280, height: 720,  videoBitrate: 2_500_000 },
+  haute:    { label: 'Haute',    width: 1280, height: 720,  videoBitrate: 4_000_000 },
+  max:      { label: 'Maximale', width: 1920, height: 1080, videoBitrate: 6_000_000 },
+};
+export const DEFAULT_VIDEO_QUALITY = 'standard';
+export const AUDIO_BITRATE = 96_000;
+
+// Retourne l'estimation de consommation mémoire en Mo/min pour un preset donné.
+export function mbPerMinFromKey(qualityKey) {
+  const q = VIDEO_QUALITY[qualityKey];
+  if (!q) return null;
+  return ((q.videoBitrate + AUDIO_BITRATE) / 8 / 1e6 * 60).toFixed(1);
+}
+
 // Longueur max d'un champ texte du parcours (garde-fou anti-payload abusif).
 export const TEXT_FIELD_MAX = 2000;
 

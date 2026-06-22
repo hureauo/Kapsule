@@ -1,7 +1,7 @@
-import { THEMES, TEXT_FIELDS } from '@kapsule/core';
+import { THEMES, TEXT_FIELDS, VIDEO_QUALITY } from '@kapsule/core';
 
 // Clés event_meta gérées par applyEventConfig — source unique pour les routes config.
-export const META_KEYS = ['theme', 'idle_timeout', ...Object.keys(TEXT_FIELDS)];
+export const META_KEYS = ['theme', 'idle_timeout', 'video_quality', ...Object.keys(TEXT_FIELDS)];
 
 /**
  * Applique meta + questions sur une event DB ouverte.
@@ -26,6 +26,9 @@ export function applyEventConfig(edb, { mode, meta, questions }) {
         if (existing && existing.trim() !== '') continue;
       }
       if (key === 'theme' && !THEMES.includes(meta[key])) continue;
+      // video_quality est aussi validé en amont dans la route PUT /:eventId (→ 400).
+      // Ce skip silencieux protège les imports/push directs qui contournent la route.
+      if (key === 'video_quality' && !Object.keys(VIDEO_QUALITY).includes(meta[key])) continue;
       upsert.run(key, String(meta[key]));
     }
   }

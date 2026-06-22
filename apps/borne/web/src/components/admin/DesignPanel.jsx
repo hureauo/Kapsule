@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api/client.js';
-import { TEXT_FIELDS } from '@kapsule/core';
+import { TEXT_FIELDS, VIDEO_QUALITY, mbPerMinFromKey } from '@kapsule/core';
 
 const THEME_OPTIONS = [
   { value: 'cute',   label: '🫧 Cutealism', hint: 'Doux, coloré, rassurant (défaut)' },
@@ -22,6 +22,9 @@ export default function DesignPanel() {
   const [theme, setTheme] = useState(null);
   const [themeSaving, setThemeSaving] = useState(false);
   const [themeError, setThemeError] = useState('');
+  const [videoQuality, setVideoQuality] = useState(null);
+  const [qualitySaving, setQualitySaving] = useState(false);
+  const [qualityError, setQualityError] = useState('');
   const [texts, setTexts] = useState({});
   const [textsSaving, setTextsSaving] = useState(false);
   const [textsError, setTextsError] = useState('');
@@ -35,6 +38,7 @@ export default function DesignPanel() {
       const evt = await api.getEvent();
       setActiveEvent(evt);
       setTheme(evt.theme ?? 'cute');
+      setVideoQuality(evt.video_quality ?? 'standard');
       const initialTexts = {};
       for (const key of Object.keys(TEXT_FIELDS)) {
         initialTexts[key] = evt[key] ?? '';
@@ -67,6 +71,22 @@ export default function DesignPanel() {
       setThemeError(err.message);
     } finally {
       setThemeSaving(false);
+    }
+  }
+
+  async function handleSelectQuality(value) {
+    if (!value || value === videoQuality) return;
+    const previous = videoQuality;
+    setVideoQuality(value);
+    setQualitySaving(true);
+    setQualityError('');
+    try {
+      await api.setVideoQuality(value);
+    } catch (err) {
+      setVideoQuality(previous);
+      setQualityError(err.message);
+    } finally {
+      setQualitySaving(false);
     }
   }
 
@@ -121,6 +141,29 @@ export default function DesignPanel() {
           ))}
         </div>
         {themeError && <p className="text--error">{themeError}</p>}
+      </section>
+
+      <section className="panel-section">
+        <h2 className="panel-section__title">
+          Qualité d'enregistrement
+          <span className="panel-section__hint"> — override local borne</span>
+        </h2>
+        <div className="quality-picker">
+          <select
+            value={videoQuality ?? ''}
+            onChange={(e) => handleSelectQuality(e.target.value)}
+            disabled={qualitySaving}
+            className="admin-input admin-input--select"
+          >
+            {Object.entries(VIDEO_QUALITY).map(([key, q]) => (
+              <option key={key} value={key}>
+                {q.label} — {q.width}×{q.height} · ≈{mbPerMinFromKey(key)} Mo/min
+              </option>
+            ))}
+          </select>
+          {qualitySaving && <span className="text--muted" style={{ marginLeft: '0.5rem' }}>Enregistrement…</span>}
+        </div>
+        {qualityError && <p className="text--error">{qualityError}</p>}
       </section>
 
       <section className="panel-section">

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api, getGeneralToken, saveGeneralToken } from '../api/client.js';
+import { api, getGeneralToken, saveGeneralToken, setVideoQualityPublic } from '../api/client.js';
 import { DEFAULTS } from '@kapsule/core';
 import StartScreen from '../components/guest/StartScreen.jsx';
 import NameInput from '../components/guest/NameInput.jsx';
@@ -413,7 +413,16 @@ export default function GuestPage({ isPreview = false }) {
         />
       )}
 
-      {screen === S.START && <StartScreen event={event} onStart={handleStart} />}
+      {screen === S.START && (
+        <StartScreen
+          event={event}
+          onStart={handleStart}
+          onQualityChange={isPreview ? async (key) => {
+            await setVideoQualityPublic(key).catch(() => {});
+            loadEvent(); // recharge event pour que video_quality soit à jour avant le REC
+          } : undefined}
+        />
+      )}
 
       {screen === S.NAME && (
         <NameInput
@@ -437,6 +446,7 @@ export default function GuestPage({ isPreview = false }) {
               existingVideoId={existingAnswer?.video_id ?? null}
               onNext={handleQuestionNext}
               onLockChange={setNavLocked}
+              qualityKey={event?.video_quality}
             />
             {/* Barre de progression en BAS — tap ou swipe up → ouvre le panneau */}
             <QuestionNav

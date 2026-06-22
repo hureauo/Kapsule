@@ -69,6 +69,11 @@ export function createEventDb(filePath) {
       password_hash TEXT,
       roles         TEXT NOT NULL DEFAULT '[]'
     );
+
+    CREATE TABLE IF NOT EXISTS local_overrides (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
 
   // Seed 4 questions par défaut si la table est vide

@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { join } from 'node:path';
 import { statfs } from 'node:fs/promises';
-import { DEFAULTS, LIMITS, THEMES, TEXT_FIELDS, TEXT_FIELD_MAX } from '@kapsule/core';
+import rateLimit from 'express-rate-limit';
+import { DEFAULTS, LIMITS, THEMES, TEXT_FIELDS, TEXT_FIELD_MAX, VIDEO_QUALITY, DEFAULT_VIDEO_QUALITY } from '@kapsule/core';
 import {
   getActiveEvent, listEvents, setActiveEvent, updateEventStatus,
 } from '../registry.js';
@@ -12,6 +13,17 @@ export function makeEventsRouter(dataDir, cfg) {
   const router = Router();
   const auth = cfg.requireAdmin;
   const authTech = cfg.requireTech;
+
+  // Rate-limiter pour la route d'écriture publique (borne preview Internet-facing).
+  // Instancié par app pour éviter la pollution entre suites de tests.
+  const videoQualityLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Trop de requêtes, réessayez dans un moment.' },
+    skip: () => cfg.skipRateLimits === true,
+  });
 
   // ── Routes admin ─────────────────────────────────────────────────────────
 
@@ -169,6 +181,12 @@ export function makeEventsRouter(dataDir, cfg) {
       const requiresLoginMeta = db.prepare("SELECT value FROM event_meta WHERE key = 'requires_login'").get();
       const requiresLogin = !!(activeEvent.is_preview) && requiresLoginMeta?.value === 'true';
 
+      // Qualité vidéo : override local (local_overrides) > défaut Hub (event_meta) > DEFAULT_VIDEO_QUALITY.
+      // local_overrides n'est jamais écrasé par le pull (contrairement à event_meta).
+      const getOverride = (key) => db.prepare('SELECT value FROM local_overrides WHERE key=?').get(key)?.value ?? null;
+      const resolvedQualityKey = getOverride('video_quality') ?? getMeta('video_quality') ?? DEFAULT_VIDEO_QUALITY;
+      const videoQualityPreset = VIDEO_QUALITY[resolvedQualityKey] ?? VIDEO_QUALITY[DEFAULT_VIDEO_QUALITY];
+
       res.json({
         id: activeEvent.id,
         name: activeEvent.name,
@@ -183,11 +201,44 @@ export function makeEventsRouter(dataDir, cfg) {
         thanks_text: textOrDefault('thanks_text'),
         requiresLogin,
         is_preview: !!(activeEvent.is_preview),
+        video_quality: resolvedQualityKey,
+        video_width: videoQualityPreset.width,
+        video_height: videoQualityPreset.height,
+        video_bitrate: videoQualityPreset.videoBitrate,
       });
     } catch (err) {
       next(err);
     }
   });
+
+  // ── PUT /api/event/video-quality ─────────────────────────────────────────
+  // Override local persistant de la qualité vidéo (survit au pull Hub).
+  // En preview : accessible sans auth (borne en mode démo, invité ou tech).
+  // Hors preview : requiert tech_borne (même garde que les routes tech).
+  // Préfixe /event/ et non /admin/ car la route est publique en preview ;
+  // /admin/ désigne partout ailleurs une route protégée par requireAdmin/requireTech.
+  router.put('/event/video-quality', videoQualityLimiter, (req, res, next) => {
+    const activeEvent = getActiveEvent();
+    if (!activeEvent) return res.status(404).json({ error: 'Aucun événement actif' });
+    if (activeEvent.is_preview) return handler(req, res, next, activeEvent);
+    // Borne réelle → guard tech_borne, puis handler
+    authTech(req, res, () => handler(req, res, next, activeEvent));
+  });
+
+  function handler(req, res, next, activeEvent) {
+    try {
+      const { quality } = req.body ?? {};
+      if (!quality || !VIDEO_QUALITY[quality]) {
+        return res.status(400).json({ error: `Qualité invalide. Valeurs : ${Object.keys(VIDEO_QUALITY).join(', ')}` });
+      }
+      const db = getActiveEventDb(dataDir, activeEvent);
+      db.prepare('INSERT OR REPLACE INTO local_overrides (key, value) VALUES (?, ?)').run('video_quality', quality);
+      const preset = VIDEO_QUALITY[quality];
+      res.json({ ok: true, video_quality: quality, ...preset });
+    } catch (err) {
+      next(err);
+    }
+  }
 
   return router;
 }

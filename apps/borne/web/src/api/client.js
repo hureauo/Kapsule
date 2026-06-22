@@ -153,7 +153,30 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ confirm }),
     }),
+
+  setVideoQuality: (quality) =>
+    techApiFetch('/api/event/video-quality', {
+      method: 'PUT',
+      body: JSON.stringify({ quality }),
+    }),
 };
+
+// setVideoQualityPublic : sans token (utilisable par l'invité en mode preview)
+export function setVideoQualityPublic(quality) {
+  return fetch('/api/event/video-quality', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quality }),
+  }).then(async res => {
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const err = new Error(body.error ?? `HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  });
+}
 
 // ── URLs de ressources (ajoutent ?token= pour <video src>, downloads, CSV) ───
 

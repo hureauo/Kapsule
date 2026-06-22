@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { VIDEO_QUALITY, DEFAULT_VIDEO_QUALITY, AUDIO_BITRATE } from '@kapsule/core';
 
 // Ordre de préférence MIME :
 // - Safari/iOS ne supporte que video/mp4 + codecs AVC/AAC (pas webm)
@@ -30,7 +31,8 @@ export const REC_STATUS = {
   ERROR: 'error',
 };
 
-export default function useMediaRecorder({ maxDuration = 60 } = {}) {
+export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAULT_VIDEO_QUALITY } = {}) {
+  const quality = VIDEO_QUALITY[qualityKey] ?? VIDEO_QUALITY[DEFAULT_VIDEO_QUALITY];
   const [status, setStatus] = useState(REC_STATUS.IDLE);
   const [error, setError] = useState(null);
   const [duration, setDuration] = useState(0);   // secondes écoulées
@@ -89,7 +91,7 @@ export default function useMediaRecorder({ maxDuration = 60 } = {}) {
     setError(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: 'user', width: { ideal: quality.width }, height: { ideal: quality.height } },
         audio: true,
       });
       streamRef.current = stream;
@@ -121,8 +123,8 @@ export default function useMediaRecorder({ maxDuration = 60 } = {}) {
 
     const recorder = new MediaRecorder(streamRef.current, {
       mimeType,
-      videoBitsPerSecond: 500_000,
-      audioBitsPerSecond: 96_000,
+      videoBitsPerSecond: quality.videoBitrate,
+      audioBitsPerSecond: AUDIO_BITRATE,
     });
 
     recorder.ondataavailable = (e) => {

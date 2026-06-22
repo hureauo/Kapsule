@@ -164,7 +164,7 @@ Point d'entrée : `index.js` → `createApp(dataDir, cfg)`. Pull one-shot au dé
 
 | Fichier | Contenu |
 |---------|---------|
-| `routes/events.js` | event actif (config publique pour le parcours invité), statut, close, pull/push déclenchés manuellement (tech) |
+| `routes/events.js` | event actif (`GET /event` config publique — inclut désormais `video_quality` résolu **override local > event_meta > DEFAULT** + `video_width/height/bitrate`), statut, close, pull/push déclenchés manuellement (tech). **`PUT /api/admin/video-quality`** écrit `local_overrides.video_quality` : **sans auth en preview** (borne d'essai démo), garde `requireTech` hors preview. ⚠️ Route publique d'écriture en preview **sans rate-limit** (≠ `/sessions`, `/videos`, `/preview/login` qui en ont un) — borne preview Internet-facing. |
 | `routes/questions.js` | CRUD questions (admin borne) |
 | `routes/sessions.js` | création de session invité (publique, ou JWT general si preview avec login), answers, complete, **`POST /api/preview/login`** (proxy auth wall vers Hub, §11.24) |
 | `routes/videos.js` | upload vidéo (multipart), liste, stream Range-aware, remplacement (DELETE+INSERT transactionnel), suppression |
@@ -202,14 +202,17 @@ Importé via le barrel `index.js` qui **ne ré-exporte que** `constants.js` + `v
 
 | Fichier | Contenu | Exporté par le barrel ? |
 |---------|---------|------------------------|
-| `constants.js` | `EVENT_STATUS`, `STATUS_ORDER`, `JOB_TYPES`, `LIMITS`, `THEMES`, `DEFAULTS`, `TEXT_FIELDS` | ✅ |
+| `constants.js` | `EVENT_STATUS`, `STATUS_ORDER`, `JOB_TYPES`, `LIMITS`, `THEMES`, `DEFAULTS`, `TEXT_FIELDS`, **`VIDEO_QUALITY`** (presets `eco`/`standard`/`haute`/`max` → `{label,width,height,videoBitrate}`), **`DEFAULT_VIDEO_QUALITY`** (`standard`), **`AUDIO_BITRATE`** — source unique partagée Hub/Borne/kiosque | ✅ |
 | `validate.js` | validateurs (guest name, question…) | ✅ |
 | `eventDbSchema.js` | `createEventDb(path)` : schéma complet de `db.sqlite` + seed des 4 questions par défaut | ❌ (import direct — better-sqlite3 natif) |
 | `checksum.js` | `sha256File` | ❌ (import direct — node:crypto/fs) |
 
 **Schéma de `db.sqlite`** (identique Borne/Hub) : `event_meta`, `questions`, `sessions`,
 `videos` (UNIQUE session+question → 1 réponse par question/session), `derived`
-(miniature/durée/dimensions, 1-1 avec videos), `event_users` (email/hash/roles — peuplé au pull).
+(miniature/durée/dimensions, 1-1 avec videos), `event_users` (email/hash/roles — peuplé au pull),
+`local_overrides` (key/value — **réglages locaux à la borne, jamais écrasés par le pull** ;
+contrairement à `event_meta` que `pull.js` fait `DELETE`+`INSERT`). Première clé : `video_quality`
+(override de la qualité d'enregistrement choisi sur place, survit aux pulls de config Hub).
 
 ---
 

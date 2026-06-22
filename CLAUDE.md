@@ -20,8 +20,11 @@ Les commandes ci-dessous sont à lancer via `docker compose run` ou des scripts 
 
 > À compléter au fil des phases — maintenir cette section à jour dès qu'un script existe.
 
-- `docker compose run --rm dev npm test` — tous les tests (runner natif `node:test`)
-- `docker compose run --rm dev npm test -w @kapsule/core` — tests d'un seul workspace
+- `docker compose run --rm dev ./docker/test.sh` — tous les tests avec résumé lisible + timeout 120 s
+- `docker compose run --rm dev ./docker/test.sh -w @kapsule/borne-server` — tests d'un seul workspace
+- `docker compose run --rm dev ./docker/test.sh -w @kapsule/hub-server -t 90` — avec timeout personnalisé
+- `docker compose build dev` — (re)construire l'image dev (à faire après un changement de Dockerfile.dev)
+- `docker compose run --rm dev npm test` — tests bruts TAP (fallback, sans wrapper)
 - `docker compose up dev:borne` / `docker compose up dev:hub` — serveurs en dev
 - `docker compose -f docker-compose.hub.yml run --rm backend npm run create-admin` — crée le premier compte admin Hub (prompt interactif email/mdp)
 - `BOX_TOKEN_PREVIEW=<token> HUB_URL=https://… docker compose -f docker-compose.preview.yml up` — lance la borne d'essai (port interne uniquement, `MAX_DATA_BYTES=1 Go`, push interdit)

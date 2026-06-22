@@ -1,60 +1,59 @@
 ---
-status: tests-failed
-base_commit: fb208222ebbad785f9fa9d4102ef46e976200590
-workspaces: [@kapsule/hub-server, @kapsule/hub-web, @kapsule/borne-server, @kapsule/borne-web]
-generated_at: 2026-06-21T00:00:00Z
-tested_at: 2026-06-21T18:36:19Z
-tested_commit: fb208222ebbad785f9fa9d4102ef46e976200590
+status: tests-passed
+base_commit: 1c5f4c3694b27cc486c53a636e07ef7724a65a79
+workspaces: [@kapsule/core, @kapsule/hub-server, @kapsule/hub-web, @kapsule/borne-server, @kapsule/borne-web]
+generated_at: 2026-06-22T00:00:00Z
+tested_at: 2026-06-22T18:09:04Z
+tested_commit: 1c5f4c3694b27cc486c53a636e07ef7724a65a79
 commits_since_review: 0
-verdict: COMMIT OK
+verdict: COMMIT À CORRIGER
 ---
 
 # Relais de review → tests
 
 Workspaces à tester :
-- @kapsule/hub-server (raison : nouveau router previewGallery.js + test, provisioner.js bind mount + dataDir, events.js transitions preview, questions.js triggerPreviewPull, index.js mount)
-- @kapsule/hub-web (raison : PreviewGallery.jsx nouveau, client.js routes preview, EventDetailPage.jsx galerie conditionnelle)
-- @kapsule/borne-server (raison : index.js expose storage dans /api/admin/health, videos.js exporte dirSize)
-- @kapsule/borne-web (raison : GuestPage.jsx polling config en preview)
-
-Infra touchée (Makefile : vps-restart/local-restart, montages bind preview) → lancer aussi les smoke tests (npm run smoke:hub).
+- @kapsule/core (raison : VIDEO_QUALITY/DEFAULT_VIDEO_QUALITY/AUDIO_BITRATE ajoutés à constants.js, table local_overrides ajoutée à eventDbSchema.js)
+- @kapsule/hub-server (raison : validation video_quality dans PUT /:eventId, META_KEYS étendu, eventConfig.js)
+- @kapsule/hub-web (raison : DesignTab d'EventDetailPage.jsx — select qualité + estimation Mo/min)
+- @kapsule/borne-server (raison : GET /event résout video_quality, nouvelle route PUT /api/admin/video-quality)
+- @kapsule/borne-web (raison : useMediaRecorder, RecordingScreen, StartScreen, DesignPanel, client.js, GuestPage)
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- previewGallery.test.js couvre 401/403/404/200/503 + Range 206 + JWT tech_borne : vérifier qu'il passe (cœur de la nouvelle surface authentifiée).
-- Vérifier que le proxy /preview-videos/:videoId/file propage bien Range (206 + Content-Range) — invariant §11.3.
-- Vérifier que DELETE /api/events/:id purge previews/<slug> (deprovision avec dataDir) AVANT rm events/<id> — RGPD.
-- borne /api/admin/health : confirmer que storage.{used_bytes,quota_bytes} est renvoyé et que la route reste gardée par requireAdmin.
+- Vérifier que PUT /api/event/video-quality refuse (400) une `quality` hors VIDEO_QUALITY et écrit bien local_overrides en preview SANS token.
+- Vérifier que HORS preview la route exige tech_borne (403 sans token / avec admin_borne seul).
+- Vérifier que GET /event résout l'ordre override local > event_meta > DEFAULT et n'expose aucune PII.
+- Vérifier qu'un pull (DELETE+INSERT event_meta) ne touche PAS local_overrides (l'override de qualité survit au pull).
+- Smoke borne : la borne preview reste Internet-facing — confirmer qu'aucune route admin réelle (settings, close) n'est devenue publique par effet de bord du nouveau handler partagé.
 
 ## Résultats des tests
 
-| Workspace | Tests | Pass | Fail |
-|---|---|---|---|
-| @kapsule/hub-server | 326 | 322 | 4 |
-| @kapsule/hub-web | 19 | 19 | 0 |
-| @kapsule/borne-server | 225 | 225 | 0 |
-| @kapsule/borne-web | 17 | 17 | 0 |
+### Tests unitaires
 
-Smoke : `smoke:hub` lancé (infra preview touchée) → 27 ✓ 0 ✗ — PASS.
+| Workspace | Tests | Statut |
+|---|---|---|
+| @kapsule/core | 18 | PASS |
+| @kapsule/hub-server | 325 | PASS |
+| @kapsule/hub-web | 19 | PASS |
+| @kapsule/borne-server | 225 | PASS |
+| @kapsule/borne-web | 17 | PASS |
 
-## Échecs
+### Smoke tests
 
-- **@kapsule/hub-server** › `POST /api/events` › `retourne preview_url dans la réponse (null si docker absent en test)` (`events.test.js:74`) :
-  `AssertionError [ERR_ASSERTION]: preview_url doit être présent dans la réponse` — expected: `true`, actual: `false`, operator: `==`
+Smoke lancés (docker-compose.yml modifié → infra touchée) : hub, borne, preview.
 
-- **@kapsule/hub-server** › `GET /api/events/:eventId/preview-videos/:videoId/file — proxy flux` › `proxifie le flux vidéo (200)` (`previewGallery.test.js:205`) :
-  `AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: 400 !== 200` — expected: `200`, actual: `400`, operator: `strictEqual`
+- smoke:hub : 27 ✓ 0 ✗ — PASS
+- smoke:borne : 16 ✓ 0 ✗ — PASS
+- smoke:preview : SKIP (images kapsule-borne-preview-backend/frontend absentes en local — test VPS uniquement)
 
-- **@kapsule/hub-server** › `GET /api/events/:eventId/preview-videos/:videoId/file — proxy flux` › `proxifie le Range entrant et renvoie 206` (`previewGallery.test.js:214`) :
-  `AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: 400 !== 206` — expected: `206`, actual: `400`, operator: `strictEqual`
+## Note smoke preview
 
-- **@kapsule/hub-server** › `GET /api/events/:eventId/preview-videos/:videoId/file — proxy flux` › `renvoie 503 si la borne est hors ligne` (`previewGallery.test.js:223`) :
-  `AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: 400 !== 503` — expected: `503`, actual: `400`, operator: `strictEqual`
+Le smoke preview nécessite les images Docker `kapsule-borne-preview-backend` et `kapsule-borne-preview-frontend` buildées sur le VPS. Il est ignoré en local. Le provisioner a été corrigé (volume nommé au lieu de bind mount — le bind mount échouait car hub_data est un volume Docker non accessible depuis l'hôte) : à vérifier sur le VPS.
 
 ## Corrections demandées
 
 > Cette section est lue par l'agent principal pour implémenter les corrections.
 > Chaque item est coché par l'agent principal une fois corrigé.
 
-- [ ] ⚠️ `apps/hub/server/src/routes/previewGallery.js:144` — `:videoId` interpolé tel quel dans l'URL upstream sans validation UUID ; ajouter `validateUuidParams('videoId')` (ou équivalent) en amont du proxy /file pour éviter une injection de path vers le backend borne.
-- [ ] ⚠️ `apps/hub/server/src/routes/previewGallery.js:75` — `httpRequest` ne pose aucun timeout : une borne qui accepte la connexion mais ne répond jamais fait pendre la requête Hub (et le navigateur admin). Ajouter `req.setTimeout(...)` + rejet propre → 503/504.
-- [ ] ⚠️ `PROJET.md §4 / §11` — la spec indique « tout vit dans events/<id>/ » ; les données invité preview vivent désormais dans `previews/<slug>/` (bind mount Hub). Documenter ce chemin et sa purge dans PROJET.md (§4 arborescence + §11 RGPD) pour rester contractuel (ARCHITECTURE.md déjà mis à jour par le reviewer).
+- [x] ⚠️ `apps/borne/server/src/routes/events.js:206` — la route publique d'écriture `PUT /api/admin/video-quality` (sans auth en preview) n'a aucun `express-rate-limit`, contrairement à toutes les autres routes publiques d'écriture de la borne (`/sessions` max 20, `/videos` max 50, `/preview/login`). La borne preview étant Internet-facing (PROJET §11.21, ARCHITECTURE §6 durcissement), ajouter un `rateLimit` (instancié par app, `skip` via `cfg.skipRateLimits` en test) sur cette route.
+- [x] ⚠️ `apps/borne/server/src/routes/events.js:202` — le préfixe `/admin/` est trompeur pour une route publique sans auth en preview (ailleurs `admin` ⇒ `requireAdmin`/`requireTech`). Renommé `/event/video-quality` + commentaire explicatif ajouté.
+- [x] ⚠️ `apps/hub/server/src/routes/events.js:117` — `video_quality` est validé deux fois (test inline 400 dans la route + skip silencieux dans `applyEventConfig` via `eventConfig.js:29`). Doublon documenté par un commentaire dans eventConfig.js.

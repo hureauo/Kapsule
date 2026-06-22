@@ -28,6 +28,7 @@ export default function RecordingScreen({
   existingVideoId,   // id si déjà répondue → sous-état ANSWERED
   onNext,
   onLockChange,      // remonte au parent l'état de verrouillage de la nav basse
+  qualityKey,        // preset qualité vidéo (DEFAULT_VIDEO_QUALITY si absent)
 }) {
   const [subState, setSubState] = useState(existingVideoId ? S.ANSWERED : S.INTRO);
   const [countdown, setCountdown] = useState(question.countdown ?? 3);
@@ -39,7 +40,7 @@ export default function RecordingScreen({
   const videoBlobRef    = useRef(null); // <video> pour le preview blob (preview)
   const retryTimerRef   = useRef(null);
 
-  const recorder = useMediaRecorder({ maxDuration: question.max_duration ?? 60 });
+  const recorder = useMediaRecorder({ maxDuration: question.max_duration ?? 60, qualityKey });
 
   // ── Intro : attacher le preview caméra ──────────────────────────────────────
   useEffect(() => {

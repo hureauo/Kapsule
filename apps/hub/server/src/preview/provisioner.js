@@ -142,11 +142,14 @@ export async function provisionPreview(eventId, docker = dockerCli, dataDir = nu
     is_preview: 1,
   });
 
-  // Path host pour les données preview : visible sur le filesystem du Hub,
-  // inspecatable/sauvegardable manuellement, supprimé par deprovisionPreview via rm -rf.
-  // Si dataDir est absent (tests sans filesystem), on utilise un volume nommé fallback.
+  // Path pour les données preview.
+  // En production (Hub dans Docker), dataDir est dans un volume nommé Docker non accessible
+  // depuis l'hôte — un bind mount source=/app/data/previews/<slug> échouerait car Docker
+  // cherche ce chemin sur le filesystem hôte, pas dans le volume. On utilise donc un volume
+  // nommé dans les deux cas : plus portable, et la purge se fait via docker.volumeRm.
+  // PREVIEW_BIND_MOUNT=true permet de forcer le bind mount en dev direct (hors Docker).
   let mountArg;
-  if (dataDir) {
+  if (process.env.PREVIEW_BIND_MOUNT === 'true' && dataDir) {
     const hostPath = join(dataDir, 'previews', slug);
     mkdirSync(hostPath, { recursive: true });
     mountArg = `type=bind,source=${hostPath},target=/app/data`;
@@ -226,12 +229,12 @@ export async function deprovisionPreview(eventId, docker = dockerCli, dataDir = 
   if (await docker.exists(backendName))  await docker.rm(backendName);
   if (await docker.networkExists(netName)) await docker.networkRm(netName);
 
-  // Supprime les données preview du filesystem Hub (purge RGPD)
-  if (dataDir) {
+  // Supprime les données preview (purge RGPD).
+  // Volume nommé : toujours tenté (c'est le mode de stockage par défaut en production Docker).
+  // Bind mount : tenté seulement si PREVIEW_BIND_MOUNT=true (mode dev direct hors Docker).
+  await docker.volumeRm(`preview-data-${slug}`);
+  if (process.env.PREVIEW_BIND_MOUNT === 'true' && dataDir) {
     try { rmSync(join(dataDir, 'previews', slug), { recursive: true, force: true }); } catch { /* déjà absent */ }
-  } else {
-    // Fallback volume nommé (containers provisionnés sans dataDir)
-    try { await docker.volumeRm(`preview-data-${slug}`); } catch { /* déjà absent */ }
   }
 }
 
