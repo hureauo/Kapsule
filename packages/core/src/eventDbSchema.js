@@ -1,13 +1,6 @@
 import Database from 'better-sqlite3';
 import { DEFAULTS } from './constants.js';
 
-const DEFAULT_QUESTIONS = [
-  { text: 'Quel est votre meilleur souvenir avec les mariés ?', max_duration: 60, countdown: 3 },
-  { text: 'Quel conseil donneriez-vous au jeune couple ?', max_duration: 60, countdown: 3 },
-  { text: 'Racontez une anecdote mémorable !', max_duration: 90, countdown: 3 },
-  { text: 'Un message pour dans 10 ans ?', max_duration: 120, countdown: 3 },
-];
-
 export function createEventDb(filePath) {
   const db = new Database(filePath);
 
@@ -75,18 +68,6 @@ export function createEventDb(filePath) {
       value TEXT NOT NULL
     );
   `);
-
-  // Seed 4 questions par défaut si la table est vide
-  const count = db.prepare('SELECT COUNT(*) as n FROM questions').get().n;
-  if (count === 0) {
-    const insert = db.prepare(
-      'INSERT INTO questions (text, max_duration, countdown, order_index) VALUES (?, ?, ?, ?)'
-    );
-    const seedAll = db.transaction(() => {
-      DEFAULT_QUESTIONS.forEach((q, i) => insert.run(q.text, q.max_duration, q.countdown, i));
-    });
-    seedAll();
-  }
 
   return db;
 }

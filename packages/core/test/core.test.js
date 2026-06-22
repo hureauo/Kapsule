@@ -11,7 +11,7 @@ import { validateQuestion, validateGuestName, assertStatus } from '../src/valida
 // ─── createEventDb ────────────────────────────────────────────────────────────
 
 describe('createEventDb', () => {
-  test('crée les tables et seed 4 questions', () => {
+  test('crée les tables (sans questions par défaut)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kapsule-'));
     try {
       const db = createEventDb(join(dir, 'db.sqlite'));
@@ -26,21 +26,21 @@ describe('createEventDb', () => {
       assert.ok(tables.includes('derived'));
 
       const count = db.prepare('SELECT COUNT(*) as n FROM questions').get().n;
-      assert.equal(count, 4);
+      assert.equal(count, 0);
       db.close();
     } finally {
       rmSync(dir, { recursive: true });
     }
   });
 
-  test('est idempotent — appeler deux fois ne duplique pas les questions', () => {
+  test('est idempotent — appeler deux fois sur la même BD ne plante pas', () => {
     const dir = mkdtempSync(join(tmpdir(), 'kapsule-'));
     try {
       const db1 = createEventDb(join(dir, 'db.sqlite'));
       db1.close();
       const db2 = createEventDb(join(dir, 'db.sqlite'));
       const count = db2.prepare('SELECT COUNT(*) as n FROM questions').get().n;
-      assert.equal(count, 4);
+      assert.equal(count, 0);
       db2.close();
     } finally {
       rmSync(dir, { recursive: true });
