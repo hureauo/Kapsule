@@ -59,7 +59,7 @@ export default function EventsPage() {
     <div className="hub-page">
       <header className="hub-header">
         <span className="hub-logo">Kapsule Hub</span>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div className="hub-header__actions">
           {isSuperuser && (
             <button className="btn btn--ghost" onClick={() => navigate('/admin')}>Administration</button>
           )}
@@ -120,7 +120,7 @@ export default function EventsPage() {
           </p>
         ) : (
           <div className="table-scroll">
-            <table className="hub-table">
+            <table className="hub-table responsive-table">
               <thead>
                 <tr>
                   <th>Nom</th>
@@ -136,14 +136,14 @@ export default function EventsPage() {
                     className="hub-table__row--clickable"
                     onClick={() => navigate(`/events/${ev.id}`)}
                   >
-                    <td>{ev.name}</td>
-                    <td>{formatDate(ev.event_date)}</td>
-                    <td>
+                    <td data-label="Nom">{ev.name}</td>
+                    <td data-label="Date">{formatDate(ev.event_date)}</td>
+                    <td data-label="Statut">
                       <span className={`status-badge status-badge--${ev.status}`}>
                         {STATUS_LABEL[ev.status] ?? ev.status}
                       </span>
                     </td>
-                    <td>{ev.box_id ?? '—'}</td>
+                    <td data-label="Borne">{ev.box_id ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

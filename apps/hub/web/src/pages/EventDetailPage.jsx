@@ -499,13 +499,13 @@ export default function EventDetailPage() {
   return (
     <div className="hub-page">
       <header className="hub-header">
-        <Link to="/events" className="btn btn--ghost">← Événements</Link>
+        <Link to="/events" className="btn btn--ghost btn--sm hub-header__back">← Événements</Link>
         <span className="hub-header__title">{event.name}</span>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div className="hub-header__actions">
           {isSuperuser && (
-            <button className="btn btn--ghost" onClick={() => navigate('/admin')}>Administration</button>
+            <button className="btn btn--ghost btn--sm" onClick={() => navigate('/admin')}>Administration</button>
           )}
-          <button className="btn btn--ghost" onClick={() => { clearToken(); navigate('/login', { replace: true }); }}>
+          <button className="btn btn--ghost btn--sm" onClick={() => { clearToken(); navigate('/login', { replace: true }); }}>
             Déconnexion
           </button>
         </div>

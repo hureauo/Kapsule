@@ -47,6 +47,7 @@ button { cursor: pointer; font: inherit; }
 }
 .hub-logo { font-size: 18px; font-weight: 700; flex: 1; min-width: 0; }
 .hub-header__title { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.hub-header__actions { display: flex; gap: 8px; flex-shrink: 0; }
 
 .hub-main { flex: 1; max-width: 960px; width: 100%; margin: 0 auto; padding: 24px 16px; }
 
@@ -370,3 +371,74 @@ button { cursor: pointer; font: inherit; }
 /* ── Modale générique (alias pour .modal__title / .modal__body) */
 .modal__title { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
 .modal__body { font-size: 14px; }
+
+/* ── Tables responsive (card/table) ──────────────────────────────────────────
+   Sur desktop, une .responsive-table reste une vraie table dense. Sous 640px,
+   elle se reflow en liste de cartes empilées : thead masqué, chaque ligne
+   devient une carte, et chaque cellule affiche son intitulé via data-label
+   (rendu en ::before). C'est le même esprit que la liste d'événements (ev-row),
+   appliqué aux tables denses de l'admin sans dupliquer le markup.
+   NB : première (et seule) media query du projet — voir ROADMAP Phase 9. */
+@media (max-width: 640px) {
+  /* Header : empilé proprement. Identité (logo / retour+titre) sur une ligne,
+     groupe d'actions en pleine largeur dessous, boutons répartis. Évite le
+     flex-wrap désordonné où logo et titre (tous deux flex:1) se bagarrent. */
+  .hub-header { flex-direction: column; align-items: stretch; gap: 8px; }
+  .hub-logo, .hub-header__title { flex: none; }
+  .hub-header__back { align-self: flex-start; }
+  .hub-header__actions { width: 100%; }
+  .hub-header__actions .btn { flex: 1; justify-content: center; }
+
+  .responsive-table,
+  .responsive-table tbody,
+  .responsive-table tr,
+  .responsive-table td { display: block; width: 100%; }
+
+  /* L'en-tête de colonnes n'a plus de sens en mode carte : on le retire du flux
+     (clip plutôt que display:none pour rester lisible aux lecteurs d'écran). */
+  .responsive-table thead {
+    position: absolute; width: 1px; height: 1px;
+    padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0;
+  }
+
+  /* Chaque ligne = une carte */
+  .responsive-table tr {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 6px 12px;
+    margin-bottom: 10px;
+  }
+  .responsive-table tr:last-child { margin-bottom: 0; }
+
+  /* Chaque cellule = une ligne « intitulé : valeur » */
+  .responsive-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+    white-space: normal;
+    word-break: break-word;
+  }
+  .responsive-table td:last-child { border-bottom: none; }
+
+  /* L'intitulé de colonne, repris depuis data-label, à gauche de la valeur */
+  .responsive-table td::before {
+    content: attr(data-label);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-align: left;
+    flex-shrink: 0;
+  }
+  /* Une cellule sans data-label (cellule d'actions p.ex.) occupe toute la largeur */
+  .responsive-table td:not([data-label]) { justify-content: flex-end; }
+  .responsive-table td:not([data-label])::before { content: none; }
+
+  /* Le token n'a plus de largeur bornée en mode carte : il occupe la ligne */
+  .token-cell { justify-content: flex-end; }
+  .token-cell__code { max-width: 100%; }
+}

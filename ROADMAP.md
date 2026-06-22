@@ -307,8 +307,8 @@ Machine de capture dédiée, job `chromakey`, portail invités, mode point d'acc
 
 Sur mobile, les tables denses de l'admin (Tokens 6 col., Utilisateurs 6 col., Jobs en erreur) sont peu lisibles même rendues scrollables. Objectif : **table sur desktop, cartes empilées sur mobile** (chaque ligne → carte, chaque cellule préfixée par son label) — même rendu que l'onglet Événements (`ev-row`).
 
-- [ ] 9.x Pattern responsive card/table : classe `.responsive-table`, `thead` masqué sous un seuil, `<td data-label="…">` rendu en `::before`, basculement par **media query**.
-  - **Tables concernées** : `TokensTab`, `UsersTab`, Dashboard jobs en erreur (`AdminPage.jsx`), `sync-jobs-table`/`sync-log-table` (`SyncStatus.jsx`), `hub-table` (`EventsPage.jsx`).
-  - ⚠️ **Écart de style assumé** : le CSS Hub n'utilise aujourd'hui *aucune media query* (tout en `flex-wrap`). Ce pattern en exige une ; c'est l'introduction (localisée, justifiée) de la première media query du projet — à valider avant implémentation.
-  - **Déjà fait (palliatif)** : tables enveloppées dans `.table-scroll` (overflow-x), `.token-cell` wrap du token (commit responsive Hub). Le pattern card/table remplacerait ce palliatif côté mobile.
-  - **Idée connexe** : envisager un skill frontend / capacité de preview visuel pour ce type de travail (modifs CSS faites sans rendu visible actuellement).
+- [x] 9.x Pattern responsive card/table : classe `.responsive-table`, `thead` masqué sous 640px, `<td data-label="…">` rendu en `::before`, basculement par **media query**.
+  - **Tables converties** : `TokensTab`, `UsersTab`, Dashboard jobs en erreur (`AdminPage.jsx`), `sync-jobs-table`/`sync-log-table` (`SyncStatus.jsx`), `hub-table` (`EventsPage.jsx`).
+  - ⚠️ **Écart de style assumé** : introduit la **première media query du projet** (`@media (max-width: 640px)`, CSS Hub jusque-là 100% `flex-wrap`). Localisé et documenté ici.
+  - `.table-scroll` conservé (sans effet en mode carte, table à 100%) ; `.token-cell` adapté pour occuper la ligne sous le seuil.
+  - 🧑 **À vérifier sur mobile réel** : rendu des cartes (alignement label/valeur, cellule Actions des utilisateurs, token long) — non vérifiable ici (pas de rendu visuel).

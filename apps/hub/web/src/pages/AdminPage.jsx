@@ -63,19 +63,19 @@ function DashboardTab({ overview }) {
         <section className="panel-section">
           <h2 className="panel-section__title">Jobs en erreur récents</h2>
           <div className="table-scroll">
-            <table className="admin-table">
+            <table className="admin-table responsive-table">
               <thead>
                 <tr><th>#</th><th>Type</th><th>Événement</th><th>Erreur</th><th>Tentatives</th><th>Fin</th></tr>
               </thead>
               <tbody>
                 {failed_jobs.map((j) => (
                   <tr key={j.id}>
-                    <td className="text--muted">{j.id}</td>
-                    <td>{j.type}</td>
-                    <td className="text--muted">{j.event_id}</td>
-                    <td className="text--muted" style={{ maxWidth: 240, wordBreak: 'break-word' }}>{j.error}</td>
-                    <td>{j.attempts}</td>
-                    <td className="text--muted">{formatDate(j.finished_at)}</td>
+                    <td data-label="#" className="text--muted">{j.id}</td>
+                    <td data-label="Type">{j.type}</td>
+                    <td data-label="Événement" className="text--muted">{j.event_id}</td>
+                    <td data-label="Erreur" className="text--muted" style={{ maxWidth: 240, wordBreak: 'break-word' }}>{j.error}</td>
+                    <td data-label="Tentatives">{j.attempts}</td>
+                    <td data-label="Fin" className="text--muted">{formatDate(j.finished_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -632,7 +632,7 @@ function TokensTab() {
         <p className="text--muted">Aucun token généré. Créez-en depuis l'onglet Événements.</p>
       ) : (
         <div className="table-scroll">
-          <table className="admin-table">
+          <table className="admin-table responsive-table">
             <thead>
               <tr>
                 <th>Événement</th>
@@ -646,21 +646,21 @@ function TokensTab() {
             <tbody>
               {tokens.map((t) => (
                 <tr key={t.id}>
-                  <td>{t.event_name ?? <span className="text--muted">—</span>}</td>
-                  <td>{t.label ?? <span className="text--muted">—</span>}</td>
-                  <td>
+                  <td data-label="Événement">{t.event_name ?? <span className="text--muted">—</span>}</td>
+                  <td data-label="Label">{t.label ?? <span className="text--muted">—</span>}</td>
+                  <td data-label="Type">
                     <span className={`status-badge ${t.is_preview ? 'status-badge--draft' : 'status-badge--ready'}`}>
                       {t.is_preview ? 'Essai' : 'Réel'}
                     </span>
                   </td>
-                  <td>
+                  <td data-label="Token">
                     <div className="token-cell">
                       <code className="token-cell__code">{t.token_clear}</code>
                       <CopyButton text={t.token_clear} label="Token" labelDone="✓" />
                       <CopyButton text={dockerCmd(t)} label="Cmd" labelDone="✓" />
                     </div>
                   </td>
-                  <td className="text--muted">{formatDate(t.last_seen_at)}</td>
+                  <td data-label="Dernière vue" className="text--muted">{formatDate(t.last_seen_at)}</td>
                   <td>
                     {revoking === t.id ? (
                       <>
@@ -807,7 +807,7 @@ function UsersTab() {
         <p className="text--muted" style={{ marginTop: '12px' }}>Aucun utilisateur enregistré.</p>
       ) : (
         <div className="table-scroll" style={{ marginTop: '16px' }}>
-        <table className="admin-table">
+        <table className="admin-table responsive-table">
           <thead>
             <tr><th>Email</th><th>Nom</th><th>Rôle</th><th>Mot de passe</th><th>Actif</th><th>Actions</th></tr>
           </thead>
@@ -819,15 +819,15 @@ function UsersTab() {
               const canPromote = u.role === 'client';
               return (
                 <tr key={u.id} style={{ opacity: u.active ? 1 : 0.5 }}>
-                  <td>{u.email}</td>
-                  <td className="text--muted">{u.name ?? '—'}</td>
-                  <td>
+                  <td data-label="Email">{u.email}</td>
+                  <td data-label="Nom" className="text--muted">{u.name ?? '—'}</td>
+                  <td data-label="Rôle">
                     <span className={`status-badge ${u.role === 'superuser' ? 'status-badge--live' : 'status-badge--ready'}`}>
                       {u.role === 'superuser' ? 'Superuser' : 'Client'}
                     </span>
                   </td>
-                  <td>{u.has_password ? '✓' : <span className="text--muted">Non défini</span>}</td>
-                  <td>{u.active ? 'Oui' : 'Non'}</td>
+                  <td data-label="Mot de passe">{u.has_password ? '✓' : <span className="text--muted">Non défini</span>}</td>
+                  <td data-label="Actif">{u.active ? 'Oui' : 'Non'}</td>
                   <td style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                     <button className="btn btn--ghost btn--sm" onClick={() => handleNewLink(u.id)}>
                       Lien
@@ -896,7 +896,7 @@ export default function AdminPage() {
       <header className="hub-header">
         <span className="hub-logo">Kapsule</span>
         <span className="hub-header__title">Administration</span>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div className="hub-header__actions">
           <button className="btn btn--ghost btn--sm" onClick={() => navigate('/events')}>Événements</button>
           <button className="btn btn--ghost btn--sm" onClick={logout}>Déconnexion</button>
         </div>

@@ -96,7 +96,7 @@ export default function SyncStatus({ event }) {
             {jobs.failed > 0 && <span className="badge badge--error"> {jobs.failed} échoués</span>}
           </h3>
           <div className="table-scroll">
-            <table className="sync-jobs-table">
+            <table className="sync-jobs-table responsive-table">
               <thead>
                 <tr>
                   <th>Type</th><th>Vidéo</th><th>Statut</th><th>Fin</th>
@@ -105,10 +105,10 @@ export default function SyncStatus({ event }) {
               <tbody>
                 {jobs.list.map(j => (
                   <tr key={j.id} className={`job-row job-row--${j.status}`}>
-                    <td>{j.type}</td>
-                    <td className="text--muted">{j.video_id ? j.video_id.slice(0, 8) + '…' : '—'}</td>
-                    <td><span className={`status-badge status-badge--${j.status}`}>{j.status}</span></td>
-                    <td className="text--muted">{formatDate(j.finished_at) ?? '—'}</td>
+                    <td data-label="Type">{j.type}</td>
+                    <td data-label="Vidéo" className="text--muted">{j.video_id ? j.video_id.slice(0, 8) + '…' : '—'}</td>
+                    <td data-label="Statut"><span className={`status-badge status-badge--${j.status}`}>{j.status}</span></td>
+                    <td data-label="Fin" className="text--muted">{formatDate(j.finished_at) ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -122,17 +122,17 @@ export default function SyncStatus({ event }) {
         <section className="panel-section">
           <h3 className="panel-section__title">Journal de synchro (20 derniers)</h3>
           <div className="table-scroll">
-            <table className="sync-log-table">
+            <table className="sync-log-table responsive-table">
               <thead>
                 <tr><th>Date</th><th>Borne</th><th>Action</th><th>Détail</th></tr>
               </thead>
               <tbody>
                 {sync_log.map(l => (
                   <tr key={l.id}>
-                    <td className="text--muted">{formatDate(l.created_at)}</td>
-                    <td>{l.box_name ?? '—'}</td>
-                    <td><code>{l.action}</code></td>
-                    <td className="text--muted">
+                    <td data-label="Date" className="text--muted">{formatDate(l.created_at)}</td>
+                    <td data-label="Borne">{l.box_name ?? '—'}</td>
+                    <td data-label="Action"><code>{l.action}</code></td>
+                    <td data-label="Détail" className="text--muted">
                       {l.detail ? JSON.stringify(JSON.parse(l.detail)) : ''}
                     </td>
                   </tr>
