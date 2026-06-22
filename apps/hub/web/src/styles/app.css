@@ -41,17 +41,17 @@ button { cursor: pointer; font: inherit; }
 .hub-page { min-height: 100vh; display: flex; flex-direction: column; }
 
 .hub-header {
-  display: flex; align-items: center; gap: 12px;
-  padding: 12px 24px; background: var(--surface);
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px; background: var(--surface);
   border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10;
 }
-.hub-logo { font-size: 18px; font-weight: 700; flex: 1; }
-.hub-header__title { flex: 1; font-weight: 600; }
+.hub-logo { font-size: 18px; font-weight: 700; flex: 1; min-width: 0; }
+.hub-header__title { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 
 .hub-main { flex: 1; max-width: 960px; width: 100%; margin: 0 auto; padding: 24px 16px; }
 
 /* ── Section header ──────────────────────────────────────────────────────── */
-.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.section-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
 .section-title { font-size: 22px; font-weight: 600; }
 
 /* ── Forms ───────────────────────────────────────────────────────────────── */
@@ -79,6 +79,11 @@ button { cursor: pointer; font: inherit; }
 
 /* ── Table ───────────────────────────────────────────────────────────────── */
 .hub-table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+
+/* Wrapper de table scrollable horizontalement : sur écran étroit, la table
+   garde sa largeur naturelle et défile à l'intérieur du wrapper au lieu de
+   pousser toute la page. -webkit-overflow-scrolling pour l'inertie iOS. */
+.table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .hub-table th { text-align: left; font-size: 13px; font-weight: 600; color: var(--text-muted); padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .hub-table td { padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .hub-table tr:last-child td { border-bottom: none; }
@@ -111,7 +116,7 @@ button { cursor: pointer; font: inherit; }
 
 /* ── Event meta ──────────────────────────────────────────────────────────── */
 .event-meta-section { margin-bottom: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-.event-meta-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.event-meta-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .event-meta-row:last-child { margin-bottom: 0; }
 
 /* ── Panel sections ──────────────────────────────────────────────────────── */
@@ -128,7 +133,7 @@ button { cursor: pointer; font: inherit; }
 .question-row__text p { margin-bottom: 4px; }
 .question-row__actions { display: flex; gap: 6px; flex-shrink: 0; }
 .question-editor__add { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-.question-form__row { display: flex; gap: 16px; margin: 8px 0; }
+.question-form__row { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; }
 
 /* ── Sync info ───────────────────────────────────────────────────────────── */
 .sync-info { display: grid; grid-template-columns: 140px 1fr; gap: 6px 16px; margin-top: 12px; }
@@ -270,9 +275,13 @@ button { cursor: pointer; font: inherit; }
 
 /* ── Admin ───────────────────────────────────────────────────────────────── */
 .admin-table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+/* Cellule token : le token (64 car.) passe à la ligne dans une largeur bornée
+   au lieu d'étirer la colonne ; les boutons Token/Cmd wrappent dessous. */
+.token-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.token-cell__code { font-size: 11px; overflow-wrap: anywhere; max-width: 220px; }
 .admin-table th, .admin-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .admin-table th { font-weight: 600; color: var(--text-muted); }
-.panel-section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.panel-section-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .disk-bar-wrap { background: var(--border); border-radius: 4px; height: 10px; overflow: hidden; margin-bottom: 8px; }
 .disk-bar { height: 100%; background: var(--accent); transition: width .3s; }
 .disk-bar-wrap--low .disk-bar { background: var(--danger); }

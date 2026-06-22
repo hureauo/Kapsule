@@ -119,34 +119,36 @@ export default function EventsPage() {
             {isSuperuser ? 'Aucun événement. Créez-en un !' : 'Aucun événement ne vous a encore été assigné.'}
           </p>
         ) : (
-          <table className="hub-table">
-            <thead>
-              <tr>
-                <th>Nom</th>
-                <th>Date</th>
-                <th>Statut</th>
-                <th>Borne</th>
-              </tr>
-            </thead>
-            <tbody>
-              {events.map((ev) => (
-                <tr
-                  key={ev.id}
-                  className="hub-table__row--clickable"
-                  onClick={() => navigate(`/events/${ev.id}`)}
-                >
-                  <td>{ev.name}</td>
-                  <td>{formatDate(ev.event_date)}</td>
-                  <td>
-                    <span className={`status-badge status-badge--${ev.status}`}>
-                      {STATUS_LABEL[ev.status] ?? ev.status}
-                    </span>
-                  </td>
-                  <td>{ev.box_id ?? '—'}</td>
+          <div className="table-scroll">
+            <table className="hub-table">
+              <thead>
+                <tr>
+                  <th>Nom</th>
+                  <th>Date</th>
+                  <th>Statut</th>
+                  <th>Borne</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {events.map((ev) => (
+                  <tr
+                    key={ev.id}
+                    className="hub-table__row--clickable"
+                    onClick={() => navigate(`/events/${ev.id}`)}
+                  >
+                    <td>{ev.name}</td>
+                    <td>{formatDate(ev.event_date)}</td>
+                    <td>
+                      <span className={`status-badge status-badge--${ev.status}`}>
+                        {STATUS_LABEL[ev.status] ?? ev.status}
+                      </span>
+                    </td>
+                    <td>{ev.box_id ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </main>
     </div>

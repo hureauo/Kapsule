@@ -62,23 +62,25 @@ function DashboardTab({ overview }) {
       {failed_jobs.length > 0 && (
         <section className="panel-section">
           <h2 className="panel-section__title">Jobs en erreur récents</h2>
-          <table className="admin-table">
-            <thead>
-              <tr><th>#</th><th>Type</th><th>Événement</th><th>Erreur</th><th>Tentatives</th><th>Fin</th></tr>
-            </thead>
-            <tbody>
-              {failed_jobs.map((j) => (
-                <tr key={j.id}>
-                  <td className="text--muted">{j.id}</td>
-                  <td>{j.type}</td>
-                  <td className="text--muted">{j.event_id}</td>
-                  <td className="text--muted" style={{ maxWidth: 240, wordBreak: 'break-word' }}>{j.error}</td>
-                  <td>{j.attempts}</td>
-                  <td className="text--muted">{formatDate(j.finished_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-scroll">
+            <table className="admin-table">
+              <thead>
+                <tr><th>#</th><th>Type</th><th>Événement</th><th>Erreur</th><th>Tentatives</th><th>Fin</th></tr>
+              </thead>
+              <tbody>
+                {failed_jobs.map((j) => (
+                  <tr key={j.id}>
+                    <td className="text--muted">{j.id}</td>
+                    <td>{j.type}</td>
+                    <td className="text--muted">{j.event_id}</td>
+                    <td className="text--muted" style={{ maxWidth: 240, wordBreak: 'break-word' }}>{j.error}</td>
+                    <td>{j.attempts}</td>
+                    <td className="text--muted">{formatDate(j.finished_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
     </>
@@ -629,49 +631,51 @@ function TokensTab() {
       {tokens.length === 0 ? (
         <p className="text--muted">Aucun token généré. Créez-en depuis l'onglet Événements.</p>
       ) : (
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>Événement</th>
-              <th>Label</th>
-              <th>Type</th>
-              <th>Token</th>
-              <th>Dernière vue</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {tokens.map((t) => (
-              <tr key={t.id}>
-                <td>{t.event_name ?? <span className="text--muted">—</span>}</td>
-                <td>{t.label ?? <span className="text--muted">—</span>}</td>
-                <td>
-                  <span className={`status-badge ${t.is_preview ? 'status-badge--draft' : 'status-badge--ready'}`}>
-                    {t.is_preview ? 'Essai' : 'Réel'}
-                  </span>
-                </td>
-                <td>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <code style={{ fontSize: '11px', wordBreak: 'break-all' }}>{t.token_clear}</code>
-                    <CopyButton text={t.token_clear} label="Token" labelDone="✓" />
-                    <CopyButton text={dockerCmd(t)} label="Cmd" labelDone="✓" />
-                  </div>
-                </td>
-                <td className="text--muted">{formatDate(t.last_seen_at)}</td>
-                <td>
-                  {revoking === t.id ? (
-                    <>
-                      <button className="btn btn--danger btn--sm" onClick={() => handleRevoke(t.id, true)}>Confirmer</button>
-                      <button className="btn btn--ghost btn--sm" onClick={() => setRevoking(null)}>Annuler</button>
-                    </>
-                  ) : (
-                    <button className="btn btn--ghost btn--sm" onClick={() => handleRevoke(t.id, false)}>Révoquer</button>
-                  )}
-                </td>
+        <div className="table-scroll">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Événement</th>
+                <th>Label</th>
+                <th>Type</th>
+                <th>Token</th>
+                <th>Dernière vue</th>
+                <th></th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {tokens.map((t) => (
+                <tr key={t.id}>
+                  <td>{t.event_name ?? <span className="text--muted">—</span>}</td>
+                  <td>{t.label ?? <span className="text--muted">—</span>}</td>
+                  <td>
+                    <span className={`status-badge ${t.is_preview ? 'status-badge--draft' : 'status-badge--ready'}`}>
+                      {t.is_preview ? 'Essai' : 'Réel'}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="token-cell">
+                      <code className="token-cell__code">{t.token_clear}</code>
+                      <CopyButton text={t.token_clear} label="Token" labelDone="✓" />
+                      <CopyButton text={dockerCmd(t)} label="Cmd" labelDone="✓" />
+                    </div>
+                  </td>
+                  <td className="text--muted">{formatDate(t.last_seen_at)}</td>
+                  <td>
+                    {revoking === t.id ? (
+                      <>
+                        <button className="btn btn--danger btn--sm" onClick={() => handleRevoke(t.id, true)}>Confirmer</button>
+                        <button className="btn btn--ghost btn--sm" onClick={() => setRevoking(null)}>Annuler</button>
+                      </>
+                    ) : (
+                      <button className="btn btn--ghost btn--sm" onClick={() => handleRevoke(t.id, false)}>Révoquer</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );
@@ -802,7 +806,8 @@ function UsersTab() {
       {users.length === 0 ? (
         <p className="text--muted" style={{ marginTop: '12px' }}>Aucun utilisateur enregistré.</p>
       ) : (
-        <table className="admin-table" style={{ marginTop: '16px' }}>
+        <div className="table-scroll" style={{ marginTop: '16px' }}>
+        <table className="admin-table">
           <thead>
             <tr><th>Email</th><th>Nom</th><th>Rôle</th><th>Mot de passe</th><th>Actif</th><th>Actions</th></tr>
           </thead>
@@ -845,6 +850,7 @@ function UsersTab() {
             })}
           </tbody>
         </table>
+        </div>
       )}
     </section>
   );

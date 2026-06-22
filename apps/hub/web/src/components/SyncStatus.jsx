@@ -95,23 +95,25 @@ export default function SyncStatus({ event }) {
             Jobs de traitement — {jobs.done}/{jobs.total} terminés
             {jobs.failed > 0 && <span className="badge badge--error"> {jobs.failed} échoués</span>}
           </h3>
-          <table className="sync-jobs-table">
-            <thead>
-              <tr>
-                <th>Type</th><th>Vidéo</th><th>Statut</th><th>Fin</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.list.map(j => (
-                <tr key={j.id} className={`job-row job-row--${j.status}`}>
-                  <td>{j.type}</td>
-                  <td className="text--muted">{j.video_id ? j.video_id.slice(0, 8) + '…' : '—'}</td>
-                  <td><span className={`status-badge status-badge--${j.status}`}>{j.status}</span></td>
-                  <td className="text--muted">{formatDate(j.finished_at) ?? '—'}</td>
+          <div className="table-scroll">
+            <table className="sync-jobs-table">
+              <thead>
+                <tr>
+                  <th>Type</th><th>Vidéo</th><th>Statut</th><th>Fin</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {jobs.list.map(j => (
+                  <tr key={j.id} className={`job-row job-row--${j.status}`}>
+                    <td>{j.type}</td>
+                    <td className="text--muted">{j.video_id ? j.video_id.slice(0, 8) + '…' : '—'}</td>
+                    <td><span className={`status-badge status-badge--${j.status}`}>{j.status}</span></td>
+                    <td className="text--muted">{formatDate(j.finished_at) ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 
@@ -119,23 +121,25 @@ export default function SyncStatus({ event }) {
       {sync_log.length > 0 && (
         <section className="panel-section">
           <h3 className="panel-section__title">Journal de synchro (20 derniers)</h3>
-          <table className="sync-log-table">
-            <thead>
-              <tr><th>Date</th><th>Borne</th><th>Action</th><th>Détail</th></tr>
-            </thead>
-            <tbody>
-              {sync_log.map(l => (
-                <tr key={l.id}>
-                  <td className="text--muted">{formatDate(l.created_at)}</td>
-                  <td>{l.box_name ?? '—'}</td>
-                  <td><code>{l.action}</code></td>
-                  <td className="text--muted">
-                    {l.detail ? JSON.stringify(JSON.parse(l.detail)) : ''}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-scroll">
+            <table className="sync-log-table">
+              <thead>
+                <tr><th>Date</th><th>Borne</th><th>Action</th><th>Détail</th></tr>
+              </thead>
+              <tbody>
+                {sync_log.map(l => (
+                  <tr key={l.id}>
+                    <td className="text--muted">{formatDate(l.created_at)}</td>
+                    <td>{l.box_name ?? '—'}</td>
+                    <td><code>{l.action}</code></td>
+                    <td className="text--muted">
+                      {l.detail ? JSON.stringify(JSON.parse(l.detail)) : ''}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
     </div>
