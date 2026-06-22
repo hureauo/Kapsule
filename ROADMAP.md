@@ -302,3 +302,13 @@ Machine de capture dédiée, job `chromakey`, portail invités, mode point d'acc
 
 - **Monitoring serveur** : métriques live (CPU, RAM, température) remontées par chaque Raspberry via WebSocket ou polling `/api/sync/metrics`. Affichage dans l'onglet Bornes (courbes, alertes seuil).
 - **Console SSH distante** : terminal `xterm.js` dans le navigateur, relayé via WebSocket Hub → SSH sur le Raspberry (lib `ssh2`). Permet le débogage à distance sans accès réseau direct à la borne.
+
+### Responsive Hub admin — tables en pattern card/table (mobile)
+
+Sur mobile, les tables denses de l'admin (Tokens 6 col., Utilisateurs 6 col., Jobs en erreur) sont peu lisibles même rendues scrollables. Objectif : **table sur desktop, cartes empilées sur mobile** (chaque ligne → carte, chaque cellule préfixée par son label) — même rendu que l'onglet Événements (`ev-row`).
+
+- [ ] 9.x Pattern responsive card/table : classe `.responsive-table`, `thead` masqué sous un seuil, `<td data-label="…">` rendu en `::before`, basculement par **media query**.
+  - **Tables concernées** : `TokensTab`, `UsersTab`, Dashboard jobs en erreur (`AdminPage.jsx`), `sync-jobs-table`/`sync-log-table` (`SyncStatus.jsx`), `hub-table` (`EventsPage.jsx`).
+  - ⚠️ **Écart de style assumé** : le CSS Hub n'utilise aujourd'hui *aucune media query* (tout en `flex-wrap`). Ce pattern en exige une ; c'est l'introduction (localisée, justifiée) de la première media query du projet — à valider avant implémentation.
+  - **Déjà fait (palliatif)** : tables enveloppées dans `.table-scroll` (overflow-x), `.token-cell` wrap du token (commit responsive Hub). Le pattern card/table remplacerait ce palliatif côté mobile.
+  - **Idée connexe** : envisager un skill frontend / capacité de preview visuel pour ce type de travail (modifs CSS faites sans rendu visible actuellement).
