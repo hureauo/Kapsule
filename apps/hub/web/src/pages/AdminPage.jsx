@@ -828,7 +828,10 @@ export default function AdminPage() {
       <header className="hub-header">
         <span className="hub-logo">Kapsule</span>
         <span className="hub-header__title">Administration</span>
-        <button className="btn btn--ghost btn--sm" onClick={logout}>Déconnexion</button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button className="btn btn--ghost btn--sm" onClick={() => navigate('/events')}>Événements</button>
+          <button className="btn btn--ghost btn--sm" onClick={logout}>Déconnexion</button>
+        </div>
       </header>
 
       <main className="hub-main">

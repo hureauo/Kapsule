@@ -59,7 +59,12 @@ export default function EventsPage() {
     <div className="hub-page">
       <header className="hub-header">
         <span className="hub-logo">Kapsule Hub</span>
-        <button className="btn btn--ghost" onClick={handleLogout}>Déconnexion</button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {isSuperuser && (
+            <button className="btn btn--ghost" onClick={() => navigate('/admin')}>Administration</button>
+          )}
+          <button className="btn btn--ghost" onClick={handleLogout}>Déconnexion</button>
+        </div>
       </header>
 
       <main className="hub-main">
