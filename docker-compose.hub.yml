@@ -15,6 +15,12 @@ services:
       - ADMIN_PASSWORD_HUB=${ADMIN_PASSWORD_HUB:-}
       - EDGE_DOMAIN=${EDGE_DOMAIN:-kapsule.hureau.com}
       - PREVIEW_IMAGE=${PREVIEW_IMAGE:-kapsule-borne-preview-frontend}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_SECURE=${SMTP_SECURE:-false}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-Kapsule <noreply@kapsule.hureau.com>}
     ports:
       - "3001:3001"
     volumes:

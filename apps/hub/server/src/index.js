@@ -13,6 +13,7 @@ import { makeSyncRouter } from './routes/sync.js';
 import { makeGalleryRouter } from './routes/gallery.js';
 import { makePreviewGalleryRouter } from './routes/previewGallery.js';
 import { makeVersionsRouter } from './routes/versions.js';
+import { createMailer, createNullMailer } from './email/mailer.js';
 
 async function seedAdminIfNeeded() {
   if (!config.adminEmail || !config.adminPassword) return;
@@ -23,17 +24,21 @@ async function seedAdminIfNeeded() {
   console.log(`[hub] compte admin créé : ${config.adminEmail}`);
 }
 
-export function createApp(dataDir, opts = {}, { docker, resolvePreviewBase } = {}) {
+export function createApp(dataDir, opts = {}, { docker, resolvePreviewBase, mailer } = {}) {
   openRegistry(dataDir);
+
+  // Mailer injectable : un mock en test, le transport SMTP réel au démarrage.
+  // Défaut sûr = null mailer (no-op) → aucun test ne peut atteindre un vrai SMTP.
+  const mail = mailer ?? createNullMailer();
 
   const app = express();
   app.set('trust proxy', 1);
   app.use(express.json({ limit: '1mb' }));
 
-  app.use('/api/auth', makeAuthRouter());
+  app.use('/api/auth', makeAuthRouter({ mailer: mail }));
   app.use('/api/events', makeEventsRouter(dataDir, { docker }));
   app.use('/api/events/:eventId/questions', makeQuestionsRouter(dataDir));
-  app.use('/api/admin', makeAdminRouter(dataDir));
+  app.use('/api/admin', makeAdminRouter(dataDir, { mailer: mail }));
   app.use('/api/sync', makeSyncRouter(dataDir, opts.sync));
   app.use('/api/events/:eventId/versions', makeVersionsRouter(dataDir));
   app.use('/api/events/:eventId', makePreviewGalleryRouter({ resolveBase: resolvePreviewBase }));
@@ -75,7 +80,9 @@ export function createApp(dataDir, opts = {}, { docker, resolvePreviewBase } = {
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   validateConfig(config, process.env.NODE_ENV);
   mkdirSync(config.dataDir, { recursive: true });
-  const app = createApp(config.dataDir);
+  // Transport SMTP réel si configuré, sinon null mailer (liens copiables uniquement).
+  const mailer = config.smtpHost ? createMailer(config) : createNullMailer();
+  const app = createApp(config.dataDir, {}, { mailer });
   seedAdminIfNeeded().then(() => {
     app.listen(config.port, () => {
       const w = 52;
@@ -91,6 +98,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       line(`  Admin email    : ${config.adminEmail || '(non configuré)'}`);
       line(`  Inscription    : ${config.allowRegister ? 'ouverte' : 'fermée (liens admin)'}`);
       line(`  JWT secret     : ${config.jwtSecret === 'change-me' ? '⚠️  change-me (DEV)' : '✓ configuré'}`);
+      line(`  SMTP           : ${config.smtpHost ? `✓ ${config.smtpHost}` : '(désactivé — liens copiables)'}`);
       console.log(`└${'─'.repeat(w)}┘`);
     });
   });

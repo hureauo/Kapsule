@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { randomBytes, createHash } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,11 +10,12 @@ import {
   createRegistrationToken,
   insertBoxToken, listBoxTokensByEvent, listAllBoxTokens, getBoxTokenById, deleteBoxToken, updateBoxToken,
   getEvent, listEventUsers, upsertEventUser, deleteEventUser,
-  countSuperusers,
+  countSuperusers, insertEmailLog,
 } from '../registry.js';
 import { requireUser } from '../middleware/auth.js';
 import { openEventDb } from '../eventStore.js';
 import { META_KEYS } from '../eventConfig.js';
+import { buildRegistrationUrl } from '../email/url.js';
 
 const META_HASH_KEYS = META_KEYS;
 
@@ -46,9 +48,21 @@ function dirSize(dirPath) {
   return total;
 }
 
-export function makeAdminRouter(dataDir) {
+export function makeAdminRouter(dataDir, { mailer } = {}) {
   const router = Router();
   router.use(requireUser, requireSuperuser);
+
+  // Durcissement : chaque send-registration déclenche un envoi SMTP sortant + crée un
+  // token. Même réservée aux superusers, une session abusée pourrait servir
+  // d'amplificateur d'envoi → plafond. Instancié par routeur (état en mémoire isolé
+  // entre suites de tests). 20/heure suffit largement à un usage admin normal.
+  const sendRegistrationLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Trop d\'envois, réessayez plus tard.' },
+  });
 
   // ── Gestion des comptes clients ─────────────────────────────────────────────
 
@@ -69,7 +83,7 @@ export function makeAdminRouter(dataDir) {
 
       const userId = result.lastInsertRowid;
       const { token } = createRegistrationToken(db, { user_id: userId });
-      const registration_url = `${req.protocol}://${req.get('host')}/register?token=${token}`;
+      const registration_url = buildRegistrationUrl(req, token);
       const user = getUserById(db, userId);
       const { password_hash: _, ...safeUser } = user;
 
@@ -129,8 +143,45 @@ export function makeAdminRouter(dataDir) {
       if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
 
       const { token } = createRegistrationToken(db, { user_id: user.id });
-      const registration_url = `${req.protocol}://${req.get('host')}/register?token=${token}`;
+      const registration_url = buildRegistrationUrl(req, token);
       res.json({ registration_url });
+    } catch (err) { next(err); }
+  });
+
+  // POST /api/admin/users/:id/send-registration — génère un lien ET l'envoie par email.
+  // Envoi SYNCHRONE + journalisé dans email_logs. Renvoie TOUJOURS registration_url
+  // (fallback copiable) + email_sent : un échec SMTP ne fait jamais échouer la requête.
+  router.post('/users/:id/send-registration', sendRegistrationLimiter, async (req, res, next) => {
+    try {
+      const db = getDb();
+      const user = getUserById(db, req.params.id);
+      if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
+      const { token } = createRegistrationToken(db, { user_id: user.id });
+      const registration_url = buildRegistrationUrl(req, token);
+
+      let email_sent = false;
+      try {
+        const result = await mailer.sendRegistrationLink({
+          to: user.email, name: user.name, url: registration_url,
+        });
+        email_sent = result.ok === true;
+        insertEmailLog(db, {
+          recipient_email: user.email,
+          type: 'registration',
+          subject: result.subject ?? null,
+          status: result.skipped ? 'skipped' : 'sent',
+        });
+      } catch (err) {
+        insertEmailLog(db, {
+          recipient_email: user.email,
+          type: 'registration',
+          status: 'failed',
+          error: err.message,
+        });
+      }
+
+      res.json({ registration_url, email_sent });
     } catch (err) { next(err); }
   });
 

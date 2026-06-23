@@ -72,6 +72,8 @@ export const api = {
   createUser: (email, name) => apiFetch('/admin/users', { method: 'POST', body: { email, name } }),
   updateUser: (id, fields) => apiFetch(`/admin/users/${id}`, { method: 'PUT', body: fields }),
   createRegistrationLink: (id) => apiFetch(`/admin/users/${id}/registration-link`, { method: 'POST' }),
+  // Génère un lien ET l'envoie par email ; renvoie { registration_url, email_sent }
+  sendRegistration: (id) => apiFetch(`/admin/users/${id}/send-registration`, { method: 'POST' }),
 
   // Admin : utilisateurs assignés à un événement
   listEventUsers: (eventId) => apiFetch(`/admin/events/${eventId}/users`),

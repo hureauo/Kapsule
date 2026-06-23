@@ -72,7 +72,7 @@ preview → ready → loaded → live → closed → pushed → processed → wa
 
 **Frontends** : React 18 + Vite 5 (`@vitejs/plugin-react`), `react-router-dom` v6, CSS pur (un stylesheet par app, custom properties, pas de framework UI). Capture via l'API native `MediaRecorder` (pas de bibliothèque d'enregistrement).
 
-**Hub en plus** : `argon2` (hash mots de passe), `express-rate-limit` (anti brute force sur login, sessions et uploads), `ffmpeg`/`ffprobe` appelés via `child_process.spawn` (pas de wrapper npm), `archiver` (génération des ZIP d'export, mode store).
+**Hub en plus** : `argon2` (hash mots de passe), `express-rate-limit` (anti brute force sur login, sessions et uploads), `ffmpeg`/`ffprobe` appelés via `child_process.spawn` (pas de wrapper npm), `archiver` (génération des ZIP d'export, mode store), `nodemailer` (envoi SMTP des emails : lien de définition de mot de passe, notifications).
 
 **Borne preview en plus** : `express-rate-limit` (la borne d'essai est Internet-facing : même protection que le Hub sur les sessions et uploads).
 
@@ -153,15 +153,15 @@ kapsule/
 │       │   └── src/
 │       │       ├── index.js, config.js
 │       │       ├── registry.js              # users, box_tokens, events, event_users, jobs,
-│       │       │                            # sync_log, event_versions, schema_migrations
-│       │       │                            # + runMigrations() versionné
+│       │       │                            # sync_log, event_versions, email_logs,
+│       │       │                            # schema_migrations + runMigrations() versionné
 │       │       ├── eventStore.js            # openEventDb(eventId) avec cache LRU + closeEventDb()
 │       │       ├── versioning.js            # saveVersion(), listVersions(), restoreVersion()
 │       │       ├── eventConfig.js           # readSnapshot(), applyConfig() — lecture/écriture config événement
 │       │       ├── middleware/auth.js       # requireUser (JWT), requireOwner(eventId), requireAdmin
 │       │       ├── middleware/boxAuth.js    # requireBox : header X-Box-Token → sha256 → box_tokens
 │       │       ├── routes/
-│       │       │   ├── auth.js              # login/register
+│       │       │   ├── auth.js              # login/register/set-password/forgot-password
 │       │       │   ├── events.js            # CRUD événements + transitions d'état + routes preview
 │       │       │   │                        # (status/token : owner ; start/stop : superuser)
 │       │       │   ├── questions.js         # CRUD questions (écrit dans la BD de l'événement)
@@ -173,6 +173,11 @@ kapsule/
 │       │       ├── preview/
 │       │       │   └── provisioner.js       # DockerClient (typedef + dockerCli réel), slugFor(),
 │       │       │                            # provisionPreview/startPreview/deprovisionPreview()
+│       │       ├── email/                   # envoi d'emails (injecté via 3e arg de createApp)
+│       │       │   ├── mailer.js            # createMailer(config) (nodemailer) + createNullMailer() no-op
+│       │       │   ├── render.js            # renderTemplate(name,data) → { subject, text } ({{var}})
+│       │       │   ├── url.js               # buildRegistrationUrl(req, token) — factorise l'URL /register
+│       │       │   └── templates/           # registration.txt, password_reset.txt (1re ligne = Subject:)
 │       │       ├── scripts/
 │       │       │   ├── create-admin.js      # crée le 1er compte superuser (prompt email/mdp)
 │       │       │   └── reconcile-previews.js# démarre les previews preview_desired='running' (boot/vps-up)
@@ -313,11 +318,21 @@ users (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-registration_tokens (                          -- lien d'inscription (pas de SMTP : l'URL est affichée à l'admin)
-  token_hash TEXT PRIMARY KEY,                 -- sha256(token) ; le token clair n'apparaît que dans l'URL affichée
+registration_tokens (                          -- lien d'inscription / réinitialisation de mot de passe
+  token_hash TEXT PRIMARY KEY,                 -- sha256(token) ; le token clair n'apparaît que dans l'URL (email + affichage)
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  expires_at DATETIME NOT NULL,                -- défaut +7 jours
+  expires_at DATETIME NOT NULL,                -- défaut +7 jours (création) ; +1 h pour un reset (forgot-password)
   used_at DATETIME,                            -- NULL = encore valable ; usage unique
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+email_logs (                                   -- journal des envois SMTP (lien mot de passe, notifications)
+  id INTEGER PRIMARY KEY AUTOINCREMENT,        -- RGPD : emails de COMPTES (clients/admin) uniquement, jamais d'invité
+  recipient_email TEXT NOT NULL,
+  type TEXT NOT NULL,                          -- 'registration' | 'password_reset' | (futur)
+  subject TEXT,
+  status TEXT NOT NULL DEFAULT 'sent' CHECK(status IN ('sent','failed','skipped')),
+  error TEXT,                                  -- message d'erreur si status='failed'
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -477,8 +492,9 @@ Base `/api`. `GET /api/health`.
 - `DELETE /api/events/:id/videos/:videoId` — invalide l'archive (ré-enfile un job `archive`).
 
 **Super-admin** (`routes/admin.js`) — rôle `superuser` uniquement (l'opérateur ; les clients `client` n'y ont pas accès) :
-- **Comptes clients** (pas de SMTP → l'URL d'enregistrement est renvoyée à l'admin) :
-  - `POST /api/admin/users` `{ email, name? }` → crée un compte `client` **sans mot de passe** (`password_hash` NULL), génère un `registration_token` (expire +7 j, usage unique), **retourne `{ user, registration_url }`** — l'URL `…/register?token=<clair>` est affichée à l'admin qui la transmet au client.
+- **Comptes clients** (l'URL d'enregistrement est envoyée par email si SMTP configuré, **et** renvoyée à l'admin comme fallback copiable) :
+  - `POST /api/admin/users` `{ email, name? }` → crée un compte `client` **sans mot de passe** (`password_hash` NULL), génère un `registration_token` (expire +7 j, usage unique), **retourne `{ user, registration_url }`** — l'URL `…/register?token=<clair>`.
+  - `POST /api/admin/users/:id/send-registration` → génère un lien **et l'envoie par email** (envoi synchrone, journalisé dans `email_logs`). **Retourne toujours `{ registration_url, email_sent }`** : un échec SMTP ne fait pas échouer la requête (fallback lien copiable + `email_sent:false`).
   - `GET /api/admin/users` — liste (email, name, role, active, a-un-mot-de-passe).
   - `PUT /api/admin/users/:id` `{ active?, name? }` — désactive/réactive (login refusé si `active=0`), renomme. Régénération d'un lien d'enregistrement : `POST /api/admin/users/:id/registration-link` → nouveau token + URL.
 - **Utilisateurs par événement** (`event_users`) — orchestre quels comptes ont accès à quelle borne :
@@ -711,4 +727,3 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 - Verrouillage de `QuestionNav` pendant `recording`/`uploading`.
 - **Token éphémère « pur événement » sans entité `box_tokens`** (un token = une colonne sur `events`) : écarté au profit de `box_tokens` (§5.3) qui autorise plusieurs tokens par événement (réel + essai) et la révocation indépendante.
 - **Lien de partage sans compte pour l'aperçu client** : écarté au profit d'un onglet dans l'espace client (compte Hub) — un seul système d'accès à maintenir. À réévaluer si un client refuse de créer un compte.
-- **SMTP / envoi automatique des liens d'enregistrement** : hors périmètre Phase 6 (l'URL est affichée à l'admin qui la transmet manuellement). À brancher quand un serveur mail est disponible.

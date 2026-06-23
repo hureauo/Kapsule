@@ -713,6 +713,7 @@ function UsersTab() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
   const [copiedLink, setCopiedLink] = useState('');
+  const [mailMsg, setMailMsg] = useState('');
   const myRole = getRole();
 
   const load = useCallback(async () => {
@@ -751,6 +752,22 @@ function UsersTab() {
       navigator.clipboard.writeText(registration_url).catch(() => {});
       setCopiedLink(registration_url);
       setTimeout(() => setCopiedLink(''), 6000);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  // Envoie le mail de définition de mot de passe ET affiche le lien en fallback
+  // (le backend renvoie toujours registration_url, même si l'envoi SMTP a échoué).
+  async function handleSendMail(userId) {
+    setMailMsg('');
+    try {
+      const { registration_url, email_sent } = await api.sendRegistration(userId);
+      setCopiedLink(registration_url);
+      setMailMsg(email_sent
+        ? 'Email envoyé.'
+        : 'Email non envoyé (SMTP indisponible) — transmettez le lien manuellement.');
+      setTimeout(() => { setCopiedLink(''); setMailMsg(''); }, 8000);
     } catch (e) {
       setError(e.message);
     }
@@ -798,6 +815,7 @@ function UsersTab() {
       </form>
       {createError && <p className="error-msg">{createError}</p>}
 
+      {mailMsg && <p className="text--muted" style={{ marginTop: '8px', fontSize: '13px' }}>{mailMsg}</p>}
       {copiedLink && (
         <div className="reg-link-box" style={{ marginTop: '8px' }}>
           <span className="text--muted" style={{ fontSize: '12px' }}>Lien d'enregistrement (copié) :</span>
@@ -831,6 +849,9 @@ function UsersTab() {
                   <td data-label="Mot de passe">{u.has_password ? '✓' : <span className="text--muted">Non défini</span>}</td>
                   <td data-label="Actif">{u.active ? 'Oui' : 'Non'}</td>
                   <td style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    <button className="btn btn--ghost btn--sm" onClick={() => handleSendMail(u.id)}>
+                      Envoyer le mail
+                    </button>
                     <button className="btn btn--ghost btn--sm" onClick={() => handleNewLink(u.id)}>
                       Lien
                     </button>

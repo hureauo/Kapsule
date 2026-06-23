@@ -95,6 +95,19 @@ export function openRegistry(dataDir) {
       author     TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    -- Journal des envois d'emails (lien de mot de passe, notifications).
+    -- RGPD : ne contient que des emails de COMPTES (clients/admin), jamais d'invité.
+    CREATE TABLE IF NOT EXISTS email_logs (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      recipient_email TEXT NOT NULL,
+      type            TEXT NOT NULL,
+      subject         TEXT,
+      status          TEXT NOT NULL DEFAULT 'sent'
+                      CHECK(status IN ('sent','failed','skipped')),
+      error           TEXT,
+      created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   runMigrations(db);
@@ -298,6 +311,27 @@ const MIGRATIONS = [
       if (!cols.includes('preview_desired')) {
         db.exec("ALTER TABLE events ADD COLUMN preview_desired TEXT NOT NULL DEFAULT 'stopped'");
       }
+    },
+  },
+  {
+    version: 9,
+    name: 'email_logs',
+    // Journal des envois d'emails. Pour les DB déjà existantes (le bloc CREATE TABLE
+    // IF NOT EXISTS d'openRegistry ne s'applique qu'aux colonnes nouvelles, mais ici
+    // c'est une table entière → idempotent via IF NOT EXISTS).
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS email_logs (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          recipient_email TEXT NOT NULL,
+          type            TEXT NOT NULL,
+          subject         TEXT,
+          status          TEXT NOT NULL DEFAULT 'sent'
+                          CHECK(status IN ('sent','failed','skipped')),
+          error           TEXT,
+          created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
     },
   },
 ];
@@ -513,6 +547,20 @@ export function insertSyncLog(db, { event_id = null, action, detail = null }) {
   return db
     .prepare('INSERT INTO sync_log (event_id, action, detail) VALUES (?, ?, ?)')
     .run(event_id, action, detail ? JSON.stringify(detail) : null);
+}
+
+// ── email_logs ────────────────────────────────────────────────────────────────
+
+export function insertEmailLog(db, { recipient_email, type, subject = null, status = 'sent', error = null }) {
+  return db
+    .prepare('INSERT INTO email_logs (recipient_email, type, subject, status, error) VALUES (?, ?, ?, ?, ?)')
+    .run(recipient_email, type, subject, status, error);
+}
+
+export function listEmailLogs(db, { limit = 100 } = {}) {
+  return db
+    .prepare('SELECT * FROM email_logs ORDER BY created_at DESC, id DESC LIMIT ?')
+    .all(limit);
 }
 
 // ── event_versions ────────────────────────────────────────────────────────────

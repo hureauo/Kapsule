@@ -15,6 +15,7 @@ import { startPreview, deprovisionPreview, slugFor, dockerCli } from '../preview
 import { triggerPreviewPull } from './previewGallery.js';
 import { captureSnapshot, resolveAuthor } from '../versioning.js';
 import { deleteEventVersions, deleteEvent, deleteJobsForEvent } from '../registry.js';
+import { buildRegistrationUrl } from '../email/url.js';
 
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'superuser') return res.status(403).json({ error: 'Réservé aux admins' });
@@ -261,7 +262,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
         const result = insertUser(db, { email: email.trim(), role: 'client' });
         user = { id: result.lastInsertRowid, email: email.trim() };
         const { token } = createRegistrationToken(db, { user_id: user.id });
-        registration_url = `${req.protocol}://${req.get('host')}/register?token=${token}`;
+        registration_url = buildRegistrationUrl(req, token);
         created = true;
       }
 

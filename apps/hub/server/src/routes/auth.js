@@ -17,7 +17,7 @@ const loginLimiter = rateLimit({
   message: { error: 'Trop de tentatives, réessayez dans 15 minutes.' },
 });
 
-export function makeAuthRouter() {
+export function makeAuthRouter({ mailer } = {}) {
   const router = Router();
 
   router.post('/login', loginLimiter, async (req, res, next) => {

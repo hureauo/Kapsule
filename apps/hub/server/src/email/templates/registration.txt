@@ -1,0 +1,13 @@
+Subject: Activez votre compte Kapsule
+
+Bonjour{{name}},
+
+Un compte Kapsule a été créé pour vous. Pour l'activer, définissez votre mot de passe en suivant ce lien :
+
+{{url}}
+
+Ce lien est valable 7 jours et ne peut être utilisé qu'une seule fois.
+
+Si vous n'êtes pas à l'origine de cette demande, ignorez simplement cet email.
+
+— L'équipe Kapsule
