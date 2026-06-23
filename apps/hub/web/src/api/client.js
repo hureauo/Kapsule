@@ -82,6 +82,8 @@ export const api = {
 
   // Auth : poser le mot de passe via lien d'enregistrement
   setPassword: (token, password) => apiFetch('/auth/set-password', { method: 'POST', body: { token, password } }),
+  // Auth : demander un lien de réinitialisation (réponse toujours générique)
+  forgotPassword: (email) => apiFetch('/auth/forgot-password', { method: 'POST', body: { email } }),
 
   // Galerie preview (proxy Hub → borne d'essai)
   listPreviewVideos: (eventId) => apiFetch(`/events/${eventId}/preview-videos`),

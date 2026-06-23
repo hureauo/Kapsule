@@ -421,6 +421,14 @@ export function markRegistrationTokenUsed(db, token_hash) {
     .run(token_hash);
 }
 
+// Dernier token (par date de création) émis pour un user — sert au garde anti-spam
+// du « mot de passe oublié » (ne pas renvoyer un email si un token < 5 min existe déjà).
+export function getLatestRegistrationToken(db, user_id) {
+  return db
+    .prepare('SELECT * FROM registration_tokens WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1')
+    .get(user_id);
+}
+
 // ── events ───────────────────────────────────────────────────────────────────
 
 export function listEvents(db, { userId, role }) {

@@ -1,6 +1,6 @@
 ---
 status: tests-pending
-base_commit: e9d9db468b49d8eb1bfc950655354fb9f6d3bffb
+base_commit: 741ab72d66058aa3558236174fb4e10745b69eb9
 workspaces: [@kapsule/hub-server]
 generated_at: 2026-06-23T00:00:00Z
 verdict: COMMIT OK
@@ -9,18 +9,15 @@ verdict: COMMIT OK
 # Relais de review → tests
 
 Workspaces à tester :
-- @kapsule/hub-server (raison : nouveau module email/, mailer injecté dans createApp, endpoint POST /users/:id/send-registration, table email_logs + migration #9, refactor buildRegistrationUrl dans admin.js/events.js)
+- @kapsule/hub-server (raison : routes/auth.js + registry.js modifiés — nouvelle route POST /forgot-password, helper getLatestRegistrationToken)
 
-> Note : `apps/hub/web/` (AdminPage.jsx, client.js) est touché mais le projet n'a pas de suite de tests web — non listé comme workspace testable.
+Note : apps/hub/web/ touché (LoginPage.jsx, client.js) mais sans suite de tests web — vérification visuelle/manuelle uniquement.
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- Migration #9 idempotente sur DB existante (schema_migrations v8 → v9) ET sur DB neuve (le bloc CREATE TABLE initial crée déjà email_logs, puis la migration la (re)crée via IF NOT EXISTS) — pas de double-création ni d'erreur.
-- send-registration via null mailer : doit donner `email_sent:false` + log `skipped` (et non `sent`). Le test actuel couvre `sent` (mock ok) et `failed` (throw), mais PAS explicitement le chemin `skipped` du null mailer — un test supplémentaire serait utile.
-- Confirmer qu'aucun chemin de test n'instancie `createMailer` (transport SMTP réel) : seul le null mailer (défaut createApp) ou un mock injecté est utilisé.
-- email_logs ne contient que des emails de COMPTES (user.email), jamais d'invité (RGPD §11.13 / §5.3).
+- Anti-énumération par TIMING (💡) : la branche « compte réel + actif » fait un envoi SMTP synchrone (await sendPasswordReset) alors que les branches inconnu/inactif/<5min répondent quasi-instantanément. Le corps + statut HTTP sont strictement identiques (vérifié), mais la latence du premier envoi pour un compte existant constitue un oracle de timing en production réelle. Non bloquant ; le mock de test ne révèle pas la latence d'un vrai SMTP.
+- Token reset (1h) réutilise registration_tokens + /set-password sans distinction de type : un token issu de forgot-password doit poser un nouveau password et rester usage-unique. La suite actuelle ne couvre PAS le chemin de bout en bout forgot → set-password — à confirmer.
+- Garde 5 min : created_at SQLite (résolution seconde, UTC) normalisé en ISO via replace(' '->'T')+'Z'. Le test « renvoi <5min refusé » couvre le cas nominal ; pas de test du cas inverse « token >5min → nouvel envoi autorisé ».
 
 ## Corrections demandées
 
 Aucune correction requise.
-
-> Findings non bloquants (⚠️ doc §13 périmée + 💡 rate-limit sur send-registration) documentés dans le rapport du reviewer — laissés à l'appréciation de l'agent principal, ne bloquent pas le commit.

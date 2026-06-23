@@ -7,7 +7,9 @@ import { config } from '../config.js';
 import {
   getDb, getUserByEmail, insertUser, updateUser,
   getRegistrationToken, markRegistrationTokenUsed,
+  createRegistrationToken, getLatestRegistrationToken, insertEmailLog,
 } from '../registry.js';
+import { buildRegistrationUrl } from '../email/url.js';
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
@@ -16,6 +18,19 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Trop de tentatives, réessayez dans 15 minutes.' },
 });
+
+// Limiteur du « mot de passe oublié » par IP (anti-énumération + anti-flood).
+const forgotLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de demandes, réessayez plus tard.' },
+});
+
+// Délai minimal entre deux emails de réinitialisation pour une même adresse.
+const RESET_MIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;   // 1 h
 
 export function makeAuthRouter({ mailer } = {}) {
   const router = Router();
@@ -95,6 +110,53 @@ export function makeAuthRouter({ mailer } = {}) {
       markRegistrationTokenUsed(db, token_hash);
 
       res.json({ ok: true });
+    } catch (err) { next(err); }
+  });
+
+  // POST /api/auth/forgot-password — demande un lien de réinitialisation par email.
+  // Réponse TOUJOURS générique (200) : ne JAMAIS révéler si l'adresse existe (anti-énumération).
+  // N'agit que pour un compte réel et actif ; garde 5 min/email contre le flood ;
+  // token court (1 h) réutilisant la page /register?token= existante.
+  router.post('/forgot-password', forgotLimiter, async (req, res, next) => {
+    const generic = { ok: true, message: 'Si cette adresse correspond à un compte, un email vient d\'être envoyé. Pensez à vérifier vos spams.' };
+    try {
+      const { email } = req.body;
+      if (!email || !email.trim()) return res.status(400).json({ error: 'email requis' });
+
+      const db = getDb();
+      const user = getUserByEmail(db, email.trim());
+      // Compte inexistant ou désactivé → réponse générique, aucun token ni log (RGPD/anti-énumération).
+      if (!user || !user.active) return res.json(generic);
+
+      // Anti-spam : si un token a déjà été émis il y a moins de 5 min, ne pas en renvoyer
+      // (réponse générique identique pour ne pas trahir l'existence du compte).
+      const last = getLatestRegistrationToken(db, user.id);
+      // created_at SQLite = « YYYY-MM-DD HH:MM:SS » en UTC (sans suffixe). Normaliser en
+      // ISO (T + Z) pour un parsing fiable inter-moteurs avant le calcul d'intervalle.
+      if (last) {
+        const createdMs = new Date(last.created_at.replace(' ', 'T') + 'Z').getTime();
+        if (Date.now() - createdMs < RESET_MIN_INTERVAL_MS) return res.json(generic);
+      }
+
+      const { token } = createRegistrationToken(db, { user_id: user.id, expires_in_ms: RESET_TOKEN_TTL_MS });
+      const url = buildRegistrationUrl(req, token);
+      try {
+        const result = await mailer.sendPasswordReset({ to: user.email, name: user.name, url });
+        insertEmailLog(db, {
+          recipient_email: user.email,
+          type: 'password_reset',
+          subject: result.subject ?? null,
+          status: result.skipped ? 'skipped' : 'sent',
+        });
+      } catch (err) {
+        insertEmailLog(db, {
+          recipient_email: user.email,
+          type: 'password_reset',
+          status: 'failed',
+          error: err.message,
+        });
+      }
+      res.json(generic);
     } catch (err) { next(err); }
   });
 

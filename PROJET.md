@@ -468,6 +468,8 @@ Base `/api`. `GET /api/health`.
 **Auth utilisateurs** (`routes/auth.js`, `middleware/auth.js`) :
 - `POST /api/auth/login` `{ email, password }` → `{ token }` JWT 24h `{ sub: user.id, role }`. Vérif argon2. **`express-rate-limit` : 10 essais / 15 min / IP** (le Hub est exposé sur Internet).
 - `POST /api/auth/register` — **désactivé par défaut** (`ALLOW_REGISTER=false`) ; le premier compte se crée via script `npm run create-admin` (prompt email/mdp).
+- `POST /api/auth/set-password` `{ token, password }` — pose le mot de passe via un `registration_token` (création de compte **ou** réinitialisation). Vérifie `expires_at` + `used_at` (usage unique). 410 lien expiré/invalide, 409 déjà utilisé.
+- `POST /api/auth/forgot-password` `{ email }` — **réponse toujours générique (200)**, ne révèle jamais si l'adresse existe (anti-énumération). Pour un compte réel et actif : crée un `registration_token` court (**1 h**) et envoie un email de réinitialisation (journalisé `email_logs`). **`express-rate-limit` : 10 / 15 min / IP** + garde **5 min / email** (pas de second envoi sous 5 min). Aucun token ni log pour un email inconnu.
 - `requireUser` : JWT header ou `?token=`. `requireOwner(eventId)` : 403 si l'événement n'appartient pas au user (sauf `role='superuser'`). **Toutes les routes événement passent par ce contrôle — c'est le cloisonnement client.**
 
 **Événements** (`routes/events.js`) — user :

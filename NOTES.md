@@ -6,6 +6,29 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase email.C — forgot-password (revue kapsule-reviewer)
+
+### Side-channel de timing sur l'anti-énumération de `/forgot-password`
+
+**Fichier :** [routes/auth.js](apps/hub/server/src/routes/auth.js) — `POST /forgot-password`
+
+**Observation :** la forme de réponse (statut 200 + corps `{ ok, message }` constant) est strictement
+identique pour email existant / inconnu / inactif / renvoi < 5 min → l'anti-énumération *par forme de
+réponse* est correcte. MAIS la branche « compte réel + actif sans token récent » exécute un
+`await mailer.sendPasswordReset(...)` SMTP **synchrone** avant de répondre, là où les autres branches
+répondent quasi-instantanément. En production avec un vrai SMTP, la latence du premier envoi pour une
+adresse existante est un oracle de timing observable (révèle l'existence d'un compte).
+
+**Alternative (si souhaité) :** envoi *fire-and-forget* — répondre `generic` immédiatement, puis
+`mailer.sendPasswordReset(...).then(logSent).catch(logFailed)`. Supprime l'oracle, mais le log
+`email_logs` est alors écrit **après** la réponse HTTP (perte de la garantie « log avant réponse » ;
+les tests qui asssertent le log juste après l'appel devraient être adaptés).
+
+**À ne pas corriger maintenant.** Le `forgotLimiter` (10/15 min/IP) + la garde 5 min/email limitent
+déjà fortement l'exploitation. À traiter au durcissement avant exposition Internet (Phase 8S).
+
+---
+
 ## Phase V2.9 — QuestionSheet / QuestionNav (revue kapsule-reviewer)
 
 ### `touchStartY.current` non réinitialisé dans `handleTouchEnd`

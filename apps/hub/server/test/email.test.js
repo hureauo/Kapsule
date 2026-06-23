@@ -175,3 +175,71 @@ describe('send-registration — SMTP désactivé (null mailer)', () => {
     assert.equal(logs[0].error, null);
   });
 });
+
+// ── Route : POST /api/auth/forgot-password ───────────────────────────────────
+
+describe('POST /api/auth/forgot-password', () => {
+  let dir, request;
+  const resets = []; // capture les envois password_reset du mailer mock
+
+  before(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kapsule-hub-forgot-'));
+    const mailer = {
+      sendRegistrationLink: async () => ({ ok: true }),
+      sendPasswordReset: async (opts) => { resets.push(opts); return { ok: true, subject: 'Réinitialisation' }; },
+    };
+    const app = createApp(dir, {}, { mailer });
+    request = supertest(app);
+
+    const db = getDb();
+    const hash = await argon2.hash('pass', { type: argon2.argon2id });
+    insertUser(db, { email: 'real@f.test', password_hash: hash, role: 'client' });
+    insertUser(db, { email: 'inactive@f.test', password_hash: hash, role: 'client', active: 0 });
+  });
+
+  after(() => {
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('email existant : 200 générique + envoi + log sent', async () => {
+    const res = await request.post('/api/auth/forgot-password').send({ email: 'real@f.test' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+    assert.match(res.body.message, /spams/i);
+    assert.equal(resets.at(-1).to, 'real@f.test');
+    const logs = listEmailLogs(getDb(), { limit: 10 });
+    assert.equal(logs[0].type, 'password_reset');
+    assert.equal(logs[0].status, 'sent');
+  });
+
+  it('email inconnu : 200 même message, mailer NON appelé, aucun log ni token', async () => {
+    const before = resets.length;
+    const logsBefore = listEmailLogs(getDb(), { limit: 100 }).length;
+    const res = await request.post('/api/auth/forgot-password').send({ email: 'ghost@f.test' });
+    assert.equal(res.status, 200);
+    assert.match(res.body.message, /spams/i);
+    assert.equal(resets.length, before, 'mailer ne doit pas être appelé pour un inconnu');
+    assert.equal(listEmailLogs(getDb(), { limit: 100 }).length, logsBefore, 'aucun log ajouté');
+  });
+
+  it('compte inactif : 200 même message, mailer NON appelé', async () => {
+    const before = resets.length;
+    const res = await request.post('/api/auth/forgot-password').send({ email: 'inactive@f.test' });
+    assert.equal(res.status, 200);
+    assert.equal(resets.length, before);
+  });
+
+  it('renvoi < 5 min refusé : 200 générique mais pas de nouvel envoi', async () => {
+    // real@f.test a déjà reçu un token au 1er test (< 5 min) → garde anti-spam
+    const before = resets.length;
+    const res = await request.post('/api/auth/forgot-password').send({ email: 'real@f.test' });
+    assert.equal(res.status, 200);
+    assert.equal(resets.length, before, 'pas de second envoi sous 5 min');
+  });
+
+  it('400 si email absent', async () => {
+    const res = await request.post('/api/auth/forgot-password').send({});
+    assert.equal(res.status, 400);
+  });
+});
