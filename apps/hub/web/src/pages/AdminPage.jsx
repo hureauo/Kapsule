@@ -681,6 +681,65 @@ function TokensTab() {
   );
 }
 
+// ── Onglet Gestion email (journal des envois) ─────────────────────────────────
+
+const EMAIL_TYPE_LABEL = { registration: 'Inscription', password_reset: 'Réinit. mot de passe' };
+const EMAIL_STATUS_BADGE = { sent: 'status-badge--ready', failed: 'status-badge--closed', skipped: 'status-badge--waiting' };
+const EMAIL_STATUS_LABEL = { sent: 'Envoyé', failed: 'Échec', skipped: 'Ignoré (SMTP off)' };
+
+function EmailLogsTab() {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.listEmailLogs()
+      .then(setLogs)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <p className="text--muted">Chargement…</p>;
+
+  return (
+    <section className="panel-section">
+      <h2 className="panel-section__title">Journal des emails ({logs.length})</h2>
+      {error && <p className="error-msg">{error}</p>}
+      <p className="text--muted" style={{ fontSize: '13px', marginBottom: '8px' }}>
+        100 derniers envois. « Ignoré » = SMTP non configuré (le lien reste copiable côté admin).
+      </p>
+      {logs.length === 0 ? (
+        <p className="text--muted">Aucun envoi enregistré.</p>
+      ) : (
+        <div className="table-scroll">
+          <table className="admin-table responsive-table">
+            <thead>
+              <tr><th>Date</th><th>Destinataire</th><th>Type</th><th>Statut</th><th>Erreur</th></tr>
+            </thead>
+            <tbody>
+              {logs.map((l) => (
+                <tr key={l.id}>
+                  <td data-label="Date" className="text--muted">{formatDate(l.created_at)}</td>
+                  <td data-label="Destinataire">{l.recipient_email}</td>
+                  <td data-label="Type">{EMAIL_TYPE_LABEL[l.type] ?? l.type}</td>
+                  <td data-label="Statut">
+                    <span className={`status-badge ${EMAIL_STATUS_BADGE[l.status] ?? ''}`}>
+                      {EMAIL_STATUS_LABEL[l.status] ?? l.status}
+                    </span>
+                  </td>
+                  <td data-label="Erreur" className="text--muted" style={{ maxWidth: 240, wordBreak: 'break-word' }}>
+                    {l.error ?? '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ── Onglet Bornes (placeholder) ───────────────────────────────────────────────
 
 function BornesTab() {
@@ -887,6 +946,7 @@ const TABS = [
   { id: 'tokens',       label: 'Tokens' },
   { id: 'bornes',       label: 'Bornes' },
   { id: 'utilisateurs', label: 'Utilisateurs' },
+  { id: 'email',        label: 'Gestion email' },
 ];
 
 export default function AdminPage() {
@@ -945,6 +1005,7 @@ export default function AdminPage() {
         {tab === 'tokens'       && <TokensTab />}
         {tab === 'bornes'       && <BornesTab />}
         {tab === 'utilisateurs' && <UsersTab />}
+        {tab === 'email'        && <EmailLogsTab />}
       </main>
     </div>
   );

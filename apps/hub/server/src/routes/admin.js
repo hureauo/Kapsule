@@ -10,7 +10,7 @@ import {
   createRegistrationToken,
   insertBoxToken, listBoxTokensByEvent, listAllBoxTokens, getBoxTokenById, deleteBoxToken, updateBoxToken,
   getEvent, listEventUsers, upsertEventUser, deleteEventUser,
-  countSuperusers, insertEmailLog,
+  countSuperusers, insertEmailLog, listEmailLogs,
 } from '../registry.js';
 import { requireUser } from '../middleware/auth.js';
 import { openEventDb } from '../eventStore.js';
@@ -183,6 +183,11 @@ export function makeAdminRouter(dataDir, { mailer } = {}) {
 
       res.json({ registration_url, email_sent });
     } catch (err) { next(err); }
+  });
+
+  // GET /api/admin/email-logs — journal des envois d'emails (onglet Gestion email)
+  router.get('/email-logs', (req, res) => {
+    res.json(listEmailLogs(getDb(), { limit: 100 }));
   });
 
   // ── Tokens de borne (token = événement, §11.20) ──────────────────────────────

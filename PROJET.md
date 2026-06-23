@@ -496,7 +496,7 @@ Base `/api`. `GET /api/health`.
 **Super-admin** (`routes/admin.js`) — rôle `superuser` uniquement (l'opérateur ; les clients `client` n'y ont pas accès) :
 - **Comptes clients** (l'URL d'enregistrement est envoyée par email si SMTP configuré, **et** renvoyée à l'admin comme fallback copiable) :
   - `POST /api/admin/users` `{ email, name? }` → crée un compte `client` **sans mot de passe** (`password_hash` NULL), génère un `registration_token` (expire +7 j, usage unique), **retourne `{ user, registration_url }`** — l'URL `…/register?token=<clair>`.
-  - `POST /api/admin/users/:id/send-registration` → génère un lien **et l'envoie par email** (envoi synchrone, journalisé dans `email_logs`). **Retourne toujours `{ registration_url, email_sent }`** : un échec SMTP ne fait pas échouer la requête (fallback lien copiable + `email_sent:false`).
+  - `POST /api/admin/users/:id/send-registration` → génère un lien **et l'envoie par email** (envoi synchrone, journalisé dans `email_logs`, **rate-limit 20/h**). **Retourne toujours `{ registration_url, email_sent }`** : un échec SMTP ne fait pas échouer la requête (fallback lien copiable + `email_sent:false`).
   - `GET /api/admin/users` — liste (email, name, role, active, a-un-mot-de-passe).
   - `PUT /api/admin/users/:id` `{ active?, name? }` — désactive/réactive (login refusé si `active=0`), renomme. Régénération d'un lien d'enregistrement : `POST /api/admin/users/:id/registration-link` → nouveau token + URL.
 - **Utilisateurs par événement** (`event_users`) — orchestre quels comptes ont accès à quelle borne :
@@ -507,6 +507,7 @@ Base `/api`. `GET /api/health`.
   - `POST /api/admin/events/:id/tokens` `{ label?, location?, is_preview? }` → génère token (32 octets hex), stocke `sha256(token)` + `token_clear` dans `box_tokens` lié à `:id`, retourne `token_clear` (consultable à tout moment via `GET /api/admin/tokens`).
   - `GET /api/admin/events/:id/tokens` (sans le hash), `DELETE /api/admin/tokens/:tokenId` (révocation), `PUT /api/admin/tokens/:tokenId` `{ label?, location? }`.
 - `GET /api/admin/overview` — vue d'ensemble : tous les événements (tous clients), espace disque consommé par événement (`du` sur `events/<id>/`), disque libre du volume, jobs `failed` récents, et pour chaque événement ses tokens de borne (label, location, `is_preview`, `last_seen_at`).
+- `GET /api/admin/email-logs` — journal des 100 derniers envois d'emails (onglet « Gestion email ») : `recipient_email`, `type`, `subject`, `status` (`sent`/`failed`/`skipped`), `error`, `created_at`.
 
 **Synchro** (`routes/sync.js`) — `requireBox` (header `X-Box-Token`) résout le token via `box_tokens`, met à jour `box_tokens.last_seen_at`, écrit `sync_log`, et **expose `req.box = { token_id, event_id, is_preview }`** (le token désigne directement l'événement, §1) :
 - `GET /api/sync/event` — l'**unique** événement de ce token s'il est `status IN ('preview','ready','loaded')` : `{ id, name, event_date, status, updated_at, is_preview }`. **404** si l'événement n'est plus pullable (en attente, ou déjà ≥ `live`). Remplace l'ancien `GET /assigned` (liste) — une borne = un événement. Un token `is_preview=1` ne peut puller que si le statut est `preview` ; un token réel ne peut puller qu'en `ready` ou `loaded`.

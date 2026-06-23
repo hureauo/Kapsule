@@ -6,6 +6,32 @@ Elles servent de référence pour le débogage futur si un comportement inattend
 
 ---
 
+## Phase email.D — onglet Gestion email (revue kapsule-reviewer)
+
+### `GET /email-logs` ignore `?limit=` (cap dur à 100)
+
+**Fichier :** [routes/admin.js](apps/hub/server/src/routes/admin.js) — `GET /email-logs`
+
+**Observation :** la route fige `limit: 100` côté serveur et ignore tout `?limit=`. C'est un bon
+réflexe anti-abus (cap dur). Si le front veut paginer un jour, prévoir un `limit` borné
+(`Math.min(Number(req.query.limit) || 100, 100)`) plutôt qu'une route distincte.
+
+**À ne pas corriger maintenant.**
+
+---
+
+### `SELECT *` dans `listEmailLogs`
+
+**Fichier :** [registry.js](apps/hub/server/src/registry.js) — `listEmailLogs`
+
+**Observation :** `SELECT *` est sûr aujourd'hui (toutes les colonnes d'`email_logs` sont affichables,
+aucun secret). Un `SELECT` explicite des colonnes protègerait d'une fuite si une colonne sensible était
+ajoutée plus tard au schéma et exposée par mégarde via l'endpoint admin.
+
+**À ne pas corriger maintenant.**
+
+---
+
 ## Phase email.C — forgot-password (revue kapsule-reviewer)
 
 ### Side-channel de timing sur l'anti-énumération de `/forgot-password`

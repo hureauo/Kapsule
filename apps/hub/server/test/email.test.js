@@ -243,3 +243,48 @@ describe('POST /api/auth/forgot-password', () => {
     assert.equal(res.status, 400);
   });
 });
+
+// ── Route : GET /api/admin/email-logs ────────────────────────────────────────
+
+describe('GET /api/admin/email-logs', () => {
+  let dir, request, tokenAdmin, tokenClient;
+
+  before(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'kapsule-hub-emaillogs-'));
+    const app = createApp(dir);
+    request = supertest(app);
+
+    const db = getDb();
+    const hashAdmin  = await argon2.hash('admin-pass', { type: argon2.argon2id });
+    const hashClient = await argon2.hash('client-pass', { type: argon2.argon2id });
+    insertUser(db, { email: 'admin@logs.test',  password_hash: hashAdmin,  role: 'superuser' });
+    insertUser(db, { email: 'client@logs.test', password_hash: hashClient, role: 'client' });
+    // Une entrée de log pour vérifier la sérialisation
+    db.prepare("INSERT INTO email_logs (recipient_email, type, subject, status) VALUES ('x@logs.test', 'registration', 'Sujet', 'sent')").run();
+
+    const r1 = await request.post('/api/auth/login').send({ email: 'admin@logs.test',  password: 'admin-pass' });
+    const r2 = await request.post('/api/auth/login').send({ email: 'client@logs.test', password: 'client-pass' });
+    tokenAdmin  = r1.body.token;
+    tokenClient = r2.body.token;
+  });
+
+  after(() => {
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('200 + liste des logs pour un superuser', async () => {
+    const res = await request.get('/api/admin/email-logs')
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body));
+    assert.equal(res.body[0].recipient_email, 'x@logs.test');
+    assert.equal(res.body[0].status, 'sent');
+  });
+
+  it('403 pour un client', async () => {
+    const res = await request.get('/api/admin/email-logs')
+      .set('Authorization', `Bearer ${tokenClient}`);
+    assert.equal(res.status, 403);
+  });
+});
