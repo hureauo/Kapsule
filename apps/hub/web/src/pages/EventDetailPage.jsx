@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api, clearToken, getRole } from '../api/client.js';
-import { DEFAULTS, THEMES, TEXT_FIELDS, VIDEO_QUALITY, DEFAULT_VIDEO_QUALITY, mbPerMinFromKey } from '@kapsule/core';
+import {
+  DEFAULTS, THEMES, TEXT_FIELDS, VIDEO_QUALITY, VIDEO_ORIENTATIONS,
+  DEFAULT_VIDEO_QUALITY, DEFAULT_VIDEO_ORIENTATION, mbPerMinFromKey,
+} from '@kapsule/core';
 import QuestionEditor from '../components/QuestionEditor.jsx';
 import SyncStatus from '../components/SyncStatus.jsx';
 import VideoGallery from '../components/VideoGallery.jsx';
@@ -45,6 +48,7 @@ function DesignTab({ event, frozen, onSaved }) {
   const meta = event?.meta ?? {};
   const [theme, setTheme] = useState(meta.theme ?? DEFAULTS.THEME);
   const [videoQuality, setVideoQuality] = useState(meta.video_quality ?? DEFAULT_VIDEO_QUALITY);
+  const [videoOrientation, setVideoOrientation] = useState(meta.video_orientation ?? DEFAULT_VIDEO_ORIENTATION);
   const [texts, setTexts] = useState(() => {
     const t = {};
     for (const key of Object.keys(TEXT_FIELDS)) t[key] = meta[key] ?? '';
@@ -56,11 +60,15 @@ function DesignTab({ event, frozen, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
 
+  // Presets de l'orientation courante — les dimensions affichées en dépendent.
+  const qualityPresets = VIDEO_QUALITY[videoOrientation] ?? VIDEO_QUALITY[DEFAULT_VIDEO_ORIENTATION];
+
   // Resync si l'event est rechargé de l'extérieur
   useEffect(() => {
     const m = event?.meta ?? {};
     setTheme(m.theme ?? DEFAULTS.THEME);
     setVideoQuality(m.video_quality ?? DEFAULT_VIDEO_QUALITY);
+    setVideoOrientation(m.video_orientation ?? DEFAULT_VIDEO_ORIENTATION);
     const t = {};
     for (const key of Object.keys(TEXT_FIELDS)) t[key] = m[key] ?? '';
     setTexts(t);
@@ -72,7 +80,11 @@ function DesignTab({ event, frozen, onSaved }) {
     setSaving(true);
     setSaveMsg('');
     try {
-      await api.updateEvent(event.id, { theme, idle_timeout: idleTimeout, video_quality: videoQuality, ...texts });
+      await api.updateEvent(event.id, {
+        theme, idle_timeout: idleTimeout,
+        video_quality: videoQuality, video_orientation: videoOrientation,
+        ...texts,
+      });
       setSaveMsg('Sauvegardé.');
       onSaved();
     } catch (err) {
@@ -115,6 +127,21 @@ function DesignTab({ event, frozen, onSaved }) {
         <section className="panel-section">
           <h3 className="panel-section__title">Qualité vidéo</h3>
           <label className="field-label">
+            Format d'enregistrement
+            <select
+              className="hub-input hub-input--sm"
+              value={videoOrientation}
+              onChange={(e) => setVideoOrientation(e.target.value)}
+              disabled={frozen}
+            >
+              {VIDEO_ORIENTATIONS.map((o) => (
+                <option key={o} value={o}>
+                  {o === 'portrait' ? 'Portrait (vertical)' : 'Paysage (horizontal)'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-label">
             Preset d'enregistrement
             <select
               className="hub-input hub-input--sm"
@@ -122,14 +149,14 @@ function DesignTab({ event, frozen, onSaved }) {
               onChange={(e) => setVideoQuality(e.target.value)}
               disabled={frozen}
             >
-              {Object.entries(VIDEO_QUALITY).map(([key, q]) => (
+              {Object.entries(qualityPresets).map(([key, q]) => (
                 <option key={key} value={key}>{q.label} — {q.width}×{q.height} · {(q.videoBitrate / 1e6).toFixed(1)} Mbps</option>
               ))}
             </select>
           </label>
           <p className="text--muted" style={{ fontSize: '13px', marginTop: '6px' }}>
-            ≈ {mbPerMinFromKey(videoQuality)} Mo/min par vidéo
-            {VIDEO_QUALITY[videoQuality] && ` · résolution ${VIDEO_QUALITY[videoQuality].width}×${VIDEO_QUALITY[videoQuality].height}`}
+            ≈ {mbPerMinFromKey(videoQuality, videoOrientation)} Mo/min par vidéo
+            {qualityPresets[videoQuality] && ` · résolution ${qualityPresets[videoQuality].width}×${qualityPresets[videoQuality].height}`}
           </p>
         </section>
 
@@ -532,27 +559,6 @@ export default function EventDetailPage() {
               {STATUS_LABEL[event.status] ?? event.status}
             </span>
           </div>
-          {!frozen && (
-            <div className="event-meta-row" style={{ gap: '8px', flexWrap: 'wrap' }}>
-              {event.status === 'preview' && (
-                <button
-                  className="btn btn--primary"
-                  onClick={() => {
-                    if (confirm('Valider la configuration ? Le contenu (questions, design) sera gelé et la borne réelle pourra se connecter.')) {
-                      handleStatusChange('ready');
-                    }
-                  }}
-                >
-                  Valider la configuration
-                </button>
-              )}
-              {event.status === 'ready' && (
-                <button className="btn btn--ghost" onClick={() => handleStatusChange('preview')}>
-                  Retour en preview
-                </button>
-              )}
-            </div>
-          )}
         </section>
 
         <div className="hub-tabs">
@@ -582,7 +588,7 @@ export default function EventDetailPage() {
 
         {tab === 'Synchro' && (
           <div className="tab-content">
-            <SyncStatus event={event} />
+            <SyncStatus event={event} frozen={frozen} onStatusChange={handleStatusChange} />
           </div>
         )}
 

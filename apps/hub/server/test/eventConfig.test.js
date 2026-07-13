@@ -24,6 +24,8 @@ describe('META_KEYS', () => {
     assert.ok(META_KEYS.includes('idle_timeout'));
     assert.ok(META_KEYS.includes('welcome_title'));
     assert.ok(META_KEYS.includes('consent_text'));
+    assert.ok(META_KEYS.includes('video_quality'));
+    assert.ok(META_KEYS.includes('video_orientation'));
   });
 });
 
@@ -96,6 +98,24 @@ describe('applyEventConfig — mode overwrite', () => {
 
     const row = edb.prepare("SELECT value FROM event_meta WHERE key='theme'").get();
     assert.equal(row, undefined);
+  });
+
+  it('écrit video_quality et video_orientation valides', () => {
+    const edb = freshDb();
+    applyEventConfig(edb, { mode: 'overwrite', meta: { video_quality: 'max', video_orientation: 'portrait' } });
+
+    const get = (k) => edb.prepare('SELECT value FROM event_meta WHERE key=?').get(k)?.value;
+    assert.equal(get('video_quality'), 'max');
+    assert.equal(get('video_orientation'), 'portrait');
+  });
+
+  it('ignore une orientation ou une qualité invalide sans erreur (push direct)', () => {
+    const edb = freshDb();
+    applyEventConfig(edb, { mode: 'overwrite', meta: { video_quality: 'ultra', video_orientation: 'diagonale' } });
+
+    const get = (k) => edb.prepare('SELECT value FROM event_meta WHERE key=?').get(k);
+    assert.equal(get('video_quality'), undefined);
+    assert.equal(get('video_orientation'), undefined);
   });
 
   it('ignore les questions sans texte ou avec texte non-string', () => {

@@ -421,3 +421,133 @@ describe('GET /api/preflight', () => {
     assert.equal(res.status, 401);
   });
 });
+
+// ── Orientation + qualité vidéo ───────────────────────────────────────────────
+
+describe('PUT /api/event/video-quality (qualité + orientation)', () => {
+  let ctx;
+  beforeEach(async () => { ctx = await setup(); });
+  afterEach(() => teardown(ctx.dir));
+
+  // Écrit directement dans event_meta (simule ce que le pull Hub dépose).
+  function setMeta(id, key, value) {
+    const edb = createEventDb(join(ctx.dir, 'events', id, 'db.sqlite'));
+    edb.prepare('INSERT OR REPLACE INTO event_meta (key, value) VALUES (?, ?)').run(key, value);
+    edb.close();
+  }
+
+  test('GET /api/event : défaut paysage quand rien n\'est réglé', async () => {
+    makeActiveEvent(ctx.dir, 'ev-def');
+    const res = await request(ctx.app).get('/api/event');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.video_orientation, 'paysage');
+    assert.equal(res.body.video_quality, 'standard');
+    assert.equal(res.body.video_width, 1280);
+    assert.equal(res.body.video_height, 720);
+  });
+
+  test('GET /api/event : orientation Hub (event_meta) appliquée → dimensions verticales', async () => {
+    makeActiveEvent(ctx.dir, 'ev-meta');
+    setMeta('ev-meta', 'video_orientation', 'portrait');
+    const res = await request(ctx.app).get('/api/event');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.video_orientation, 'portrait');
+    assert.equal(res.body.video_width, 720);
+    assert.equal(res.body.video_height, 1280);
+    assert.ok(res.body.video_height > res.body.video_width);
+  });
+
+  test('override local prime sur le défaut Hub (event_meta)', async () => {
+    makeActiveEvent(ctx.dir, 'ev-override');
+    setMeta('ev-override', 'video_orientation', 'paysage');
+
+    const put = await request(ctx.app)
+      .put('/api/event/video-quality')
+      .set('Authorization', `Bearer ${ctx.techToken}`)
+      .send({ orientation: 'portrait' });
+    assert.equal(put.status, 200);
+    assert.equal(put.body.video_orientation, 'portrait');
+
+    const res = await request(ctx.app).get('/api/event');
+    assert.equal(res.body.video_orientation, 'portrait');
+    assert.equal(res.body.video_height, 1280);
+  });
+
+  test('changer l\'orientation seule conserve la qualité déjà réglée', async () => {
+    makeActiveEvent(ctx.dir, 'ev-partial');
+    await request(ctx.app)
+      .put('/api/event/video-quality')
+      .set('Authorization', `Bearer ${ctx.techToken}`)
+      .send({ quality: 'max' });
+
+    const put = await request(ctx.app)
+      .put('/api/event/video-quality')
+      .set('Authorization', `Bearer ${ctx.techToken}`)
+      .send({ orientation: 'portrait' });
+    assert.equal(put.status, 200);
+    assert.equal(put.body.video_quality, 'max');       // conservée
+    assert.equal(put.body.video_orientation, 'portrait');
+    assert.equal(put.body.width, 1080);                 // preset max portrait
+    assert.equal(put.body.height, 1920);
+  });
+
+  test('orientation invalide → 400', async () => {
+    makeActiveEvent(ctx.dir, 'ev-bad');
+    const res = await request(ctx.app)
+      .put('/api/event/video-quality')
+      .set('Authorization', `Bearer ${ctx.techToken}`)
+      .send({ orientation: 'diagonale' });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /Orientation invalide/);
+  });
+
+  test('qualité invalide → 400', async () => {
+    makeActiveEvent(ctx.dir, 'ev-badq');
+    const res = await request(ctx.app)
+      .put('/api/event/video-quality')
+      .set('Authorization', `Bearer ${ctx.techToken}`)
+      .send({ quality: 'ultra' });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /Qualité invalide/);
+  });
+
+  test('body vide → 400', async () => {
+    makeActiveEvent(ctx.dir, 'ev-empty');
+    const res = await request(ctx.app)
+      .put('/api/event/video-quality')
+      .set('Authorization', `Bearer ${ctx.techToken}`)
+      .send({});
+    assert.equal(res.status, 400);
+  });
+
+  test('hors preview : sans token tech → 401', async () => {
+    makeActiveEvent(ctx.dir, 'ev-guard');
+    const res = await request(ctx.app)
+      .put('/api/event/video-quality')
+      .send({ orientation: 'portrait' });
+    assert.equal(res.status, 401);
+  });
+
+  test('en preview : accessible sans token (borne d\'essai)', async () => {
+    const eventDir = join(ctx.dir, 'events', 'ev-prev-orient');
+    mkdirSync(join(eventDir, 'videos'), { recursive: true });
+    createEventDb(join(eventDir, 'db.sqlite')).close();
+    insertEvent({ id: 'ev-prev-orient', name: 'Preview', origin: 'hub', status: 'loaded', is_preview: 1 });
+    setActiveEvent('ev-prev-orient');
+
+    const res = await request(ctx.app)
+      .put('/api/event/video-quality')
+      .send({ orientation: 'portrait' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.video_orientation, 'portrait');
+  });
+
+  test('valeur corrompue en event_meta → GET retombe sur le défaut', async () => {
+    makeActiveEvent(ctx.dir, 'ev-corrupt');
+    setMeta('ev-corrupt', 'video_orientation', 'n\'importe quoi');
+    const res = await request(ctx.app).get('/api/event');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.video_orientation, 'paysage');
+    assert.equal(res.body.video_width, 1280);
+  });
+});

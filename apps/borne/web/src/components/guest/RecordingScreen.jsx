@@ -29,6 +29,7 @@ export default function RecordingScreen({
   onNext,
   onLockChange,      // remonte au parent l'état de verrouillage de la nav basse
   qualityKey,        // preset qualité vidéo (DEFAULT_VIDEO_QUALITY si absent)
+  orientation,       // 'paysage' | 'portrait' (DEFAULT_VIDEO_ORIENTATION si absent)
 }) {
   const [subState, setSubState] = useState(existingVideoId ? S.ANSWERED : S.INTRO);
   const [countdown, setCountdown] = useState(question.countdown ?? 3);
@@ -40,7 +41,7 @@ export default function RecordingScreen({
   const videoBlobRef    = useRef(null); // <video> pour le preview blob (preview)
   const retryTimerRef   = useRef(null);
 
-  const recorder = useMediaRecorder({ maxDuration: question.max_duration ?? 60, qualityKey });
+  const recorder = useMediaRecorder({ maxDuration: question.max_duration ?? 60, qualityKey, orientation });
 
   // ── Intro : attacher le preview caméra ──────────────────────────────────────
   useEffect(() => {
@@ -160,8 +161,10 @@ export default function RecordingScreen({
         <p className="text--muted rec__duration-hint">
           Durée max : {question.max_duration ?? 60} s
         </p>
-        {/* Preview caméra miroir (transform scaleX(-1) dans le CSS) */}
-        <div className="rec__camera-wrap">
+        {/* Preview caméra miroir (transform scaleX(-1) dans le CSS).
+            Le cadre suit l'orientation enregistrée : sans ça, object-fit:cover
+            montrerait à l'invité un cadrage différent de la vidéo produite. */}
+        <div className={`rec__camera-wrap rec__camera-wrap--${orientation === 'portrait' ? 'portrait' : 'paysage'}`}>
           {recorder.error ? (
             <p className="text--error">{recorder.error}</p>
           ) : (
@@ -178,6 +181,9 @@ export default function RecordingScreen({
           <div style={{ fontSize: '11px', fontFamily: 'monospace', textAlign: 'center', opacity: 0.7, margin: '4px 0' }}>
             {si?.width && si?.height ? `${si.width}×${si.height}${si.frameRate ? ` · ${si.frameRate}fps` : ''}` : '?×?'}
             {` · ${recorder.mimeType.split(';')[0].replace('video/', '')}`}
+            {si?.orientationMismatch && (
+              <span className="text--error"> · ⚠ caméra en {si.orientation}</span>
+            )}
           </div>
         )}
         <div className="rec__actions">

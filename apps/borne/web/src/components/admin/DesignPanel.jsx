@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api/client.js';
-import { TEXT_FIELDS, VIDEO_QUALITY, mbPerMinFromKey } from '@kapsule/core';
+import {
+  TEXT_FIELDS, VIDEO_QUALITY, VIDEO_ORIENTATIONS,
+  DEFAULT_VIDEO_QUALITY, DEFAULT_VIDEO_ORIENTATION, mbPerMinFromKey,
+} from '@kapsule/core';
 
 const THEME_OPTIONS = [
   { value: 'cute',   label: '🫧 Cutealism', hint: 'Doux, coloré, rassurant (défaut)' },
@@ -23,6 +26,7 @@ export default function DesignPanel() {
   const [themeSaving, setThemeSaving] = useState(false);
   const [themeError, setThemeError] = useState('');
   const [videoQuality, setVideoQuality] = useState(null);
+  const [videoOrientation, setVideoOrientation] = useState(DEFAULT_VIDEO_ORIENTATION);
   const [qualitySaving, setQualitySaving] = useState(false);
   const [qualityError, setQualityError] = useState('');
   const [texts, setTexts] = useState({});
@@ -38,7 +42,8 @@ export default function DesignPanel() {
       const evt = await api.getEvent();
       setActiveEvent(evt);
       setTheme(evt.theme ?? 'cute');
-      setVideoQuality(evt.video_quality ?? 'standard');
+      setVideoQuality(evt.video_quality ?? DEFAULT_VIDEO_QUALITY);
+      setVideoOrientation(evt.video_orientation ?? DEFAULT_VIDEO_ORIENTATION);
       const initialTexts = {};
       for (const key of Object.keys(TEXT_FIELDS)) {
         initialTexts[key] = evt[key] ?? '';
@@ -74,16 +79,21 @@ export default function DesignPanel() {
     }
   }
 
-  async function handleSelectQuality(value) {
-    if (!value || value === videoQuality) return;
-    const previous = videoQuality;
-    setVideoQuality(value);
+  // Qualité et orientation partagent la même route d'override local : un seul
+  // handler optimiste, qui restaure la valeur précédente si l'écriture échoue.
+  async function handleSelectVideoSetting(field, value) {
+    const isQuality = field === 'quality';
+    const previous = isQuality ? videoQuality : videoOrientation;
+    if (!value || value === previous) return;
+    const setLocal = isQuality ? setVideoQuality : setVideoOrientation;
+
+    setLocal(value);
     setQualitySaving(true);
     setQualityError('');
     try {
-      await api.setVideoQuality(value);
+      await api.setVideoSettings({ [field]: value });
     } catch (err) {
-      setVideoQuality(previous);
+      setLocal(previous);
       setQualityError(err.message);
     } finally {
       setQualitySaving(false);
@@ -151,13 +161,26 @@ export default function DesignPanel() {
         <div className="quality-picker">
           <select
             value={videoQuality ?? ''}
-            onChange={(e) => handleSelectQuality(e.target.value)}
+            onChange={(e) => handleSelectVideoSetting('quality', e.target.value)}
             disabled={qualitySaving}
             className="admin-input admin-input--select"
           >
-            {Object.entries(VIDEO_QUALITY).map(([key, q]) => (
+            {/* Les dimensions listées dépendent de l'orientation courante. */}
+            {Object.entries(VIDEO_QUALITY[videoOrientation] ?? VIDEO_QUALITY[DEFAULT_VIDEO_ORIENTATION]).map(([key, q]) => (
               <option key={key} value={key}>
-                {q.label} — {q.width}×{q.height} · ≈{mbPerMinFromKey(key)} Mo/min
+                {q.label} — {q.width}×{q.height} · ≈{mbPerMinFromKey(key, videoOrientation)} Mo/min
+              </option>
+            ))}
+          </select>
+          <select
+            value={videoOrientation}
+            onChange={(e) => handleSelectVideoSetting('orientation', e.target.value)}
+            disabled={qualitySaving}
+            className="admin-input admin-input--select"
+          >
+            {VIDEO_ORIENTATIONS.map((o) => (
+              <option key={o} value={o}>
+                {o === 'portrait' ? 'Portrait (vertical)' : 'Paysage (horizontal)'}
               </option>
             ))}
           </select>

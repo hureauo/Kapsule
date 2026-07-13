@@ -522,18 +522,34 @@ input, textarea, [contenteditable] {
 
 .rec__duration-hint { font-size: 0.95rem; }
 
-/* Preview caméra miroir (effet selfie naturel) */
+/* Preview caméra miroir (effet selfie naturel).
+   Le cadre adopte l'aspect-ratio de l'orientation enregistrée : combiné à
+   object-fit:cover sur la vidéo, l'invité voit le cadrage qu'il obtiendra.
+   min-height:0 est nécessaire pour qu'un flex-item puisse rétrécir sous sa
+   taille de contenu — sans lui, un cadre portrait déborde verticalement. */
 .rec__camera-wrap {
   flex: 1;
-  width: 100%;
-  max-width: 640px;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #000;
   border-radius: 16px;
   overflow: hidden;
-  min-height: 200px;
+  margin: 0 auto;
+}
+
+.rec__camera-wrap--paysage {
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16 / 9;
+}
+
+.rec__camera-wrap--portrait {
+  height: 100%;
+  max-height: 70vh;
+  aspect-ratio: 9 / 16;
+  width: auto;
 }
 
 .rec__camera-preview {

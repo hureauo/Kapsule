@@ -154,19 +154,21 @@ export const api = {
       body: JSON.stringify({ confirm }),
     }),
 
-  setVideoQuality: (quality) =>
+  // patch : { quality?, orientation? } — les deux champs sont indépendants,
+  // n'envoyer que celui qui change (le serveur conserve l'autre).
+  setVideoSettings: (patch) =>
     techApiFetch('/api/event/video-quality', {
       method: 'PUT',
-      body: JSON.stringify({ quality }),
+      body: JSON.stringify(patch),
     }),
 };
 
-// setVideoQualityPublic : sans token (utilisable par l'invité en mode preview)
-export function setVideoQualityPublic(quality) {
+// setVideoSettingsPublic : sans token (utilisable par l'invité en mode preview)
+export function setVideoSettingsPublic(patch) {
   return fetch('/api/event/video-quality', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ quality }),
+    body: JSON.stringify(patch),
   }).then(async res => {
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));

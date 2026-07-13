@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { VIDEO_QUALITY, DEFAULT_VIDEO_QUALITY, AUDIO_BITRATE } from '@kapsule/core';
+import { DEFAULT_VIDEO_QUALITY, DEFAULT_VIDEO_ORIENTATION, AUDIO_BITRATE, resolvePreset } from '@kapsule/core';
 
 // Ordre de préférence MIME :
 // - Safari/iOS ne supporte que video/mp4 + codecs AVC/AAC (pas webm)
@@ -31,8 +31,12 @@ export const REC_STATUS = {
   ERROR: 'error',
 };
 
-export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAULT_VIDEO_QUALITY } = {}) {
-  const quality = VIDEO_QUALITY[qualityKey] ?? VIDEO_QUALITY[DEFAULT_VIDEO_QUALITY];
+export default function useMediaRecorder({
+  maxDuration = 60,
+  qualityKey = DEFAULT_VIDEO_QUALITY,
+  orientation = DEFAULT_VIDEO_ORIENTATION,
+} = {}) {
+  const quality = resolvePreset(qualityKey, orientation);
   const [status, setStatus] = useState(REC_STATUS.IDLE);
   const [error, setError] = useState(null);
   const [duration, setDuration] = useState(0);   // secondes écoulées
@@ -109,6 +113,17 @@ export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAUL
         const s = vTrack.getSettings();
         const settings = { width: s.width, height: s.height, frameRate: s.frameRate ? Math.round(s.frameRate) : null };
 
+        // width/height sont des contraintes `ideal`, pas `exact` : le navigateur peut
+        // rendre un flux dans une autre géométrie que celle demandée (Safari/iOS le
+        // fait selon la caméra et l'orientation de l'appareil). On compare donc
+        // l'orientation OBTENUE à celle demandée — sans quoi un réglage « portrait »
+        // pourrait produire des vidéos paysage sans que personne ne le voie.
+        if (settings.width && settings.height) {
+          const actual = settings.height > settings.width ? 'portrait' : 'paysage';
+          settings.orientation = actual;
+          settings.orientationMismatch = actual !== orientation;
+        }
+
         setStreamSettings(settings);
       }
       setStatus(REC_STATUS.READY);
@@ -125,7 +140,9 @@ export default function useMediaRecorder({ maxDuration = 60, qualityKey = DEFAUL
       setError(msg);
       setStatus(REC_STATUS.ERROR);
     }
-  }, [status]);
+    // quality.width/height sont des primitives dérivées de (qualityKey, orientation) :
+    // on dépend de ces deux clés plutôt que de l'objet `quality`, recréé à chaque rendu.
+  }, [status, qualityKey, orientation]);
 
   const startRecording = useCallback(() => {
     if (status !== REC_STATUS.READY) return;

@@ -7,6 +7,10 @@ import { join } from 'node:path';
 import { createEventDb } from '../src/eventDbSchema.js';
 import { sha256File } from '../src/checksum.js';
 import { validateQuestion, validateGuestName, assertStatus } from '../src/validate.js';
+import {
+  VIDEO_QUALITY, VIDEO_ORIENTATIONS, QUALITY_KEYS,
+  DEFAULT_VIDEO_QUALITY, DEFAULT_VIDEO_ORIENTATION, resolvePreset, mbPerMinFromKey,
+} from '../src/constants.js';
 
 // ─── createEventDb ────────────────────────────────────────────────────────────
 
@@ -154,5 +158,47 @@ describe('assertStatus', () => {
     assert.throws(() => assertStatus('inconnu', 'ready'));
     assert.throws(() => assertStatus('preview', 'purged'));
     assert.throws(() => assertStatus('draft', 'preview')); // draft supprimé
+  });
+});
+
+describe('VIDEO_QUALITY / resolvePreset', () => {
+  test('les deux orientations exposent les mêmes clés de qualité', () => {
+    for (const o of VIDEO_ORIENTATIONS) {
+      assert.deepEqual(Object.keys(VIDEO_QUALITY[o]), QUALITY_KEYS);
+    }
+  });
+
+  test('paysage est horizontal, portrait est vertical', () => {
+    for (const key of QUALITY_KEYS) {
+      const l = resolvePreset(key, 'paysage');
+      const p = resolvePreset(key, 'portrait');
+      assert.ok(l.width > l.height, `${key} paysage doit être horizontal`);
+      assert.ok(p.height > p.width, `${key} portrait doit être vertical`);
+    }
+  });
+
+  test('portrait a les dimensions du paysage inversées (à pixels égaux)', () => {
+    for (const key of QUALITY_KEYS) {
+      const l = resolvePreset(key, 'paysage');
+      const p = resolvePreset(key, 'portrait');
+      assert.equal(p.width, l.height);
+      assert.equal(p.height, l.width);
+      assert.equal(p.videoBitrate, l.videoBitrate);
+    }
+  });
+
+  test('une qualité ou une orientation inconnue retombe sur le défaut, jamais undefined', () => {
+    const def = VIDEO_QUALITY[DEFAULT_VIDEO_ORIENTATION][DEFAULT_VIDEO_QUALITY];
+    assert.deepEqual(resolvePreset('nawak', 'paysage'), VIDEO_QUALITY.paysage[DEFAULT_VIDEO_QUALITY]);
+    assert.deepEqual(resolvePreset('standard', 'diagonale'), VIDEO_QUALITY[DEFAULT_VIDEO_ORIENTATION].standard);
+    assert.deepEqual(resolvePreset(undefined, undefined), def);
+  });
+
+  test('mbPerMinFromKey : cohérent entre orientations, null si clé inconnue', () => {
+    assert.equal(mbPerMinFromKey('standard', 'portrait'), mbPerMinFromKey('standard', 'paysage'));
+    assert.equal(mbPerMinFromKey('nawak', 'paysage'), null);
+    assert.equal(mbPerMinFromKey('standard', 'diagonale'), null);
+    // Défaut d'orientation : appel à un seul argument (compat appelants existants).
+    assert.equal(mbPerMinFromKey('standard'), mbPerMinFromKey('standard', DEFAULT_VIDEO_ORIENTATION));
   });
 });

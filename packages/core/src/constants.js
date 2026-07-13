@@ -64,18 +64,52 @@ export const DEFAULTS = {
 // Presets nommés → couples (résolution, bitrate) utilisés par MediaRecorder côté
 // kiosque et validés côté Hub + borne. Source unique pour éviter les désynchronisations.
 // videoBitrate en bits/s ; AUDIO_BITRATE en bits/s (commun à tous les presets).
+//
+// Table indexée par orientation : chaque orientation porte ses propres résolutions
+// et bitrates, pour pouvoir diverger (un cadrage portrait n'a pas les mêmes besoins
+// qu'un plan large). Aujourd'hui les bitrates portrait sont ceux du paysage — à
+// nombre de pixels égal, la qualité perçue l'est aussi.
+export const VIDEO_ORIENTATIONS = ['paysage', 'portrait'];
+export const DEFAULT_VIDEO_ORIENTATION = 'paysage';
+
 export const VIDEO_QUALITY = {
-  eco:      { label: 'Éco',      width: 854,  height: 480,  videoBitrate: 1_000_000 },
-  standard: { label: 'Standard', width: 1280, height: 720,  videoBitrate: 2_500_000 },
-  haute:    { label: 'Haute',    width: 1280, height: 720,  videoBitrate: 4_000_000 },
-  max:      { label: 'Maximale', width: 1920, height: 1080, videoBitrate: 6_000_000 },
+  paysage: {
+    eco:      { label: 'Éco',      width: 854,  height: 480,  videoBitrate: 1_000_000 },
+    standard: { label: 'Standard', width: 1280, height: 720,  videoBitrate: 2_500_000 },
+    haute:    { label: 'Haute',    width: 1280, height: 720,  videoBitrate: 4_000_000 },
+    max:      { label: 'Maximale', width: 1920, height: 1080, videoBitrate: 6_000_000 },
+  },
+  portrait: {
+    eco:      { label: 'Éco',      width: 480,  height: 854,  videoBitrate: 1_000_000 },
+    standard: { label: 'Standard', width: 720,  height: 1280, videoBitrate: 2_500_000 },
+    haute:    { label: 'Haute',    width: 720,  height: 1280, videoBitrate: 4_000_000 },
+    max:      { label: 'Maximale', width: 1080, height: 1920, videoBitrate: 6_000_000 },
+  },
 };
+
+// Clés de qualité valides — identiques dans les deux orientations.
+// À utiliser pour valider une valeur `video_quality` : Object.keys(VIDEO_QUALITY)
+// donne les orientations, pas les qualités.
+export const QUALITY_KEYS = Object.keys(VIDEO_QUALITY[DEFAULT_VIDEO_ORIENTATION]);
+
 export const DEFAULT_VIDEO_QUALITY = 'standard';
 export const AUDIO_BITRATE = 96_000;
 
+// Résout le preset effectif. Toute valeur inconnue (clé absente, orientation
+// invalide, event_meta corrompu) retombe sur le défaut plutôt que de rendre
+// undefined : les appelants construisent des contraintes getUserMedia avec.
+export function resolvePreset(qualityKey, orientation) {
+  const byOrientation = VIDEO_QUALITY[orientation] ?? VIDEO_QUALITY[DEFAULT_VIDEO_ORIENTATION];
+  return byOrientation[qualityKey] ?? byOrientation[DEFAULT_VIDEO_QUALITY];
+}
+
 // Retourne l'estimation de consommation mémoire en Mo/min pour un preset donné.
-export function mbPerMinFromKey(qualityKey) {
-  const q = VIDEO_QUALITY[qualityKey];
+// Le bitrate ne dépend pas de l'orientation aujourd'hui, mais on la prend en
+// paramètre pour que l'estimation reste juste si les tables divergent un jour.
+export function mbPerMinFromKey(qualityKey, orientation = DEFAULT_VIDEO_ORIENTATION) {
+  const byOrientation = VIDEO_QUALITY[orientation];
+  if (!byOrientation) return null;
+  const q = byOrientation[qualityKey];
   if (!q) return null;
   return ((q.videoBitrate + AUDIO_BITRATE) / 8 / 1e6 * 60).toFixed(1);
 }

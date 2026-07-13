@@ -160,6 +160,37 @@ describe('PUT /api/events/:eventId', () => {
     assert.equal(res.status, 400);
   });
 
+  it('écrit video_orientation dans event_meta et le retourne dans meta', async () => {
+    const res = await request.put(`/api/events/${eventId}`)
+      .set(auth(tokenAlice))
+      .send({ video_orientation: 'portrait' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.meta?.video_orientation, 'portrait');
+  });
+
+  it('accepte qualité et orientation ensemble', async () => {
+    const res = await request.put(`/api/events/${eventId}`)
+      .set(auth(tokenAlice))
+      .send({ video_quality: 'max', video_orientation: 'paysage' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.meta?.video_quality, 'max');
+    assert.equal(res.body.meta?.video_orientation, 'paysage');
+  });
+
+  it('rejette une orientation invalide avec 400', async () => {
+    const res = await request.put(`/api/events/${eventId}`)
+      .set(auth(tokenAlice))
+      .send({ video_orientation: 'diagonale' });
+    assert.equal(res.status, 400);
+  });
+
+  it('rejette une qualité invalide avec 400', async () => {
+    const res = await request.put(`/api/events/${eventId}`)
+      .set(auth(tokenAlice))
+      .send({ video_quality: 'ultra' });
+    assert.equal(res.status, 400);
+  });
+
   it('écrit tous les TEXT_FIELDS et les retourne dans meta', async () => {
     const res = await request.put(`/api/events/${eventId}`)
       .set(auth(tokenAlice))

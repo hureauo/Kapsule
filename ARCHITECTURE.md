@@ -167,7 +167,7 @@ Point d'entrée : `index.js` → `createApp(dataDir, cfg)`. Pull one-shot au dé
 
 | Fichier | Contenu |
 |---------|---------|
-| `routes/events.js` | event actif (`GET /event` config publique — inclut désormais `video_quality` résolu **override local > event_meta > DEFAULT** + `video_width/height/bitrate`), statut, close, pull/push déclenchés manuellement (tech). **`PUT /api/admin/video-quality`** écrit `local_overrides.video_quality` : **sans auth en preview** (borne d'essai démo), garde `requireTech` hors preview. ⚠️ Route publique d'écriture en preview **sans rate-limit** (≠ `/sessions`, `/videos`, `/preview/login` qui en ont un) — borne preview Internet-facing. |
+| `routes/events.js` | event actif (`GET /event` config publique — inclut `video_quality` **et `video_orientation`** résolus **override local > event_meta > défaut core**, valeurs normalisées, + `video_width/height/bitrate` issus de `resolvePreset(quality, orientation)`), statut, close, pull/push déclenchés manuellement (tech). **`PUT /api/event/video-quality`** écrit `local_overrides.video_quality` et/ou `local_overrides.video_orientation` (body `{quality?, orientation?}` — les deux optionnels et indépendants, body vide → 400 ; la réponse relit la cascade complète et renvoie le preset effectif) : **sans auth en preview** (borne d'essai démo), garde `requireTech` hors preview, protégée par un `rateLimit` (30 req/min, désactivable en test via `cfg.skipRateLimits`) car la borne preview est Internet-facing. |
 | `routes/questions.js` | CRUD questions (admin borne) |
 | `routes/sessions.js` | création de session invité (publique, ou JWT general si preview avec login), answers, complete, **`POST /api/preview/login`** (proxy auth wall vers Hub, §11.24) |
 | `routes/videos.js` | upload vidéo (multipart), liste, stream Range-aware, remplacement (DELETE+INSERT transactionnel), suppression |
@@ -185,7 +185,7 @@ Point d'entrée : `index.js` → `createApp(dataDir, cfg)`. Pull one-shot au dé
 
 - `api/client.js` : appels au backend borne + parcours invité.
 - `api/roles.js` : `decodeJwtPayload` + `getRole` (tableau `roles[]`). Testé isolément (`test/roles.test.js`).
-- `hooks/useMediaRecorder.js` : capture vidéo via MediaRecorder (codecs mp4 pour Safari, §11).
+- `hooks/useMediaRecorder.js` : capture vidéo via MediaRecorder (codecs mp4 pour Safari, §11). Prend `{maxDuration, qualityKey, orientation}` → `resolvePreset` construit les contraintes `getUserMedia` (`width`/`height` en `ideal`, pas `exact`). Expose `streamSettings.orientation` / `.orientationMismatch` : le navigateur pouvant rendre une autre géométrie que celle demandée, on compare l'orientation **obtenue** à celle demandée et on la signale dans l'overlay debug (`RecordingScreen`).
 
 ### Frontend Hub (`apps/hub/web/src/`)
 
@@ -205,7 +205,7 @@ Importé via le barrel `index.js` qui **ne ré-exporte que** `constants.js` + `v
 
 | Fichier | Contenu | Exporté par le barrel ? |
 |---------|---------|------------------------|
-| `constants.js` | `EVENT_STATUS`, `STATUS_ORDER`, `JOB_TYPES`, `LIMITS`, `THEMES`, `DEFAULTS`, `TEXT_FIELDS`, **`VIDEO_QUALITY`** (presets `eco`/`standard`/`haute`/`max` → `{label,width,height,videoBitrate}`), **`DEFAULT_VIDEO_QUALITY`** (`standard`), **`AUDIO_BITRATE`** — source unique partagée Hub/Borne/kiosque | ✅ |
+| `constants.js` | `EVENT_STATUS`, `STATUS_ORDER`, `JOB_TYPES`, `LIMITS`, `THEMES`, `DEFAULTS`, `TEXT_FIELDS`, **`VIDEO_QUALITY`** — table **indexée par orientation** : `VIDEO_QUALITY[orientation][qualityKey] → {label,width,height,videoBitrate}` (orientations `paysage`/`portrait`, presets `eco`/`standard`/`haute`/`max`) —, **`VIDEO_ORIENTATIONS`** (`['paysage','portrait']`), **`DEFAULT_VIDEO_ORIENTATION`** (`paysage`), **`QUALITY_KEYS`**, **`DEFAULT_VIDEO_QUALITY`** (`standard`), **`AUDIO_BITRATE`**, **`resolvePreset(qualityKey, orientation)`** (retombe toujours sur le défaut, jamais `undefined`), **`mbPerMinFromKey(qualityKey, orientation?)`** — source unique partagée Hub/Borne/kiosque | ✅ |
 | `validate.js` | validateurs (guest name, question…) | ✅ |
 | `eventDbSchema.js` | `createEventDb(path)` : schéma complet de `db.sqlite` + seed des 4 questions par défaut | ❌ (import direct — better-sqlite3 natif) |
 | `checksum.js` | `sha256File` | ❌ (import direct — node:crypto/fs) |
@@ -214,8 +214,14 @@ Importé via le barrel `index.js` qui **ne ré-exporte que** `constants.js` + `v
 `videos` (UNIQUE session+question → 1 réponse par question/session), `derived`
 (miniature/durée/dimensions, 1-1 avec videos), `event_users` (email/hash/roles — peuplé au pull),
 `local_overrides` (key/value — **réglages locaux à la borne, jamais écrasés par le pull** ;
-contrairement à `event_meta` que `pull.js` fait `DELETE`+`INSERT`). Première clé : `video_quality`
-(override de la qualité d'enregistrement choisi sur place, survit aux pulls de config Hub).
+contrairement à `event_meta` que `pull.js` fait `DELETE`+`INSERT`). Clés actuelles : `video_quality`
+et `video_orientation` (réglages d'enregistrement choisis sur place, survivent aux pulls de config Hub).
+
+> ⚠️ **Piège `VIDEO_QUALITY`** : la table est indexée **par orientation**, donc
+> `Object.keys(VIDEO_QUALITY)` retourne `['paysage','portrait']`, **pas** les clés de qualité.
+> Pour valider une `video_quality`, utiliser **`QUALITY_KEYS`** ; pour lire un preset, utiliser
+> **`resolvePreset(qualityKey, orientation)`** (jamais `VIDEO_QUALITY[qualityKey]`, forme à plat
+> qui n'existe plus).
 
 ---
 

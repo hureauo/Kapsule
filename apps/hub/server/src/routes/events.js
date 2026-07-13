@@ -3,7 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
-import { THEMES, VIDEO_QUALITY } from '@kapsule/core';
+import { THEMES, QUALITY_KEYS, VIDEO_ORIENTATIONS } from '@kapsule/core';
 import {
   getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog, upsertEventUser,
   getUserByEmail, insertUser, createRegistrationToken, listUsers,
@@ -116,13 +116,17 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       if (name !== undefined) fields.name = name;
       if (event_date !== undefined) fields.event_date = event_date;
 
-      // Champs event_meta : thème, textes du parcours, idle_timeout, consent_text, video_quality
-      const { theme, idle_timeout, video_quality } = req.body;
+      // Champs event_meta : thème, textes du parcours, idle_timeout, consent_text,
+      // video_quality, video_orientation
+      const { theme, idle_timeout, video_quality, video_orientation } = req.body;
       if (theme !== undefined && !THEMES.includes(theme)) {
         return res.status(400).json({ error: `Thème invalide : ${theme}` });
       }
-      if (video_quality !== undefined && !Object.keys(VIDEO_QUALITY).includes(video_quality)) {
+      if (video_quality !== undefined && !QUALITY_KEYS.includes(video_quality)) {
         return res.status(400).json({ error: `Qualité vidéo invalide : ${video_quality}` });
+      }
+      if (video_orientation !== undefined && !VIDEO_ORIENTATIONS.includes(video_orientation)) {
+        return res.status(400).json({ error: `Orientation vidéo invalide : ${video_orientation}` });
       }
       const metaKeys = META_KEYS.filter(k => req.body[k] !== undefined);
       if (metaKeys.length > 0) {

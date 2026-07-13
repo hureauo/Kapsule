@@ -2,12 +2,44 @@ import { Router } from 'express';
 import { join } from 'node:path';
 import { statfs } from 'node:fs/promises';
 import rateLimit from 'express-rate-limit';
-import { DEFAULTS, LIMITS, THEMES, TEXT_FIELDS, TEXT_FIELD_MAX, VIDEO_QUALITY, DEFAULT_VIDEO_QUALITY } from '@kapsule/core';
+import {
+  DEFAULTS, LIMITS, THEMES, TEXT_FIELDS, TEXT_FIELD_MAX,
+  QUALITY_KEYS, VIDEO_ORIENTATIONS, DEFAULT_VIDEO_QUALITY, DEFAULT_VIDEO_ORIENTATION, resolvePreset,
+} from '@kapsule/core';
 import {
   getActiveEvent, listEvents, setActiveEvent, updateEventStatus,
 } from '../registry.js';
 import { getActiveEventDb } from '../eventDb.js';
 import { getPushState } from '../sync/push.js';
+
+/**
+ * Résout les réglages vidéo effectifs d'un événement, sur une event DB ouverte.
+ *
+ * Cascade : override local (local_overrides) > défaut Hub (event_meta) > défaut core.
+ * local_overrides n'est jamais écrasé par le pull (contrairement à event_meta) :
+ * un réglage fait sur place tient face au Hub.
+ *
+ * Les clés retournées sont NORMALISÉES : une valeur corrompue en base (push/import
+ * direct contournant la validation des routes) retombe sur le défaut plutôt que de
+ * ressortir telle quelle — les fronts s'en servent pour présélectionner leurs <select>.
+ *
+ * Source unique de la résolution : GET /api/event et PUT /api/event/video-quality
+ * l'utilisent tous les deux, sans quoi ils pourraient répondre des valeurs différentes.
+ */
+function resolveVideoSettings(db) {
+  const read = (key) =>
+    db.prepare('SELECT value FROM local_overrides WHERE key=?').get(key)?.value
+    ?? db.prepare('SELECT value FROM event_meta WHERE key=?').get(key)?.value
+    ?? null;
+
+  const rawQuality = read('video_quality');
+  const rawOrientation = read('video_orientation');
+
+  const quality = QUALITY_KEYS.includes(rawQuality) ? rawQuality : DEFAULT_VIDEO_QUALITY;
+  const orientation = VIDEO_ORIENTATIONS.includes(rawOrientation) ? rawOrientation : DEFAULT_VIDEO_ORIENTATION;
+
+  return { quality, orientation, preset: resolvePreset(quality, orientation) };
+}
 
 export function makeEventsRouter(dataDir, cfg) {
   const router = Router();
@@ -181,11 +213,7 @@ export function makeEventsRouter(dataDir, cfg) {
       const requiresLoginMeta = db.prepare("SELECT value FROM event_meta WHERE key = 'requires_login'").get();
       const requiresLogin = !!(activeEvent.is_preview) && requiresLoginMeta?.value === 'true';
 
-      // Qualité vidéo : override local (local_overrides) > défaut Hub (event_meta) > DEFAULT_VIDEO_QUALITY.
-      // local_overrides n'est jamais écrasé par le pull (contrairement à event_meta).
-      const getOverride = (key) => db.prepare('SELECT value FROM local_overrides WHERE key=?').get(key)?.value ?? null;
-      const resolvedQualityKey = getOverride('video_quality') ?? getMeta('video_quality') ?? DEFAULT_VIDEO_QUALITY;
-      const videoQualityPreset = VIDEO_QUALITY[resolvedQualityKey] ?? VIDEO_QUALITY[DEFAULT_VIDEO_QUALITY];
+      const video = resolveVideoSettings(db);
 
       res.json({
         id: activeEvent.id,
@@ -201,10 +229,11 @@ export function makeEventsRouter(dataDir, cfg) {
         thanks_text: textOrDefault('thanks_text'),
         requiresLogin,
         is_preview: !!(activeEvent.is_preview),
-        video_quality: resolvedQualityKey,
-        video_width: videoQualityPreset.width,
-        video_height: videoQualityPreset.height,
-        video_bitrate: videoQualityPreset.videoBitrate,
+        video_quality: video.quality,
+        video_orientation: video.orientation,
+        video_width: video.preset.width,
+        video_height: video.preset.height,
+        video_bitrate: video.preset.videoBitrate,
       });
     } catch (err) {
       next(err);
@@ -212,7 +241,9 @@ export function makeEventsRouter(dataDir, cfg) {
   });
 
   // ── PUT /api/event/video-quality ─────────────────────────────────────────
-  // Override local persistant de la qualité vidéo (survit au pull Hub).
+  // Override local persistant de la qualité ET de l'orientation vidéo (survit au
+  // pull Hub). Les deux champs du body sont optionnels et indépendants : on peut
+  // changer l'orientation sans toucher la qualité, et inversement.
   // En preview : accessible sans auth (borne en mode démo, invité ou tech).
   // Hors preview : requiert tech_borne (même garde que les routes tech).
   // Préfixe /event/ et non /admin/ car la route est publique en preview ;
@@ -227,14 +258,32 @@ export function makeEventsRouter(dataDir, cfg) {
 
   function handler(req, res, next, activeEvent) {
     try {
-      const { quality } = req.body ?? {};
-      if (!quality || !VIDEO_QUALITY[quality]) {
-        return res.status(400).json({ error: `Qualité invalide. Valeurs : ${Object.keys(VIDEO_QUALITY).join(', ')}` });
+      const { quality, orientation } = req.body ?? {};
+      if (quality === undefined && orientation === undefined) {
+        return res.status(400).json({ error: 'Body vide : fournir quality et/ou orientation.' });
       }
+      if (quality !== undefined && !QUALITY_KEYS.includes(quality)) {
+        return res.status(400).json({ error: `Qualité invalide. Valeurs : ${QUALITY_KEYS.join(', ')}` });
+      }
+      if (orientation !== undefined && !VIDEO_ORIENTATIONS.includes(orientation)) {
+        return res.status(400).json({ error: `Orientation invalide. Valeurs : ${VIDEO_ORIENTATIONS.join(', ')}` });
+      }
+
       const db = getActiveEventDb(dataDir, activeEvent);
-      db.prepare('INSERT OR REPLACE INTO local_overrides (key, value) VALUES (?, ?)').run('video_quality', quality);
-      const preset = VIDEO_QUALITY[quality];
-      res.json({ ok: true, video_quality: quality, ...preset });
+      const upsert = db.prepare('INSERT OR REPLACE INTO local_overrides (key, value) VALUES (?, ?)');
+      if (quality !== undefined) upsert.run('video_quality', quality);
+      if (orientation !== undefined) upsert.run('video_orientation', orientation);
+
+      // On relit la cascade complète (même résolution que GET /api/event) : le champ
+      // non fourni garde sa valeur effective, et le PUT ne peut pas répondre autre
+      // chose que ce que le GET suivant renverra.
+      const video = resolveVideoSettings(db);
+      res.json({
+        ok: true,
+        video_quality: video.quality,
+        video_orientation: video.orientation,
+        ...video.preset,
+      });
     } catch (err) {
       next(err);
     }

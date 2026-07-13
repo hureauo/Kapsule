@@ -1,23 +1,32 @@
 ---
 status: tests-pending
-base_commit: f6a915231846420f988b15d43c85ddcd6d191e4e
-workspaces: [@kapsule/hub-server]
-generated_at: 2026-06-23T00:00:00Z
-verdict: COMMIT OK
+base_commit: 2e29950e7baf95a245f56da27631d294ed45db4e
+workspaces: [@kapsule/core, @kapsule/borne-server, @kapsule/hub-server]
+generated_at: 2026-07-14T00:00:00Z
+verdict: COMMIT À CORRIGER
 ---
 
 # Relais de review → tests
 
 Workspaces à tester :
-- @kapsule/hub-server (raison : routes/admin.js — nouvel endpoint GET /email-logs ; test email.test.js ajouté)
+- @kapsule/core (raison : `packages/core/src/constants.js` — `VIDEO_QUALITY` réindexé par orientation, `resolvePreset`/`QUALITY_KEYS`/`mbPerMinFromKey` ajoutés. Déjà exécuté sur le VPS : 23 tests PASS — à reconfirmer en local)
+- @kapsule/borne-server (raison : `routes/events.js` — `GET /api/event` + `PUT /api/event/video-quality` réécrits pour la cascade qualité/orientation ; 10 nouveaux tests dans `test/events.test.js`)
+- @kapsule/hub-server (raison : `routes/events.js` (validation `video_orientation`), `eventConfig.js` (`META_KEYS` + skip silencieux), `routes/admin.js` (`GET /email-logs` change de forme : `{smtp, logs}`) ; nouveaux tests dans `events.test.js`, `eventConfig.test.js`, `email.test.js`)
 
-Note : @kapsule/hub-web touché (AdminPage.jsx, client.js) mais sans suite de test JS (UI hors périmètre `npm test`) — vérification visuelle/manuelle uniquement.
+> Note : `@kapsule/hub-web` et `@kapsule/borne-web` sont touchés (EventDetailPage, SyncStatus, AdminPage, DesignPanel, StartScreen, RecordingScreen, GuestPage, useMediaRecorder, CSS) mais n'ont pas de suite de tests unitaire couvrant ces écrans — la vérification y est humaine (cf. 🧑 du rapport).
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- Confirmer le 403 client / 200 superuser sur GET /api/admin/email-logs (garde héritée du router.use(requireUser, requireSuperuser)) — déjà couvert par les 2 cas ajoutés dans email.test.js.
-- Confirmer la sérialisation : la liste expose bien recipient_email/type/subject/status/error/created_at et RIEN d'autre (pas de token, pas de PII invité). RGPD : email_logs = emails de COMPTES uniquement.
-- Suite hub-server annoncée à 340 tests (338 pass, 0 fail). Vérifier l'absence de régression et le statut réel des 2 tests non-pass annoncés (non introduits par ce lot).
+- **Régression n°1 recherchée : aucun `Object.keys(VIDEO_QUALITY)` ni `VIDEO_QUALITY[qualityKey]` (forme plate) ne subsiste.** Grep exhaustif : rien trouvé. Les tests hub-server (`events.test.js` : `video_quality: 'ultra'` → 400 ; `eventConfig.test.js` : `'ultra'` ignoré) et borne-server (`quality: 'ultra'` → 400) confirment que la validation porte bien sur les QUALITÉS et non sur les orientations. **Si l'un de ces tests renvoyait 200 au lieu de 400, ce serait la régression.**
+- **Rétrocompat** : `event_meta.video_quality = 'standard'` sans `video_orientation` doit produire 1280×720 paysage. Couvert par le test borne « GET /api/event : défaut paysage quand rien n'est réglé ». À confirmer.
+- **Régression de contrat Hub→web** : `GET /api/admin/email-logs` renvoie désormais `{smtp, logs}` au lieu d'un tableau. `email.test.js` a été adapté ; vérifier qu'aucun autre test/consommateur ne suppose l'ancienne forme tableau.
+- Le rate-limiter de `PUT /api/event/video-quality` (30 req/min) doit rester désactivé en test via `cfg.skipRateLimits` — sinon les 10 nouveaux tests borne-server pourraient déclencher des 429 en cascade. À surveiller si des échecs 429 apparaissent.
+- Smoke tests (`npm run smoke`) non requis : aucun fichier d'infra (compose, nginx, Dockerfile) n'est modifié ; seul le `Makefile` change.
 
 ## Corrections demandées
 
-Aucune correction requise.
+> Cette section est lue par l'agent principal pour implémenter les corrections.
+> Chaque item est coché par l'agent principal une fois corrigé.
+
+- [x] ❌ **CORRIGÉ (variante retenue : garde-fou durci, cible conservée)** — décision utilisateur : `vps-reset` est **gardée** (usage voulu). Le garde-fou est durci : la confirmation liste désormais explicitement ce qui est détruit (registry.sqlite, `events/<id>/`, **vidéos invité + consentements horodatés**, preuve légale RGPD) et exige la saisie de `RESET` en toutes lettres au lieu d'un `y`. La duplication avec `hub-reset` est assumée. `Makefile:59-68` — `vps-reset` est un doublon exact de `hub-reset` (même `$(COMPOSE_HUB) down -v`, même purge des previews et de `$(HUB_NET)`) mais il est placé dans la section **VPS/prod** et nommé comme une cible de prod, alors que `hub-reset` (l. 133) est explicitement sous la bannière « Tests / dev (NE PAS utiliser en prod) ». Sur le VPS, `docker compose -f docker-compose.hub.yml -p kapsule down -v` détruit le volume `hub_data` — donc `registry.sqlite` ET tous les `events/<id>/` (vidéos invité, consentements). Le seul garde-fou est un `read` interactif `[y/N]`. Correction : soit supprimer `vps-reset` (redondant avec `hub-reset`), soit renforcer le garde-fou (saisie du mot `RESET` en toutes lettres plutôt qu'un `y`, mention explicite « efface les vidéos des invités ») et dédupliquer les deux cibles.
+- [x] ⚠️ **CORRIGÉ** — helper `resolveVideoSettings(db)` extrait au niveau module (`apps/borne/server/src/routes/events.js`), qui résout **et normalise** la cascade (override local > event_meta > défaut core). GET `/api/event` et PUT `/api/event/video-quality` l'utilisent tous les deux : le PUT ne peut plus répondre autre chose que ce que le GET suivant renverra. Test ajouté (`events.test.js` : « valeur corrompue en event_meta → GET retombe sur le défaut »). Finding d'origine : `apps/borne/server/src/routes/events.js:262-266` — dans le handler du `PUT`, `effQuality`/`effOrientation` sont relus depuis la cascade mais **renvoyés sans normalisation**, alors que `GET /api/event` (l. 211-212) les normalise via `QUALITY_KEYS.includes(...)` / `VIDEO_ORIENTATIONS.includes(...)`. Si `event_meta` contient une valeur corrompue (push/import direct contournant la route) et que le client ne patche que l'autre champ, la réponse du PUT renvoie la valeur corrompue telle quelle tandis que le GET suivant renverra le défaut : deux sources de vérité divergentes pour l'UI, qui présélectionne ses `<select>` avec. Correction : appliquer la même normalisation aux deux champs avant le `res.json` (ou factoriser un helper `resolveVideoSettings(db)` partagé par le GET et le PUT).
+- [x] ⚠️ **CORRIGÉ** — `maskEmail()` ajouté dans `apps/hub/server/src/email/url.js` (« marie.dupont@exemple.fr » → « ma***@exemple.fr ») et appliqué aux 4 sites de log. Placé dans `url.js` et **non** dans `mailer.js` : ce dernier importe `nodemailer`, et les routes qui ne veulent qu'un formatage de chaîne n'ont pas à charger un client SMTP (vérifié : l'import depuis `mailer.js` faisait effectivement échouer le chargement dans l'image dev, où nodemailer n'est pas installé). Le destinataire complet reste journalisé en base (`email_log.recipient_email`), qui est le bon endroit. Tests ajoutés (`email.test.js` : masquage, non-fuite de l'adresse complète, cas limites). Finding d'origine : `apps/hub/server/src/email/mailer.js:36` et `:51`, `apps/hub/server/src/routes/admin.js:177`, `apps/hub/server/src/routes/auth.js:152` — les nouveaux `console.log`/`console.error` écrivent l'**adresse email du destinataire en clair dans les logs Docker** du Hub (stdout non rotaté, lisible par tout accès au conteneur). Ce sont des emails de comptes clients, pas de données invité — l'invariant RGPD §11 n'est donc pas violé —, mais cela reste de la PII inutilement persistée hors base. Correction : logger l'`id` utilisateur ou un email masqué (`j***@domaine.fr`) plutôt que l'adresse complète, ou conditionner ces lignes à un niveau debug (variable d'env).
