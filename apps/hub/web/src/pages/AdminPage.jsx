@@ -689,12 +689,13 @@ const EMAIL_STATUS_LABEL = { sent: 'Envoyé', failed: 'Échec', skipped: 'Ignor�
 
 function EmailLogsTab() {
   const [logs, setLogs] = useState([]);
+  const [smtp, setSmtp] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
     api.listEmailLogs()
-      .then(setLogs)
+      .then((data) => { setLogs(data.logs); setSmtp(data.smtp); })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
@@ -705,6 +706,18 @@ function EmailLogsTab() {
     <section className="panel-section">
       <h2 className="panel-section__title">Journal des emails ({logs.length})</h2>
       {error && <p className="error-msg">{error}</p>}
+      {smtp && (
+        smtp.configured ? (
+          <div className="banner banner--ok">
+            ✅ SMTP configuré — envoi via <strong>{smtp.host}:{smtp.port}</strong>, expéditeur <strong>{smtp.from}</strong>.
+          </div>
+        ) : (
+          <div className="banner banner--warn">
+            ⚠️ SMTP non configuré (<code>SMTP_HOST</code> vide). Aucun email n'est envoyé : les
+            envois apparaissent en « Ignoré » et le lien reste copiable manuellement côté admin.
+          </div>
+        )
+      )}
       <p className="text--muted" style={{ fontSize: '13px', marginBottom: '8px' }}>
         100 derniers envois. « Ignoré » = SMTP non configuré (le lien reste copiable côté admin).
       </p>
@@ -818,10 +831,13 @@ function UsersTab() {
 
   // Envoie le mail de définition de mot de passe ET affiche le lien en fallback
   // (le backend renvoie toujours registration_url, même si l'envoi SMTP a échoué).
-  async function handleSendMail(userId) {
+  // Confirmation préalable : l'envoi part vers une boîte tierce, action à ne pas
+  // déclencher par mégarde (confirm() natif, cohérent avec le reste de l'app).
+  async function handleSendMail(user) {
+    if (!confirm(`Envoyer le mail d'inscription à ${user.email} ?`)) return;
     setMailMsg('');
     try {
-      const { registration_url, email_sent } = await api.sendRegistration(userId);
+      const { registration_url, email_sent } = await api.sendRegistration(user.id);
       setCopiedLink(registration_url);
       setMailMsg(email_sent
         ? 'Email envoyé.'
@@ -908,7 +924,7 @@ function UsersTab() {
                   <td data-label="Mot de passe">{u.has_password ? '✓' : <span className="text--muted">Non défini</span>}</td>
                   <td data-label="Actif">{u.active ? 'Oui' : 'Non'}</td>
                   <td style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    <button className="btn btn--ghost btn--sm" onClick={() => handleSendMail(u.id)}>
+                    <button className="btn btn--ghost btn--sm" onClick={() => handleSendMail(u)}>
                       Envoyer le mail
                     </button>
                     <button className="btn btn--ghost btn--sm" onClick={() => handleNewLink(u.id)}>

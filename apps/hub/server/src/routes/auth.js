@@ -9,7 +9,7 @@ import {
   getRegistrationToken, markRegistrationTokenUsed,
   createRegistrationToken, getLatestRegistrationToken, insertEmailLog,
 } from '../registry.js';
-import { buildRegistrationUrl } from '../email/url.js';
+import { buildRegistrationUrl, maskEmail } from '../email/url.js';
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min
@@ -149,6 +149,7 @@ export function makeAuthRouter({ mailer } = {}) {
           status: result.skipped ? 'skipped' : 'sent',
         });
       } catch (err) {
+        console.error(`[hub][email] ❌ échec d'envoi à ${maskEmail(user.email)} (password_reset) : ${err.message}`);
         insertEmailLog(db, {
           recipient_email: user.email,
           type: 'password_reset',

@@ -15,12 +15,14 @@
 
 import nodemailer from 'nodemailer';
 import { renderTemplate } from './render.js';
+import { maskEmail } from './url.js';
 
 // `name` est préfixé d'un espace pour rendre « Bonjour{{name}} » → « Bonjour Marie » /
 // « Bonjour » (sans nom). Centralisé ici pour que les deux mailers se comportent pareil.
 function nameSuffix(name) {
   return name ? ` ${name}` : '';
 }
+
 
 export function createMailer(config) {
   const transport = nodemailer.createTransport({
@@ -33,6 +35,7 @@ export function createMailer(config) {
   async function send(templateName, { to, name, url }) {
     const { subject, text } = renderTemplate(templateName, { name: nameSuffix(name), url });
     const info = await transport.sendMail({ from: config.smtpFrom, to, subject, text });
+    console.log(`[hub][email] ✉️  envoyé à ${maskEmail(to)} (${templateName}) via ${config.smtpHost}:${config.smtpPort} — messageId=${info.messageId}`);
     return { ok: true, messageId: info.messageId, subject };
   }
 
@@ -45,7 +48,10 @@ export function createMailer(config) {
 // Mailer no-op : aucune connexion SMTP. Utilisé quand SMTP_HOST est vide (dev) et
 // comme défaut sûr dans createApp si aucun mailer n'est injecté (tests).
 export function createNullMailer() {
-  async function skip() {
+  async function skip(opts) {
+    // opts est { to, name, url } ; on logue le destinataire (masqué) pour tracer
+    // l'intention d'envoi même quand SMTP est désactivé (le lien reste copiable côté admin).
+    console.log(`[hub][email] ⏭️  envoi ignoré (SMTP non configuré) — destinataire ${maskEmail(opts?.to)}`);
     return { ok: false, skipped: true };
   }
   return {

@@ -9,6 +9,7 @@ import { createApp } from '../src/index.js';
 import { getDb, closeRegistry, insertUser, getUserByEmail, listEmailLogs } from '../src/registry.js';
 import { createNullMailer } from '../src/email/mailer.js';
 import { renderTemplate, renderString } from '../src/email/render.js';
+import { maskEmail } from '../src/email/url.js';
 
 // ── Unitaires : render + null mailer ─────────────────────────────────────────
 
@@ -273,18 +274,42 @@ describe('GET /api/admin/email-logs', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('200 + liste des logs pour un superuser', async () => {
+  it('200 + logs + diagnostic SMTP pour un superuser', async () => {
     const res = await request.get('/api/admin/email-logs')
       .set('Authorization', `Bearer ${tokenAdmin}`);
     assert.equal(res.status, 200);
-    assert.ok(Array.isArray(res.body));
-    assert.equal(res.body[0].recipient_email, 'x@logs.test');
-    assert.equal(res.body[0].status, 'sent');
+    assert.ok(Array.isArray(res.body.logs));
+    assert.equal(res.body.logs[0].recipient_email, 'x@logs.test');
+    assert.equal(res.body.logs[0].status, 'sent');
+    // Diagnostic SMTP exposé : en test SMTP_HOST est vide → configured:false,
+    // et aucun secret SMTP (user/password) ne doit fuiter.
+    assert.equal(res.body.smtp.configured, false);
+    assert.ok(!('password' in res.body.smtp));
+    assert.ok(!('user' in res.body.smtp));
   });
 
   it('403 pour un client', async () => {
     const res = await request.get('/api/admin/email-logs')
       .set('Authorization', `Bearer ${tokenClient}`);
     assert.equal(res.status, 403);
+  });
+});
+
+describe('email/maskEmail', () => {
+  it('masque le local-part et conserve le domaine', () => {
+    assert.equal(maskEmail('marie.dupont@exemple.fr'), 'ma***@exemple.fr');
+    assert.equal(maskEmail('a@b.fr'), 'a***@b.fr');
+  });
+
+  it('ne laisse jamais fuiter l\'adresse complète', () => {
+    const email = 'confidentiel@exemple.fr';
+    assert.ok(!maskEmail(email).includes('confidentiel'));
+  });
+
+  it('retourne ? sur une entrée absente ou non-email', () => {
+    assert.equal(maskEmail(undefined), '?');
+    assert.equal(maskEmail(null), '?');
+    assert.equal(maskEmail('pas-un-email'), '?');
+    assert.equal(maskEmail(123), '?');
   });
 });

@@ -74,7 +74,7 @@ export const api = {
   createRegistrationLink: (id) => apiFetch(`/admin/users/${id}/registration-link`, { method: 'POST' }),
   // Génère un lien ET l'envoie par email ; renvoie { registration_url, email_sent }
   sendRegistration: (id) => apiFetch(`/admin/users/${id}/send-registration`, { method: 'POST' }),
-  // Journal des envois d'emails (onglet Gestion email)
+  // Journal des envois d'emails + diagnostic SMTP → { smtp, logs } (onglet Gestion email)
   listEmailLogs: () => apiFetch('/admin/email-logs'),
 
   // Admin : utilisateurs assignés à un événement

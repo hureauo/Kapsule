@@ -12,10 +12,11 @@ import {
   getEvent, listEventUsers, upsertEventUser, deleteEventUser,
   countSuperusers, insertEmailLog, listEmailLogs,
 } from '../registry.js';
+import { config } from '../config.js';
 import { requireUser } from '../middleware/auth.js';
 import { openEventDb } from '../eventStore.js';
 import { META_KEYS } from '../eventConfig.js';
-import { buildRegistrationUrl } from '../email/url.js';
+import { buildRegistrationUrl, maskEmail } from '../email/url.js';
 
 const META_HASH_KEYS = META_KEYS;
 
@@ -173,6 +174,7 @@ export function makeAdminRouter(dataDir, { mailer } = {}) {
           status: result.skipped ? 'skipped' : 'sent',
         });
       } catch (err) {
+        console.error(`[hub][email] ❌ échec d'envoi à ${maskEmail(user.email)} (registration) : ${err.message}`);
         insertEmailLog(db, {
           recipient_email: user.email,
           type: 'registration',
@@ -185,9 +187,19 @@ export function makeAdminRouter(dataDir, { mailer } = {}) {
     } catch (err) { next(err); }
   });
 
-  // GET /api/admin/email-logs — journal des envois d'emails (onglet Gestion email)
+  // GET /api/admin/email-logs — journal des envois + état SMTP (onglet Gestion email).
+  // On expose un diagnostic SMTP volontairement minimal : un booléen (configuré ou non),
+  // l'hôte/port et l'expéditeur — JAMAIS l'utilisateur ni le mot de passe SMTP.
   router.get('/email-logs', (req, res) => {
-    res.json(listEmailLogs(getDb(), { limit: 100 }));
+    res.json({
+      smtp: {
+        configured: Boolean(config.smtpHost),
+        host: config.smtpHost || null,
+        port: config.smtpHost ? config.smtpPort : null,
+        from: config.smtpFrom,
+      },
+      logs: listEmailLogs(getDb(), { limit: 100 }),
+    });
   });
 
   // ── Tokens de borne (token = événement, §11.20) ──────────────────────────────
