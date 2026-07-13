@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
-import { formatDuration, formatSize } from '../utils/format.js';
+import { formatDuration, formatSize, isPortrait } from '../utils/format.js';
 
 // ── Modal lecture vidéo ───────────────────────────────────────────────────────
 
@@ -157,7 +157,7 @@ export default function VideoGallery({ eventId, eventName }) {
                   <img
                     src={api.thumbnailUrl(eventId, v.id)}
                     alt={`Miniature ${v.guest_name}`}
-                    className="gallery-thumb"
+                    className={`gallery-thumb${isPortrait(v) ? ' gallery-thumb--portrait' : ''}`}
                   />
                 ) : (
                   <div className="gallery-thumb gallery-thumb--placeholder">▶</div>

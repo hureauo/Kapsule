@@ -225,12 +225,23 @@ button { cursor: pointer; font: inherit; }
   padding: 0;
   cursor: pointer;
 }
+/* Le cadre garde un ratio 16/9 fixe : une grille dont les cartes changent de
+   hauteur selon l'orientation de chaque vidéo sauterait au chargement et serait
+   illisible. C'est le CADRAGE à l'intérieur du cadre qui s'adapte.
+
+   `cover` remplit le cadre quitte à rogner — acceptable en paysage (on rogne les
+   bords d'une image déjà horizontale), désastreux en portrait (on ne verrait
+   qu'une bande horizontale au milieu du visage). Les vidéos verticales passent
+   donc en `contain` : l'image entière est visible, letterboxée sur le fond noir. */
 .gallery-thumb {
   width: 100%;
   aspect-ratio: 16/9;
   object-fit: cover;
   display: block;
   background: #000;
+}
+.gallery-thumb--portrait {
+  object-fit: contain;
 }
 .gallery-thumb--placeholder {
   display: flex;
@@ -251,7 +262,10 @@ button { cursor: pointer; font: inherit; }
   padding: 8px 12px;
   border-top: 1px solid var(--border);
 }
-.gallery-modal-video { width: 100%; max-height: 70vh; background: #000; }
+/* Lecteur modal : `object-fit` par défaut d'un <video> vaut `contain`, donc une vidéo
+   portrait s'affiche entière (letterboxée) plutôt que déformée. `height: auto` évite
+   que la boîte s'étire à la largeur du modal pour une source étroite. */
+.gallery-modal-video { width: 100%; height: auto; max-height: 70vh; background: #000; }
 
 /* ── Modal ───────────────────────────────────────────────────────────────── */
 .modal-overlay {

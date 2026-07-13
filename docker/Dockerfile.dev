@@ -1,4 +1,7 @@
 FROM node:20-alpine
 # Dépendances natives pour better-sqlite3 (compilation C++)
-RUN apk add --no-cache python3 make g++
+# ffmpeg : les tests du worker (probe/thumbnail, dont la détection d'orientation)
+# génèrent et sondent de vraies vidéos. Sans lui, ces tests se SKIPPENT en silence
+# et la logique de rotation ne serait jamais couverte.
+RUN apk add --no-cache python3 make g++ ffmpeg
 WORKDIR /app

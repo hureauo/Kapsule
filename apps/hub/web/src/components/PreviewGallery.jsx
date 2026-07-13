@@ -158,7 +158,14 @@ export default function PreviewGallery({ eventId }) {
               {/* Aperçu vidéo — la 1re frame fait office de poster.
                   preload=metadata charge juste les métadonnées + quelques frames
                   (suffisant pour l'aperçu visuel, sans télécharger tout le fichier).
-                  playsInline obligatoire iOS §11.5. */}
+                  playsInline obligatoire iOS §11.5.
+
+                  Contrairement à la galerie Hub, ces vidéos vivent encore sur la borne
+                  (route proxy) : elles n'ont pas été sondées par le worker, donc pas de
+                  width/height en base. On lit donc l'orientation sur l'élément lui-même,
+                  à l'arrivée des métadonnées — videoWidth/videoHeight sont déjà redressés
+                  par le navigateur. Sans ça, une vidéo portrait serait rognée par
+                  object-fit: cover et on n'en verrait qu'une bande horizontale. */}
               <button
                 className="gallery-thumb-btn"
                 onClick={() => { setModal(v); setMode('lecture'); }}
@@ -170,6 +177,10 @@ export default function PreviewGallery({ eventId }) {
                   preload="metadata"
                   muted
                   playsInline
+                  onLoadedMetadata={(e) => {
+                    const el = e.currentTarget;
+                    el.classList.toggle('gallery-thumb--portrait', el.videoHeight > el.videoWidth);
+                  }}
                 />
               </button>
 

@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatBytes, formatSize, formatDate, formatDuration } from '../src/utils/format.js';
+import { formatBytes, formatSize, formatDate, formatDuration, isPortrait } from '../src/utils/format.js';
 
 const KB = 1024, MB = 1024 * 1024, GB = 1024 * 1024 * 1024;
 
@@ -33,4 +33,20 @@ describe('formatDuration', () => {
   test('0 → "0:00"', () => assert.equal(formatDuration(0), '0:00'));
   test('65 → "1:05" (padding)', () => assert.equal(formatDuration(65), '1:05'));
   test('125 → "2:05"', () => assert.equal(formatDuration(125), '2:05'));
+});
+
+describe('isPortrait', () => {
+  test('vidéo verticale → true', () => assert.equal(isPortrait({ width: 720, height: 1280 }), true));
+  test('vidéo horizontale → false', () => assert.equal(isPortrait({ width: 1280, height: 720 }), false));
+  test('vidéo carrée → false (pas verticale)', () => assert.equal(isPortrait({ width: 720, height: 720 }), false));
+
+  // Une vidéo pas encore sondée par le worker n'a ni width ni height : on retombe
+  // sur le cadrage paysage, qui est l'orientation par défaut d'un événement.
+  test('dimensions absentes → false', () => {
+    assert.equal(isPortrait({}), false);
+    assert.equal(isPortrait({ width: 720 }), false);
+    assert.equal(isPortrait({ width: 0, height: 0 }), false);
+    assert.equal(isPortrait(null), false);
+    assert.equal(isPortrait(undefined), false);
+  });
 });

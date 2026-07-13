@@ -29,3 +29,17 @@ export function formatDuration(s) {
   const sec = Math.floor(s % 60);
   return `${m}:${String(sec).padStart(2, '0')}`;
 }
+
+// Une vidéo est-elle verticale ? width/height viennent du job `probe` (table
+// `derived`), et sont des dimensions D'AFFICHAGE : le worker applique la matrice
+// de rotation, donc une vidéo mobile encodée en paysage mais tournée de 90° ressort
+// bien avec height > width. Voir worker/ffmpeg.js.
+//
+// Une vidéo non encore sondée (probe en attente, ou échoué) n'a pas de dimensions :
+// on répond false, donc le cadrage paysage par défaut. C'est le bon fallback — il
+// correspond à l'orientation par défaut d'un événement.
+export function isPortrait(video) {
+  const { width, height } = video ?? {};
+  if (!width || !height) return false;
+  return height > width;
+}

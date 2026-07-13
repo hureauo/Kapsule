@@ -559,9 +559,14 @@ input, textarea, [contenteditable] {
   transform: scaleX(-1); /* miroir — naturel pour l'invité */
 }
 
+/* Replay de la vidéo qu'on vient d'enregistrer. Un <video> fait `contain` par défaut :
+   une source portrait s'affiche entière, sans déformation. `max-height` l'empêche de
+   déborder verticalement de l'écran kiosque, où elle serait deux fois plus haute que large. */
 .rec__blob-video {
   width: 100%;
+  height: auto;
   max-width: 640px;
+  max-height: 60vh;
   border-radius: 16px;
   background: #000;
 }
