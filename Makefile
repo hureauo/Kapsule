@@ -13,7 +13,7 @@ COMPOSE_HUB_DEV := docker compose -f docker-compose.hub.yml -f docker-compose.hu
 HUB_NET         := kapsule_hub_net
 
 .DEFAULT_GOAL := help
-.PHONY: help vps-build vps-up vps-down vps-restart hub-reset local-dev-environment local-build local-up local-down local-restart local-reset
+.PHONY: help vps-build vps-up vps-down vps-restart vps-reset hub-reset local-dev-environment local-build local-up local-down local-restart local-reset
 
 help: ## Affiche cette aide
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -55,6 +55,21 @@ vps-down: ## Coupe tout le projet : Hub + bornes preview (lancées hors compose)
 	@echo "→ suppression des réseaux isolés preview-net-*"
 	@docker network ls --filter "name=preview-net-" -q | xargs -r docker network rm 2>/dev/null || true
 	@echo "✓ tout coupé"
+
+vps-reset: ## ⚠️  Reset complet du VPS : volumes + réseaux Hub + previews (DESTRUCTIF — perte de données)
+	@echo "⚠️  RESET DESTRUCTIF DES DONNÉES HUB VPS"
+	@echo "    Le volume hub_data sera supprimé, ce qui efface :"
+	@echo "      · registry.sqlite (comptes, événements, tokens)"
+	@echo "      · events/<id>/ — LES VIDÉOS DES INVITÉS et leurs consentements horodatés"
+	@echo "    Ces données sont irrécupérables et constituent la preuve légale RGPD."
+	@printf "    Taper RESET en majuscules pour confirmer : " && read ans && [ "$$ans" = "RESET" ]
+	@echo "→ down Hub avec volumes (-v)"
+	$(COMPOSE_HUB) down -v --remove-orphans
+	@echo "→ suppression des conteneurs + réseaux preview"
+	@docker ps -aq --filter "name=preview-" | xargs -r docker rm -f
+	@docker network ls --filter "name=preview-net-" -q | xargs -r docker network rm 2>/dev/null || true
+	@docker network rm $(HUB_NET) 2>/dev/null || true
+	@echo "✓ volumes et réseaux VPS réinitialisés"
 
 ## ── Dev local (TLS via mkcert, domaine kapsule.localhost) ────────────────────
 

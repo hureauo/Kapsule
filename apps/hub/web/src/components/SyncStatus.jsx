@@ -9,6 +9,19 @@ const STATUS_TIMELINE_LABEL = {
   processed: 'Traité', waiting: 'En attente',
 };
 
+// Description pédagogique de chaque étape du cycle de vie d'un événement.
+// Affichée sous le label dans la timeline pour expliquer « où on en est ».
+const STATUS_TIMELINE_DESC = {
+  preview: 'Phase d\'essai : on configure questions et design, et on teste sur la borne d\'essai.',
+  ready: 'Configuration gelée (questions + design figés). La borne réelle peut désormais se connecter et récupérer le contenu.',
+  loaded: 'La borne a récupéré la configuration et les médias : elle est prête pour l\'événement, hors ligne.',
+  live: 'Événement en cours sur la borne : les invités enregistrent leurs vidéos.',
+  closed: 'Événement terminé côté borne. Les vidéos attendent d\'être renvoyées au Hub.',
+  pushed: 'La borne a renvoyé toutes les vidéos au Hub.',
+  processed: 'Les vidéos ont été traitées côté Hub (transcodage, vignettes).',
+  waiting: 'En attente d\'une action ou d\'un traitement complémentaire.',
+};
+
 function formatDate(d) {
   if (!d) return null;
   return new Date(d).toLocaleString('fr-FR');
@@ -20,12 +33,16 @@ function StatusTimeline({ status, pulledAt, pushedAt, processedAt }) {
     <div className="sync-timeline">
       {STATUS_ORDER.map((s, i) => {
         const done = i <= current;
+        const isCurrent = i === current;
         let date = null;
         if (s === 'loaded' && pulledAt) date = formatDate(pulledAt);
         if (s === 'pushed' && pushedAt) date = formatDate(pushedAt);
         if (s === 'processed' && processedAt) date = formatDate(processedAt);
         return (
-          <div key={s} className={`timeline-step${done ? ' timeline-step--done' : ''}`}>
+          <div
+            key={s}
+            className={`timeline-step${done ? ' timeline-step--done' : ''}${isCurrent ? ' timeline-step--current' : ''}`}
+          >
             <span className="timeline-step__label">{STATUS_TIMELINE_LABEL[s] ?? s}</span>
             {date && <span className="timeline-step__date">{date}</span>}
           </div>
@@ -35,7 +52,7 @@ function StatusTimeline({ status, pulledAt, pushedAt, processedAt }) {
   );
 }
 
-export default function SyncStatus({ event }) {
+export default function SyncStatus({ event, frozen = false, onStatusChange }) {
   const [info, setInfo] = useState(null);
   const [error, setError] = useState('');
 
@@ -73,6 +90,48 @@ export default function SyncStatus({ event }) {
           pushedAt={ev.pushed_at}
           processedAt={ev.processed_at}
         />
+
+        {/* Description de l'étape courante, en pleine largeur sous la timeline
+            (la cellule de timeline est trop étroite pour un texte explicatif). */}
+        {STATUS_TIMELINE_DESC[ev.status] && (
+          <p className="sync-step-desc">
+            <strong>{STATUS_TIMELINE_LABEL[ev.status] ?? ev.status}</strong> — {STATUS_TIMELINE_DESC[ev.status]}
+          </p>
+        )}
+
+        {/* Action qui fait avancer le cycle de vie : on la place ici, sous la timeline,
+            pour que le lien action → effet sur la progression soit explicite. */}
+        {!frozen && ev.status === 'preview' && (
+          <div className="sync-transition">
+            <p className="text--muted" style={{ fontSize: 13, marginBottom: 8 }}>
+              Quand la configuration est testée et prête, validez-la : questions et design
+              seront <strong>gelés</strong> (plus modifiables) et la <strong>borne réelle pourra
+              se connecter</strong> pour récupérer le contenu. Vous pourrez revenir en preview tant
+              que la borne n'a rien chargé.
+            </p>
+            <button
+              className="btn btn--primary"
+              onClick={() => {
+                if (confirm('Valider la configuration ? Le contenu (questions, design) sera gelé et la borne réelle pourra se connecter.')) {
+                  onStatusChange?.('ready');
+                }
+              }}
+            >
+              Valider la configuration
+            </button>
+          </div>
+        )}
+        {!frozen && ev.status === 'ready' && (
+          <div className="sync-transition">
+            <p className="text--muted" style={{ fontSize: 13, marginBottom: 8 }}>
+              Configuration gelée. Tant que la borne n'a pas chargé le contenu, vous pouvez
+              revenir en preview pour modifier questions et design.
+            </p>
+            <button className="btn btn--ghost" onClick={() => onStatusChange?.('preview')}>
+              Retour en preview
+            </button>
+          </div>
+        )}
       </section>
 
       {/* Borne assignée */}

@@ -107,6 +107,7 @@ button { cursor: pointer; font: inherit; }
 .banner { padding: 10px 16px; border-radius: var(--radius); margin-bottom: 16px; font-size: 14px; }
 .banner--warn { background: var(--warn-bg); border: 1px solid var(--warn-border); }
 .banner--info { background: var(--info-bg); border: 1px solid var(--info-border); }
+.banner--ok { background: #d1f0d1; border: 1px solid #1a7f37; color: #155724; }
 
 /* ── Tabs ────────────────────────────────────────────────────────────────── */
 .hub-tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
@@ -177,8 +178,12 @@ button { cursor: pointer; font: inherit; }
 }
 .timeline-step:last-child { border-right: none; }
 .timeline-step--done { background: var(--primary, #2563eb); color: #fff; }
+.timeline-step--current { box-shadow: inset 0 -3px 0 0 var(--warn-border); }
 .timeline-step__label { display: block; font-weight: 600; }
 .timeline-step__date  { display: block; font-size: 10px; margin-top: 2px; opacity: 0.85; }
+
+.sync-step-desc { margin: 10px 2px 0; font-size: 13px; color: var(--text-muted); line-height: 1.4; }
+.sync-transition { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
 
 .sync-jobs-table, .sync-log-table {
   width: 100%;
