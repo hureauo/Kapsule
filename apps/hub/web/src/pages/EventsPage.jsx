@@ -60,6 +60,7 @@ export default function EventsPage() {
       <header className="hub-header">
         <span className="hub-logo">Kapsule Hub</span>
         <div className="hub-header__actions">
+          <button className="btn btn--ghost" onClick={() => navigate('/designs')}>Designs</button>
           {isSuperuser && (
             <button className="btn btn--ghost" onClick={() => navigate('/admin')}>Administration</button>
           )}

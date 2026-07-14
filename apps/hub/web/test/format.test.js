@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatBytes, formatSize, formatDate, formatDuration, isPortrait } from '../src/utils/format.js';
+import { formatBytes, formatSize, formatDate, formatSqlDate, formatDuration, isPortrait } from '../src/utils/format.js';
 
 const KB = 1024, MB = 1024 * 1024, GB = 1024 * 1024 * 1024;
 
@@ -24,6 +24,23 @@ describe('formatDate', () => {
   test('falsy → "—"', () => assert.equal(formatDate(null), '—'));
   test('date valide → chaîne non vide', () => {
     const out = formatDate('2026-06-19T10:00:00Z');
+    assert.ok(typeof out === 'string' && out.length > 0 && out !== '—');
+  });
+});
+
+describe('formatSqlDate', () => {
+  test('falsy → "—"', () => assert.equal(formatSqlDate(null), '—'));
+
+  test('timestamp SQLite (UTC sans Z) interprété en UTC, pas en heure locale', () => {
+    // SQLite écrit 'YYYY-MM-DD HH:MM:SS' en UTC sans suffixe de zone. Lu tel quel
+    // par new Date(), il serait pris pour de l'heure locale → décalage.
+    const sqlite = formatSqlDate('2026-06-19 10:00:00');
+    const explicit = formatSqlDate('2026-06-19T10:00:00Z');
+    assert.equal(sqlite, explicit);
+  });
+
+  test('une date déjà ISO est acceptée telle quelle', () => {
+    const out = formatSqlDate('2026-06-19T10:00:00Z');
     assert.ok(typeof out === 'string' && out.length > 0 && out !== '—');
   });
 });

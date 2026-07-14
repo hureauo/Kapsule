@@ -35,6 +35,22 @@ export const DESIGN_KEYS = ['version', 'colors', 'radius', 'font', 'layouts', 'a
 export const DESIGN_VERSION = 1;
 export const DESIGN_MAX_JSON = 16384;
 
+// Mappings des presets vers les valeurs CSS réelles. Partagés par l'éditeur Hub
+// (aperçu live) et le runtime kiosque : une seule source, pas de dérive possible
+// entre ce que le client voit dans l'aperçu et ce que la borne rend.
+export const RADIUS_PRESETS = {
+  sharp: { radius: '4px', pill: '8px' },
+  soft: { radius: '16px', pill: '999px' },
+  round: { radius: '28px', pill: '999px' },
+};
+
+export const FONT_PRESETS = {
+  sans: "system-ui, -apple-system, 'Segoe UI', sans-serif",
+  serif: "Georgia, 'Times New Roman', serif",
+  rounded: "'Comic Sans MS', 'Marker Felt', casual, sans-serif",
+  mono: "'SF Mono', 'Cascadia Code', monospace",
+};
+
 // Hex 6 ou 8 chiffres (8 = canal alpha). Rien d'autre : pas de rgb(), pas de nom CSS.
 const HEX_RE = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
 // UUID + extension raster. Jamais de chemin (pas de '/', pas de '..'), jamais de SVG.

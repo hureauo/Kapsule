@@ -327,8 +327,8 @@ cas d'erreur), relu par `kapsule-reviewer` (`/verif-spec`), committé en `phase 
 
 - [x] design.A : spec (PROJET.md §9bis + §4 + §11, cette section ROADMAP)
 - [x] design.B : registry designs + design_versions, CRUD + versions + duplication + promotion + seed 3 templates, tests
-- [ ] design.C : page Designs Hub (liste, dupliquer, renommer, supprimer, templates, vue superuser, historique/restore)
-- [ ] design.D : éditeur tokens + variantes + aperçu live (sans images)
+- [x] design.C : page Designs Hub (liste, dupliquer, renommer, supprimer, templates, vue superuser, historique/restore)
+- [x] design.D : éditeur tokens + variantes + aperçu live (sans images)
 - [ ] design.E : assets (upload Hub, application snapshot à l'événement, bundle + pull + service kiosque), tests intégration
 - [ ] design.F : runtime kiosque (injection tokens, variantes, images)
 - [ ] 🧑 design.G : rendu final sur borne d'essai + iPad réel (tokens, images, variantes, admin borne non affecté)

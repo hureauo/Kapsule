@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS, DESIGN_LAYOUTS,
-  DESIGN_MAX_JSON, validateDesign,
+  DESIGN_MAX_JSON, RADIUS_PRESETS, FONT_PRESETS, validateDesign,
 } from '../src/design.js';
 
 // Design minimal valide — sert de base à muter dans chaque cas.
@@ -32,6 +32,21 @@ describe('constantes design', () => {
     assert.deepEqual(DESIGN_FONTS, ['sans', 'serif', 'rounded', 'mono']);
     assert.deepEqual(DESIGN_LAYOUTS.start, ['centered', 'cover', 'split']);
     assert.deepEqual(DESIGN_LAYOUTS.thanks, ['centered', 'cover']);
+  });
+
+  test('chaque valeur d\'enum a son preset CSS (aperçu Hub et kiosque partagent la source)', () => {
+    // Sans cette garde, ajouter un radius/une police à l'enum sans son mapping
+    // laisserait le runtime sans valeur CSS — panne silencieuse côté borne.
+    for (const key of DESIGN_RADIUS) {
+      assert.ok(RADIUS_PRESETS[key], `preset de rayon manquant : ${key}`);
+      assert.equal(typeof RADIUS_PRESETS[key].radius, 'string');
+      assert.equal(typeof RADIUS_PRESETS[key].pill, 'string');
+    }
+    for (const key of DESIGN_FONTS) {
+      assert.equal(typeof FONT_PRESETS[key], 'string', `stack de police manquante : ${key}`);
+    }
+    assert.equal(Object.keys(RADIUS_PRESETS).length, DESIGN_RADIUS.length);
+    assert.equal(Object.keys(FONT_PRESETS).length, DESIGN_FONTS.length);
   });
 });
 

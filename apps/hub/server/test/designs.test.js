@@ -104,6 +104,33 @@ describe('GET /api/designs', () => {
     assert.equal(res.status, 200);
     assert.ok(res.body.some((d) => d.id === secret.id), 'alice (superuser) doit tout voir');
   });
+
+  it('expose owner_email au superuser (groupement par propriétaire)', async () => {
+    const design = await createDesign(tokenCarol, 'Design avec owner_email');
+
+    const res = await request.get('/api/designs').set(auth(tokenAlice));
+    const found = res.body.find((d) => d.id === design.id);
+    assert.equal(found.owner_email, 'carol@dz.test');
+
+    // Les templates seed n'ont pas de propriétaire.
+    const template = res.body.find((d) => d.is_template === 1 && d.owner_id === null);
+    assert.equal(template.owner_email, null);
+  });
+
+  it('n\'expose JAMAIS owner_email à un client (fuite inter-clients via un template promu)', async () => {
+    // Un design promu garde son owner_id : il devient lisible par tous les clients.
+    // Sans filtrage, l'email de son propriétaire d'origine fuiterait à chacun d'eux.
+    const design = await createDesign(tokenCarol, 'Design de Carol promu');
+    await request.post(`/api/designs/${design.id}/promote`).set(auth(tokenAlice)).send({});
+
+    const res = await request.get('/api/designs').set(auth(tokenBob));
+    const promoted = res.body.find((d) => d.id === design.id);
+    assert.ok(promoted, 'bob doit voir le template promu');
+    assert.equal(promoted.owner_email, undefined, 'l\'email de carol ne doit pas fuiter vers bob');
+
+    // Aucun design de la réponse client ne porte d'email.
+    for (const d of res.body) assert.equal(d.owner_email, undefined);
+  });
 });
 
 // ── POST /api/designs ─────────────────────────────────────────────────────────
@@ -279,6 +306,18 @@ describe('DELETE /api/designs/:id', () => {
     assert.equal(res.status, 404);
   });
 
+  it('409 sur un template d\'origine (le seed ne se rejoue pas → perte définitive)', async () => {
+    // Le front masque le bouton, mais le backend doit refuser aussi : sans cette
+    // garde, un superuser supprimerait un template livré, sans retour possible.
+    const list = await request.get('/api/designs').set(auth(tokenAlice));
+    const seed = list.body.find((d) => d.is_template === 1 && d.owner_id === null);
+    const res = await request.delete(`/api/designs/${seed.id}`).set(auth(tokenAlice));
+    assert.equal(res.status, 409);
+
+    const still = await request.get(`/api/designs/${seed.id}`).set(auth(tokenAlice));
+    assert.equal(still.status, 200, 'le template doit toujours exister');
+  });
+
   it('un :id de path traversal ne touche jamais au disque (404)', async () => {
     // Le dossier ciblé par une traversée doit survivre intacte.
     const victim = join(dir, 'events');
@@ -360,9 +399,54 @@ describe('POST /api/designs/:id/promote', () => {
     assert.equal(res.status, 403);
   });
 
+  it('409 si le design est déjà un template (pas de no-op silencieux)', async () => {
+    const design = await createDesign(tokenBob, 'Double promotion');
+    await request.post(`/api/designs/${design.id}/promote`).set(auth(tokenAlice)).send({});
+
+    const res = await request.post(`/api/designs/${design.id}/promote`).set(auth(tokenAlice)).send({});
+    assert.equal(res.status, 409);
+  });
+
   it('404 si inconnu', async () => {
     const res = await request.post('/api/designs/inexistant/promote').set(auth(tokenAlice)).send({});
     assert.equal(res.status, 404);
+  });
+});
+
+// ── POST /api/designs/:id/demote ──────────────────────────────────────────────
+
+describe('POST /api/designs/:id/demote', () => {
+  it('un superuser retire le statut de template (retour au privé)', async () => {
+    const design = await createDesign(tokenBob, 'Promu puis rétrogradé');
+    await request.post(`/api/designs/${design.id}/promote`).set(auth(tokenAlice)).send({});
+
+    const res = await request.post(`/api/designs/${design.id}/demote`).set(auth(tokenAlice)).send({});
+    assert.equal(res.status, 200);
+    assert.equal(res.body.is_template, 0);
+
+    // Redevenu privé : carol (autre client) ne le voit plus.
+    const list = await request.get('/api/designs').set(auth(tokenCarol));
+    assert.ok(!list.body.some((d) => d.id === design.id));
+  });
+
+  it('409 sur un template d\'origine (sans propriétaire, il deviendrait invisible)', async () => {
+    const list = await request.get('/api/designs').set(auth(tokenAlice));
+    const seed = list.body.find((d) => d.name === 'Cutealism');
+    const res = await request.post(`/api/designs/${seed.id}/demote`).set(auth(tokenAlice)).send({});
+    assert.equal(res.status, 409);
+  });
+
+  it('403 pour un client', async () => {
+    const design = await createDesign(tokenBob, 'Demote interdit');
+    await request.post(`/api/designs/${design.id}/promote`).set(auth(tokenAlice)).send({});
+    const res = await request.post(`/api/designs/${design.id}/demote`).set(auth(tokenBob)).send({});
+    assert.equal(res.status, 403);
+  });
+
+  it('409 si le design n\'est pas un template (pas de no-op silencieux)', async () => {
+    const design = await createDesign(tokenBob, 'Jamais promu');
+    const res = await request.post(`/api/designs/${design.id}/demote`).set(auth(tokenAlice)).send({});
+    assert.equal(res.status, 409);
   });
 });
 
@@ -425,6 +509,30 @@ describe('versions et restauration', () => {
       const res = await request.post(`/api/designs/${design.id}/restore`).set(auth(tokenBob)).send({ version_id });
       assert.equal(res.status, 400, `version_id=${JSON.stringify(version_id)} : attendu 400`);
     }
+  });
+
+  it('l\'auteur des versions ne fuite pas vers les lecteurs d\'un template promu', async () => {
+    // Même faille que owner_email, par l'historique : le template promu reste
+    // lisible par tous les clients, et `author` est l'email du propriétaire.
+    const design = await createDesign(tokenCarol, 'Historique de Carol promu');
+    await request.post(`/api/designs/${design.id}/promote`).set(auth(tokenAlice)).send({});
+
+    const list = await request.get(`/api/designs/${design.id}/versions`).set(auth(tokenBob));
+    assert.equal(list.status, 200);
+    for (const v of list.body) {
+      assert.equal(v.author, null, 'l\'email de carol ne doit pas fuiter vers bob');
+    }
+
+    const detail = await request.get(`/api/designs/${design.id}/versions/${list.body[0].id}`).set(auth(tokenBob));
+    assert.equal(detail.body.author, null);
+
+    // Le propriétaire, lui, voit bien l'auteur.
+    const own = await request.get(`/api/designs/${design.id}/versions`).set(auth(tokenCarol));
+    assert.equal(own.body[0].author, 'carol@dz.test');
+
+    // Le superuser aussi.
+    const su = await request.get(`/api/designs/${design.id}/versions`).set(auth(tokenAlice));
+    assert.equal(su.body[0].author, 'carol@dz.test');
   });
 
   it('403 : un client ne peut ni lire ni restaurer les versions d\'un autre client', async () => {

@@ -645,9 +645,20 @@ export function getDesign(db, id) {
 
 // Visibilité (même principe que listEvents) : le superuser voit tout ;
 // un client voit ses designs et les templates publics.
+//
+// `owner_email` n'est joint QUE pour le superuser (groupement par propriétaire).
+// Un design promu en template garde son `owner_id` : la clause client ci-dessous
+// le matche donc pour TOUS les clients — joindre l'email dans cette branche le
+// divulguerait d'un client à l'autre. Toute colonne ajoutée à ce SELECT doit être
+// examinée sous cet angle.
 export function listDesigns(db, { userId, isSuperuser }) {
   if (isSuperuser) {
-    return db.prepare('SELECT * FROM designs ORDER BY created_at DESC').all();
+    return db.prepare(`
+      SELECT d.*, u.email AS owner_email
+      FROM designs d
+      LEFT JOIN users u ON u.id = d.owner_id
+      ORDER BY d.created_at DESC
+    `).all();
   }
   return db
     .prepare('SELECT * FROM designs WHERE owner_id = ? OR is_template = 1 ORDER BY created_at DESC')

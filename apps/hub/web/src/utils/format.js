@@ -22,6 +22,16 @@ export function formatDate(d) {
   return new Date(d).toLocaleString('fr-FR');
 }
 
+// Timestamp SQLite (`datetime('now')` / `CURRENT_TIMESTAMP`) → locale fr-FR.
+// SQLite écrit de l'UTC au format 'YYYY-MM-DD HH:MM:SS', SANS suffixe de zone :
+// `new Date()` le lirait alors comme une heure LOCALE (décalage d'une à deux
+// heures en France). On normalise en ISO + 'Z' avant de formater.
+export function formatSqlDate(d) {
+  if (!d) return '—';
+  const iso = d.includes('T') ? d : `${d.replace(' ', 'T')}Z`;
+  return new Date(iso).toLocaleString('fr-FR');
+}
+
 // Secondes → M:SS ('—' si null).
 export function formatDuration(s) {
   if (s == null) return '—';

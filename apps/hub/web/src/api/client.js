@@ -82,6 +82,19 @@ export const api = {
   addEventUser: (eventId, userId, roles) => apiFetch(`/admin/events/${eventId}/users`, { method: 'POST', body: { user_id: userId, roles } }),
   removeEventUser: (eventId, userId) => apiFetch(`/admin/events/${eventId}/users/${userId}`, { method: 'DELETE' }),
 
+  // Bibliothèque de designs (§9bis)
+  listDesigns: () => apiFetch('/designs'),
+  createDesign: (name, config) => apiFetch('/designs', { method: 'POST', body: config === undefined ? { name } : { name, config } }),
+  getDesign: (id) => apiFetch(`/designs/${id}`),
+  updateDesign: (id, fields) => apiFetch(`/designs/${id}`, { method: 'PUT', body: fields }),
+  deleteDesign: (id) => apiFetch(`/designs/${id}`, { method: 'DELETE' }),
+  duplicateDesign: (id) => apiFetch(`/designs/${id}/duplicate`, { method: 'POST' }),
+  promoteDesign: (id) => apiFetch(`/designs/${id}/promote`, { method: 'POST' }),
+  demoteDesign: (id) => apiFetch(`/designs/${id}/demote`, { method: 'POST' }),
+  listDesignVersions: (id) => apiFetch(`/designs/${id}/versions`),
+  getDesignVersion: (id, versionId) => apiFetch(`/designs/${id}/versions/${versionId}`),
+  restoreDesignVersion: (id, versionId) => apiFetch(`/designs/${id}/restore`, { method: 'POST', body: { version_id: versionId } }),
+
   // Auth : poser le mot de passe via lien d'enregistrement
   setPassword: (token, password) => apiFetch('/auth/set-password', { method: 'POST', body: { token, password } }),
   // Auth : demander un lien de réinitialisation (réponse toujours générique)

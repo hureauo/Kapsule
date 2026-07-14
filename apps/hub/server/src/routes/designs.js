@@ -42,6 +42,21 @@ function canWrite(design, user) {
   return design.owner_id === user.sub;
 }
 
+// L'auteur d'une version est l'email d'un COMPTE client. Un design promu en
+// template reste lisible par TOUS les clients tout en gardant son owner_id :
+// sans ce filtre, l'email du propriétaire d'origine fuiterait à chaque lecteur
+// du template. Seuls le propriétaire et les superusers voient l'auteur.
+function canSeeAuthor(design, user) {
+  return user.role === 'superuser' || design.owner_id === user.sub;
+}
+
+const stripAuthor = (version) => ({ ...version, author: null });
+
+// Template livré avec le produit (seed) : pas de propriétaire. Ni supprimable ni
+// rétrogradable — le seed ne se rejoue pas (no-op si la table est non vide) et,
+// sans propriétaire, un seed rétrogradé deviendrait invisible de tout le monde.
+const isSeedTemplate = (design) => design.is_template === 1 && design.owner_id === null;
+
 // Charge le design de :id, ou répond 404. Renvoie null si déjà répondu.
 function loadDesign(req, res) {
   const design = getDesign(getDb(), req.params.id);
@@ -153,6 +168,12 @@ export function makeDesignsRouter(dataDir) {
       if (!design) return;
       if (!canWrite(design, req.user)) return res.status(403).json({ error: 'Accès interdit' });
 
+      // Un template d'origine ne se supprime pas : le seed est un no-op dès que
+      // la table est non vide, donc il ne reviendrait jamais (hors périmètre v1).
+      if (isSeedTemplate(design)) {
+        return res.status(409).json({ error: 'Un template d\'origine ne peut pas être supprimé.' });
+      }
+
       deleteDesign(db, design.id); // design_versions suit par ON DELETE CASCADE
       rmSync(designDir(dataDir, design.id), { recursive: true, force: true });
 
@@ -207,7 +228,35 @@ export function makeDesignsRouter(dataDir) {
       const design = loadDesign(req, res);
       if (!design) return;
 
+      if (design.is_template) {
+        return res.status(409).json({ error: 'Ce design est déjà un template.' });
+      }
+
       updateDesign(db, design.id, { is_template: 1 });
+      res.json(withParsedConfig(getDesign(db, design.id)));
+    } catch (err) { next(err); }
+  });
+
+  // ── POST /api/designs/:id/demote ──────────────────────────────────────────
+  // Retire le statut de template (une promotion par erreur rend le design visible
+  // de TOUS les clients — il faut pouvoir revenir en arrière).
+  router.post('/:id/demote', requireUser, (req, res, next) => {
+    try {
+      if (req.user.role !== 'superuser') {
+        return res.status(403).json({ error: 'Réservé aux superusers' });
+      }
+      const db = getDb();
+      const design = loadDesign(req, res);
+      if (!design) return;
+
+      if (!design.is_template) {
+        return res.status(409).json({ error: 'Ce design n\'est pas un template.' });
+      }
+      if (isSeedTemplate(design)) {
+        return res.status(409).json({ error: 'Un template d\'origine ne peut pas être rétrogradé.' });
+      }
+
+      updateDesign(db, design.id, { is_template: 0 });
       res.json(withParsedConfig(getDesign(db, design.id)));
     } catch (err) { next(err); }
   });
@@ -217,7 +266,9 @@ export function makeDesignsRouter(dataDir) {
     const design = loadDesign(req, res);
     if (!design) return;
     if (!canRead(design, req.user)) return res.status(403).json({ error: 'Accès interdit' });
-    res.json(listDesignVersions(getDb(), design.id));
+
+    const versions = listDesignVersions(getDb(), design.id);
+    res.json(canSeeAuthor(design, req.user) ? versions : versions.map(stripAuthor));
   });
 
   // ── GET /api/designs/:id/versions/:vid ────────────────────────────────────
@@ -231,7 +282,8 @@ export function makeDesignsRouter(dataDir) {
     if (!version || version.design_id !== design.id) {
       return res.status(404).json({ error: 'Version introuvable' });
     }
-    res.json({ ...version, snapshot: JSON.parse(version.snapshot) });
+    const visible = canSeeAuthor(design, req.user) ? version : stripAuthor(version);
+    res.json({ ...visible, snapshot: JSON.parse(version.snapshot) });
   });
 
   // ── POST /api/designs/:id/restore ─────────────────────────────────────────
@@ -256,6 +308,20 @@ export function makeDesignsRouter(dataDir) {
       const version = getDesignVersion(db, version_id);
       if (!version || version.design_id !== design.id) {
         return res.status(404).json({ error: 'Version introuvable' });
+      }
+
+      // Revalidation défensive : le snapshot était valide au moment de son
+      // insertion, mais les règles peuvent s'être durcies depuis. Restaurer ne
+      // doit jamais réintroduire une config que le contrat courant refuse.
+      let snapshot;
+      try {
+        snapshot = JSON.parse(version.snapshot);
+      } catch {
+        return res.status(409).json({ error: 'Cette version est illisible.' });
+      }
+      const check = validateDesign(snapshot);
+      if (!check.ok) {
+        return res.status(409).json({ error: `Cette version n'est plus valide : ${check.error}` });
       }
 
       const author = authorEmail(db, req.user);
