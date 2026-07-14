@@ -668,6 +668,19 @@ design d'origine n'affecte jamais un événement auquel il a déjà été appliq
 principe que la configuration existante (questions, `event_meta`) transférée par le bundle de
 pull — voir §7 (`GET /api/sync/events/:id/bundle`).
 
+**Sens unique Hub → Borne.** Le design ne circule que par le bundle de pull (Hub → Borne) ; il
+ne doit **jamais** remonter par `POST /api/sync/events/:id/config` (le flux `push-config`,
+Borne → Hub, qui pousse `event_meta` en overwrite pour laisser la Borne ajuster questions/textes
+sur place). Concrètement : **`'design'` n'entre pas dans `META_KEYS`**
+(`apps/hub/server/src/eventConfig.js`) — `applyEventConfig` itère sur cette whitelist (jamais sur
+les clés reçues), donc une clé absente de `META_KEYS` est ignorée en lecture *et* en écriture,
+même si le payload `push-config` de la Borne la contient. Le design se gère uniquement via
+`PUT /api/events/:eventId/design` (Hub) ; `event_meta.design` n'est écrit que par cette route.
+**`captureSnapshot`** (historique `event_versions`, voir « Codé en live » de ROADMAP.md) capture
+déjà l'intégralité d'`event_meta` sans filtrage par `META_KEYS` (`readSnapshot` fait
+`SELECT key, value FROM event_meta` sans restriction) — `event_meta.design` sera donc tracé dans
+l'historique de versions **sans aucune adaptation** de ce mécanisme.
+
 ### Canal de transfert des assets (bundle + download + checksum)
 
 Contrairement au reste de `event_meta` (texte pur), les assets d'un design sont des fichiers
