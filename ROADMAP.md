@@ -312,3 +312,27 @@ Sur mobile, les tables denses de l'admin (Tokens 6 col., Utilisateurs 6 col., Jo
   - ⚠️ **Écart de style assumé** : introduit la **première media query du projet** (`@media (max-width: 640px)`, CSS Hub jusque-là 100% `flex-wrap`). Localisé et documenté ici.
   - `.table-scroll` conservé (sans effet en mode carte, table à 100%) ; `.token-cell` adapté pour occuper la ligne sous le seuil.
   - 🧑 **À vérifier sur mobile réel** : rendu des cartes (alignement label/valeur, cellule Actions des utilisateurs, token long) — non vérifiable ici (pas de rendu visuel).
+
+## Phase design — designs personnalisables par événement
+
+Voir PROJET.md §9bis (schéma JSON du design, règles de validation, principe copie-jamais-référence,
+canal assets, nouvelles routes) et les invariants §11.26–28. Décisions actées : tokens + variantes
+prédéfinies (pas de builder) ; designs privés par client + templates publics promus par superuser ;
+historique versionné ; application = copie snapshot ; typo v1 = presets système ; pas d'édition de
+design côté admin Borne en v1. Hors périmètre v1 : upload de polices, SVG, édition borne, variantes
+nom/enregistrement, partage inter-clients hors templates, suppression d'un template seed.
+
+Mêmes règles que les autres phases : un sous-lot backend n'est terminé que **testé** (nominal +
+cas d'erreur), relu par `kapsule-reviewer` (`/verif-spec`), committé en `phase design.X: …`.
+
+- [x] design.A : spec (PROJET.md §9bis + §4 + §11, cette section ROADMAP)
+- [ ] design.B : registry designs + design_versions, CRUD + versions + duplication + promotion + seed 3 templates, tests
+- [ ] design.C : page Designs Hub (liste, dupliquer, renommer, supprimer, templates, vue superuser, historique/restore)
+- [ ] design.D : éditeur tokens + variantes + aperçu live (sans images)
+- [ ] design.E : assets (upload Hub, application snapshot à l'événement, bundle + pull + service kiosque), tests intégration
+- [ ] design.F : runtime kiosque (injection tokens, variantes, images)
+- [ ] 🧑 design.G : rendu final sur borne d'essai + iPad réel (tokens, images, variantes, admin borne non affecté)
+
+**Terminé quand** : un client crée/édite/duplique/versionne ses designs sur le Hub, un superuser
+promeut un design en template, l'application à un événement copie un snapshot (config + assets)
+que la borne pull et rend fidèlement (tokens, variantes, images), sans affecter l'admin Borne.

@@ -100,7 +100,9 @@ kapsule/
 │           ├── constants.js          # EVENT_STATUS, JOB_TYPES, LIMITS (500 MB, durées…)
 │           ├── eventDbSchema.js      # SQL de la BD "événement" + createEventDb(filePath)
 │           ├── validate.js           # validateQuestion(), validateGuestName(), assertStatus()
-│           └── checksum.js           # sha256File(path) → Promise<hex> (stream, pas de readFile)
+│           ├── checksum.js           # sha256File(path) → Promise<hex> (stream, pas de readFile)
+│           └── design.js             # DESIGN_COLOR_KEYS/RADIUS/FONTS/LAYOUTS, validateDesign()
+│                                      # (fonction pure, §9bis) — partagé Hub + Borne
 ├── apps/
 │   ├── borne/
 │   │   ├── server/
@@ -169,6 +171,8 @@ kapsule/
 │       │       │   ├── admin.js             # super-admin : bornes (token affiché une fois),
 │       │       │   │                        # overview (stockage/événement, jobs en erreur, bornes)
 │       │       │   ├── gallery.js           # vidéos : list, stream (Range), download, zip, csv
+│       │       │   ├── designs.js           # CRUD designs, versions, duplication, promotion,
+│       │       │   │                        # assets (§9bis) — monté sur /api/designs
 │       │       │   └── sync.js              # endpoints appelés par la Borne (requireBox)
 │       │       ├── preview/
 │       │       │   └── provisioner.js       # DockerClient (typedef + dockerCli réel), slugFor(),
@@ -201,9 +205,14 @@ kapsule/
 │           │   ├── pages/EventsPage.jsx     # liste + création + statuts
 │           │   ├── pages/EventDetailPage.jsx# onglets : Questions | Synchro | Galerie | Versions
 │           │   ├── pages/AdminPage.jsx      # super-admin : bornes, stockage, jobs, tous les événements
+│           │   ├── pages/DesignsPage.jsx     # bibliothèque de designs (§9bis) : liste, éditeur, historique
 │           │   ├── components/QuestionEditor.jsx
 │           │   ├── components/VideoGallery.jsx
 │           │   ├── components/SyncStatus.jsx
+│           │   ├── components/designs/
+│           │   │   ├── DesignEditor.jsx      # formulaire tokens (couleurs/rayon/police/layouts)
+│           │   │   ├── DesignPreview.jsx     # maquettes statiques, bascule mobile/iPad/desktop
+│           │   │   └── VersionHistory.jsx    # historique + restauration
 │           │   └── styles/app.css
 │           └── test/
 │               ├── roles.test.js            # node:test — decodeJwtPayload + getRole
@@ -239,7 +248,11 @@ DATA_DIR/
 │   └── <event-id>/               # event-id = uuid v4, généré par le Hub (ou la Borne en autonome)
 │       ├── db.sqlite             # questions, sessions, vidéos de CET événement
 │       ├── videos/               # fichiers bruts (<uuid>.<ext>)
-│       └── derived/              # Hub uniquement : miniatures <video-id>.jpg + archive zip
+│       ├── derived/              # Hub uniquement : miniatures <video-id>.jpg + archive zip
+│       └── design/               # assets du design appliqué à CET événement (§9bis) — copie
+│                                  # snapshot, pas de lien vers designs/<designId>/
+├── designs/                      # Hub uniquement — bibliothèque de designs (§9bis)
+│   └── <design-id>/              # design-id = uuid v4 ; fichiers assets (logo/fond) du design
 └── previews/
     └── <slug>/                   # Hub uniquement — données de la borne d'essai (bind-mount dans le container)
         └── events/<event-id>/    # même structure que ci-dessus ; PII invité isolée ici (vidéos de test)
@@ -255,7 +268,8 @@ Toutes les bases : `PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;`. Schémas 
 event_meta (                       -- rend le dossier auto-portant (transféré tel quel au push)
   key TEXT PRIMARY KEY,            -- 'event_id', 'name', 'event_date', 'origin' ('hub'|'local'),
   value TEXT                       -- 'consent_text' (texte RGPD affiché à l'invité, défaut générique),
-                                   -- 'idle_timeout' (secondes d'inactivité kiosque avant reset, défaut 120)
+                                   -- 'idle_timeout' (secondes d'inactivité kiosque avant reset, défaut 120),
+                                   -- 'design' (JSON du design appliqué, voir §9bis — clé optionnelle)
 );
 
 questions (
@@ -581,6 +595,110 @@ Base `/api`. `GET /api/health`.
 
 ---
 
+## 9bis. Designs personnalisables par événement
+
+> Numérotation `9bis` pour ne pas décaler les nombreux renvois `§10`/`§11.x`/`§12`/`§13` déjà
+> présents dans ce document, ARCHITECTURE.md, CLAUDE.md et ROADMAP.md.
+
+Aujourd'hui le design du parcours invité = 3 thèmes figés (`cute`/`dark`/`modern`, custom
+properties CSS dans `apps/borne/web/src/styles/app.css`) + 6 champs texte. Cette section
+introduit des designs **entièrement personnalisables** : chaque client crée, édite, duplique et
+**versionne** ses designs depuis une page « Designs » du Hub ; les superusers voient tous les
+designs et peuvent promouvoir un design en **template** public partagé.
+
+**Décisions de conception :**
+1. Tokens (couleurs, rayons, police, layout) + variantes de layout **prédéfinies** — pas de
+   builder drag & drop.
+2. Aperçu live dans l'éditeur Hub, via des maquettes statiques (bascule mobile/iPad/desktop).
+3. Designs privés par client + templates publics promus par un superuser.
+4. Historique versionné avec restauration, même pattern que `event_versions` (§9 « Codé en
+   live », voir ROADMAP.md).
+5. Appliquer un design à un événement = **copie snapshot**, jamais une référence — modifier le
+   design d'origine par la suite n'affecte pas les événements auxquels il a déjà été appliqué.
+6. Typographie v1 = presets de stacks système. Pas d'upload de police.
+7. Pas d'édition de design côté admin Borne en v1 — le design arrive uniquement par le pull ;
+   `DesignPanel` (admin Borne) reste inchangé.
+
+### Schéma JSON d'un design (contrat, version 1)
+
+```json
+{
+  "version": 1,
+  "colors": {
+    "bg": "#1a1a2e", "surface": "#232342", "surface-alt": "#2b2b52",
+    "text": "#f0f0f0", "text-muted": "#a0a0b8", "text-error": "#ff6b6b",
+    "primary": "#e94560", "primary-soft": "#e9456033", "primary-tint": "#e9456014",
+    "accent": "#53bf9d", "accent-hover": "#42a385", "accent-soft": "#53bf9d33", "accent-tint": "#53bf9d14",
+    "input-bg": "#1f1f3a", "input-border": "#3a3a5c", "input-border-focus": "#53bf9d",
+    "btn-secondary-bg": "#2b2b52", "btn-secondary-hover": "#33335f"
+  },
+  "radius": "soft",
+  "font": "sans",
+  "layouts": { "start": "centered", "thanks": "centered" },
+  "assets": { "logo": "3f2a….png", "background": null }
+}
+```
+
+**Règles de validation (STRICTES — c'est la barrière anti-injection CSS) :**
+- `version` : doit valoir `1`.
+- `colors` : objet dont **chaque clé appartient à `DESIGN_COLOR_KEYS`** (les 18 clés ci-dessus —
+  les custom properties existantes de `app.css` sans le préfixe `--`, à l'exclusion de
+  `--radius`, `--radius-pill`, `--shadow-soft`, `--shadow-press`, `--rec` qui ne sont pas des
+  couleurs). Chaque valeur doit matcher `/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/` (hex 6 ou 8
+  caractères). Clés manquantes autorisées (fallback thème). **Clé inconnue → design invalide.**
+- `radius` : enum `['sharp', 'soft', 'round']`.
+- `font` : enum `['sans', 'serif', 'rounded', 'mono']` (stacks système, voir runtime kiosque).
+- `layouts.start` : enum `['centered', 'cover', 'split']` ; `layouts.thanks` : enum
+  `['centered', 'cover']`. Pas de variante en v1 pour les autres écrans.
+- `assets.logo` / `assets.background` : `null` ou nom de fichier matchant
+  `/^[0-9a-f-]{36}\.(png|jpg|webp)$/` (UUID + extension — jamais de chemin, jamais de SVG).
+- Taille totale du JSON sérialisé ≤ 16 384 octets.
+- **Jamais de valeur CSS libre** : toute chaîne arbitraire hors des règles ci-dessus est refusée.
+
+Validation portée par une fonction pure `validateDesign(obj)` (`packages/core/src/design.js`),
+sans dépendance Node, importable aussi bien par le backend que par les deux frontends
+(l'éditeur Hub valide côté client avant envoi, le backend revalide systématiquement).
+
+### Principe : copie snapshot, jamais référence
+
+Appliquer un design à un événement **copie** sa configuration JSON (dans `event_meta.design`)
+et ses fichiers assets (dans `events/<id>/design/`) au moment de l'application. Le design
+source (bibliothèque) et l'événement n'ont ensuite plus aucun lien : modifier ou supprimer le
+design d'origine n'affecte jamais un événement auquel il a déjà été appliqué. C'est le même
+principe que la configuration existante (questions, `event_meta`) transférée par le bundle de
+pull — voir §7 (`GET /api/sync/events/:id/bundle`).
+
+### Canal de transfert des assets (bundle + download + checksum)
+
+Contrairement au reste de `event_meta` (texte pur), les assets d'un design sont des fichiers
+binaires. Le bundle de pull Hub→Borne (`GET /api/sync/events/:id/bundle`, §7) est étendu avec un
+tableau `design_assets: [{ filename, size, checksum }]` (checksum sha256 via
+`packages/core/src/checksum.js`, tableau vide si l'événement n'a pas de design). La Borne
+télécharge ensuite chaque fichier manquant via un nouvel endpoint dédié
+(`GET /api/sync/events/:id/design/:filename`, garde `requireBox`) et vérifie son checksum avant
+de considérer le pull réussi — un échec de checksum est un échec de pull explicite, cohérent
+avec la philosophie du manifest de push (§11.12).
+
+### Nouvelles routes
+
+- **Hub, bibliothèque de designs** (`apps/hub/server/src/routes/designs.js`, monté sur
+  `/api/designs`, `requireUser`) : CRUD (`GET/POST/PUT/DELETE /api/designs[/:id]`),
+  `POST /api/designs/:id/duplicate`, `POST /api/designs/:id/promote` (superuser), historique
+  (`GET /api/designs/:id/versions[/:vid]`, `POST /api/designs/:id/restore`), assets
+  (`POST/DELETE /api/designs/:id/assets[/:slot]`, `GET /api/designs/:id/assets/:filename`).
+- **Hub, application à un événement** (`apps/hub/server/src/routes/events.js`) :
+  `PUT /api/events/:eventId/design` `{design_id}` (409 si statut gelé, copie snapshot),
+  `DELETE /api/events/:eventId/design` (retour aux thèmes figés).
+- **Hub, synchro** (`apps/hub/server/src/routes/sync.js`) :
+  `GET /api/sync/events/:id/design/:filename` (`requireBox`, anti path-traversal).
+- **Borne, service kiosque** (`apps/borne/web` consommé via `apps/borne/server`) :
+  `GET /api/event/design/:filename` (public, anti path-traversal, comme `GET /api/event`).
+
+Détail des routes CRUD, gardes et codes d'erreur : voir ROADMAP.md phase design (sous-lots
+design.B et design.E), qui font foi pour l'implémentation.
+
+---
+
 ## 10. Docker / Nginx / TLS / Environnement
 
 ### docker-compose.borne.yml (déployé sur le Raspberry, arm64)
@@ -695,6 +813,9 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 23. **`event_users` Borne** : les comptes pullés dans `event_users` de la BD événement (`events/<id>/db.sqlite`) ne contiennent que `email`, `password_hash`, `roles` — **RGPD : pas de nom ni d'autre PII** (le nom reste sur le Hub). Ces données sont **écrasées à chaque pull** (DELETE+INSERT en transaction).
 24. **Preview requiresLogin (rôle `general`)** : si le bundle indique `requiresLogin: true` (au moins un user `general` assigné côté Hub), la borne stocke `requires_login=true` dans `event_meta` au pull. Le kiosque de la borne d'essai doit alors exiger un login avant d'afficher le parcours invité. Le login est **proxié vers le Hub via un seul appel** : `POST /api/preview/login` `{ email, password }` sur la borne → la borne appelle `POST /api/sync/event/login` du Hub (protégé par `X-Box-Token`). Le Hub vérifie les credentials **ET** que l'utilisateur est assigné à CET événement précis avec le rôle `general` — il répond `200 { ok: true }` / `401` / `403`. En cas de succès, la borne émet un JWT local `{ email, roles: ['general'], event_id }` (8 h). Ce JWT est stocké en `sessionStorage` (durée de session navigateur uniquement) et envoyé en Bearer à `POST /api/sessions`. **Le rôle `general` n'est jamais pullé dans le bundle ni stocké dans `event_users` borne** — la vérification de l'assignation se fait entièrement côté Hub à chaque login (la borne preview est toujours connectée).
 25. **Transitions d'état `preview`** : un token `is_preview=1` ne peut puller que si le statut Hub est `preview`. Un token réel (`is_preview=0`) ne peut puller que si le statut est `ready` ou `loaded`. `requireBox` doit vérifier cette cohérence et retourner 403 si le type de token ne correspond pas au statut attendu.
+26. **Design appliqué = snapshot copié, jamais référencé** (§9bis) : `PUT /api/events/:id/design` copie la config JSON et les fichiers assets du design vers `event_meta.design` et `events/<id>/design/` au moment de l'application. Modifier ou supprimer le design source ensuite n'affecte jamais l'événement — aucune référence (`design_id`) n'est conservée côté événement au-delà de l'action d'application.
+27. **Assets de design vérifiés par checksum au pull** (§9bis) : le bundle expose `design_assets: [{filename, size, checksum}]` ; la Borne calcule le sha256 de chaque fichier téléchargé et compare — **un mismatch est un échec de pull explicite**, jamais un fichier silencieusement corrompu.
+28. **Jamais de SVG ni de valeur CSS libre dans un design** (§9bis) : `validateDesign()` n'accepte que des couleurs hex strictes, des enums fermées (`radius`, `font`, `layouts`) et des noms de fichiers `assets` au format UUID+extension raster (`png`/`jpg`/`webp`) — toute autre valeur est un design invalide, y compris `url(...)`, `expression(...)` ou tout SVG (vecteur = risque XSS via balises `<script>`/`on*` embarquées).
 
 ---
 
