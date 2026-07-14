@@ -326,7 +326,7 @@ Mêmes règles que les autres phases : un sous-lot backend n'est terminé que **
 cas d'erreur), relu par `kapsule-reviewer` (`/verif-spec`), committé en `phase design.X: …`.
 
 - [x] design.A : spec (PROJET.md §9bis + §4 + §11, cette section ROADMAP)
-- [ ] design.B : registry designs + design_versions, CRUD + versions + duplication + promotion + seed 3 templates, tests
+- [x] design.B : registry designs + design_versions, CRUD + versions + duplication + promotion + seed 3 templates, tests
 - [ ] design.C : page Designs Hub (liste, dupliquer, renommer, supprimer, templates, vue superuser, historique/restore)
 - [ ] design.D : éditeur tokens + variantes + aperçu live (sans images)
 - [ ] design.E : assets (upload Hub, application snapshot à l'événement, bundle + pull + service kiosque), tests intégration

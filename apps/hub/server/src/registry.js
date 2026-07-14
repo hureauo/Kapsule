@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
@@ -108,9 +108,30 @@ export function openRegistry(dataDir) {
       error           TEXT,
       created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    -- Bibliothèque de designs (PROJET.md §9bis). RGPD : aucune donnée invité —
+    -- un design est une config d'apparence appartenant à un compte client.
+    CREATE TABLE IF NOT EXISTS designs (
+      id          TEXT PRIMARY KEY,
+      owner_id    INTEGER REFERENCES users(id),  -- NULL pour les templates seed
+      name        TEXT NOT NULL,
+      config_json TEXT NOT NULL,                 -- JSON validé par validateDesign
+      is_template INTEGER NOT NULL DEFAULT 0,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS design_versions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      design_id  TEXT NOT NULL REFERENCES designs(id) ON DELETE CASCADE,
+      snapshot   TEXT NOT NULL,                  -- config_json au moment de la sauvegarde
+      author     TEXT,                           -- email du user, comme event_versions
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   runMigrations(db);
+  seedDesignTemplates(db);
 
   _db = db;
   return db;
@@ -608,4 +629,138 @@ export function deleteEventVersions(db, event_id) {
 // traiter des jobs orphelins pointant vers un event disparu.
 export function deleteJobsForEvent(db, event_id) {
   return db.prepare('DELETE FROM jobs WHERE event_id = ?').run(event_id);
+}
+
+// ── designs ───────────────────────────────────────────────────────────────────
+
+export function insertDesign(db, { id, owner_id = null, name, config_json, is_template = 0 }) {
+  return db
+    .prepare('INSERT INTO designs (id, owner_id, name, config_json, is_template) VALUES (?, ?, ?, ?, ?)')
+    .run(id, owner_id, name, config_json, is_template);
+}
+
+export function getDesign(db, id) {
+  return db.prepare('SELECT * FROM designs WHERE id = ?').get(id);
+}
+
+// Visibilité (même principe que listEvents) : le superuser voit tout ;
+// un client voit ses designs et les templates publics.
+export function listDesigns(db, { userId, isSuperuser }) {
+  if (isSuperuser) {
+    return db.prepare('SELECT * FROM designs ORDER BY created_at DESC').all();
+  }
+  return db
+    .prepare('SELECT * FROM designs WHERE owner_id = ? OR is_template = 1 ORDER BY created_at DESC')
+    .all(userId);
+}
+
+export function updateDesign(db, id, fields) {
+  // owner_id volontairement absent : la propriété d'un design ne se transfère pas
+  // (une duplication crée une nouvelle ligne). Ne pas laisser ce levier armé.
+  const allowed = ['name', 'config_json', 'is_template'];
+  const keys = Object.keys(fields).filter((k) => allowed.includes(k));
+  if (keys.length === 0) return;
+  const updates = keys.map((k) => `${k} = ?`);
+  updates.push("updated_at = datetime('now')");
+  const values = keys.map((k) => fields[k]);
+  db.prepare(`UPDATE designs SET ${updates.join(', ')} WHERE id = ?`).run(...values, id);
+}
+
+export function deleteDesign(db, id) {
+  return db.prepare('DELETE FROM designs WHERE id = ?').run(id);
+}
+
+// ── design_versions ───────────────────────────────────────────────────────────
+
+export function insertDesignVersion(db, { design_id, snapshot, author = null }) {
+  return db
+    .prepare('INSERT INTO design_versions (design_id, snapshot, author) VALUES (?, ?, ?)')
+    .run(design_id, snapshot, author);
+}
+
+// Sans le snapshot : la liste d'historique reste légère.
+export function listDesignVersions(db, design_id) {
+  return db
+    .prepare('SELECT id, design_id, author, created_at FROM design_versions WHERE design_id = ? ORDER BY id DESC')
+    .all(design_id);
+}
+
+export function getDesignVersion(db, id) {
+  return db.prepare('SELECT * FROM design_versions WHERE id = ?').get(id);
+}
+
+// ── seed des templates ────────────────────────────────────────────────────────
+// Les 3 thèmes historiques du kiosque, transcrits depuis les blocs data-theme de
+// apps/borne/web/src/styles/app.css (valeurs réelles, pas inventées ; les hex à 3
+// chiffres du thème sombre sont normalisés en 6 — même couleur, la regex du contrat
+// exige 6 ou 8). Insérés une seule fois, à la première ouverture du registre.
+
+const TEMPLATE_DEFAULTS = {
+  version: 1,
+  radius: 'soft',
+  font: 'sans',
+  layouts: { start: 'centered', thanks: 'centered' },
+  assets: { logo: null, background: null },
+};
+
+const DESIGN_TEMPLATES = [
+  {
+    name: 'Cutealism',
+    colors: {
+      bg: '#FFF8EE', surface: '#FFFFFF', 'surface-alt': '#FDEFD9',
+      text: '#0B3B45', 'text-muted': '#5B7B82', 'text-error': '#C0532B',
+      primary: '#0388A6', 'primary-soft': '#63D8F2', 'primary-tint': '#E3F7FC',
+      accent: '#F27405', 'accent-hover': '#F28705', 'accent-soft': '#F2AC29', 'accent-tint': '#FDE9CF',
+      'input-bg': '#FFFFFF', 'input-border': '#F2D2A6', 'input-border-focus': '#0388A6',
+      'btn-secondary-bg': '#E3F7FC', 'btn-secondary-hover': '#C8EEF7',
+    },
+  },
+  {
+    name: 'Sombre',
+    colors: {
+      bg: '#111111', surface: '#1e1e1e', 'surface-alt': '#181818',
+      text: '#f0f0f0', 'text-muted': '#888888', 'text-error': '#ff6b6b',
+      primary: '#e63946', 'primary-soft': '#ff6b6b', 'primary-tint': '#2a1416',
+      accent: '#e63946', 'accent-hover': '#c1121f', 'accent-soft': '#e63946', 'accent-tint': '#2a1416',
+      'input-bg': '#2d2d2d', 'input-border': '#444444', 'input-border-focus': '#e63946',
+      'btn-secondary-bg': '#2d2d2d', 'btn-secondary-hover': '#3a3a3a',
+    },
+  },
+  {
+    name: 'Moderne',
+    colors: {
+      bg: '#f5f6f8', surface: '#ffffff', 'surface-alt': '#eef0f3',
+      text: '#1a1d21', 'text-muted': '#6b7280', 'text-error': '#d92d20',
+      primary: '#2563eb', 'primary-soft': '#60a5fa', 'primary-tint': '#eaf1fe',
+      accent: '#2563eb', 'accent-hover': '#1d4ed8', 'accent-soft': '#2563eb', 'accent-tint': '#eaf1fe',
+      'input-bg': '#ffffff', 'input-border': '#d1d5db', 'input-border-focus': '#2563eb',
+      'btn-secondary-bg': '#eef0f3', 'btn-secondary-hover': '#e2e5ea',
+    },
+  },
+];
+
+// Config servie à la création d'un design sans config explicite. Dérivée du
+// tableau de seed, PAS d'une ligne en base cherchée par nom : `designs.name` est
+// éditable (un superuser peut renommer un template), donc s'appuyer dessus
+// casserait la création par défaut au premier renommage.
+export function defaultDesignConfig() {
+  const cutealism = DESIGN_TEMPLATES.find((t) => t.name === 'Cutealism');
+  // Clone profond : un spread superficiel partagerait `layouts`/`assets` entre les
+  // appels — un appelant qui muterait la config renvoyée corromprait le défaut.
+  return structuredClone({ ...TEMPLATE_DEFAULTS, colors: cutealism.colors });
+}
+
+function seedDesignTemplates(db) {
+  const { n } = db.prepare('SELECT COUNT(*) AS n FROM designs').get();
+  if (n > 0) return;
+
+  const insert = db.prepare(
+    'INSERT INTO designs (id, owner_id, name, config_json, is_template) VALUES (?, NULL, ?, ?, 1)'
+  );
+  const seed = db.transaction(() => {
+    for (const { name, colors } of DESIGN_TEMPLATES) {
+      insert.run(randomUUID(), name, JSON.stringify({ ...TEMPLATE_DEFAULTS, colors }));
+    }
+  });
+  seed();
 }

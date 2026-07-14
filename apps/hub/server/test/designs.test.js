@@ -1,0 +1,443 @@
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import supertest from 'supertest';
+import argon2 from 'argon2';
+import { createApp } from '../src/index.js';
+import { getDb, closeRegistry, insertUser } from '../src/registry.js';
+import { closeAllEventDbs } from '../src/eventStore.js';
+
+let dir;
+let request;
+let tokenAlice; // superuser
+let tokenBob;   // client
+let tokenCarol; // autre client — vérifie le cloisonnement entre clients
+
+before(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'kapsule-hub-designs-'));
+  const app = createApp(dir);
+  request = supertest(app);
+
+  const db = getDb();
+  const hashA = await argon2.hash('pass-alice', { type: argon2.argon2id });
+  const hashB = await argon2.hash('pass-bob', { type: argon2.argon2id });
+  const hashC = await argon2.hash('pass-carol', { type: argon2.argon2id });
+  insertUser(db, { email: 'alice@dz.test', password_hash: hashA, role: 'superuser' });
+  insertUser(db, { email: 'bob@dz.test', password_hash: hashB, role: 'client' });
+  insertUser(db, { email: 'carol@dz.test', password_hash: hashC, role: 'client' });
+
+  const loginA = await request.post('/api/auth/login').send({ email: 'alice@dz.test', password: 'pass-alice' });
+  const loginB = await request.post('/api/auth/login').send({ email: 'bob@dz.test', password: 'pass-bob' });
+  const loginC = await request.post('/api/auth/login').send({ email: 'carol@dz.test', password: 'pass-carol' });
+  tokenAlice = loginA.body.token;
+  tokenBob = loginB.body.token;
+  tokenCarol = loginC.body.token;
+});
+
+after(() => {
+  closeAllEventDbs();
+  closeRegistry();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+const auth = (token) => ({ Authorization: `Bearer ${token}` });
+
+// Crée un design appartenant au porteur du token, retourne le corps de la réponse.
+async function createDesign(token, name = 'Mon design', config) {
+  const body = config === undefined ? { name } : { name, config };
+  const res = await request.post('/api/designs').set(auth(token)).send(body);
+  assert.equal(res.status, 201, `création échouée : ${JSON.stringify(res.body)}`);
+  return res.body;
+}
+
+// ── seed des templates ────────────────────────────────────────────────────────
+
+describe('seed des templates', () => {
+  it('les 3 templates sont visibles par un client', async () => {
+    const res = await request.get('/api/designs').set(auth(tokenBob));
+    assert.equal(res.status, 200);
+    const templates = res.body.filter((d) => d.is_template === 1);
+    assert.equal(templates.length, 3);
+    assert.deepEqual(
+      templates.map((d) => d.name).sort(),
+      ['Cutealism', 'Moderne', 'Sombre'],
+    );
+    // Les templates n'appartiennent à personne.
+    for (const t of templates) assert.equal(t.owner_id, null);
+  });
+
+  it('les templates portent une config valide et complète', async () => {
+    const res = await request.get('/api/designs').set(auth(tokenBob));
+    const cute = res.body.find((d) => d.name === 'Cutealism');
+    assert.equal(cute.config.version, 1);
+    // Valeurs réelles transcrites depuis app.css — pas de valeurs inventées.
+    assert.equal(cute.config.colors.bg, '#FFF8EE');
+    assert.equal(cute.config.colors.accent, '#F27405');
+    assert.equal(Object.keys(cute.config.colors).length, 18);
+    assert.equal(cute.config.radius, 'soft');
+    assert.deepEqual(cute.config.assets, { logo: null, background: null });
+  });
+});
+
+// ── GET /api/designs ──────────────────────────────────────────────────────────
+
+describe('GET /api/designs', () => {
+  it('retourne 401 sans token', async () => {
+    const res = await request.get('/api/designs');
+    assert.equal(res.status, 401);
+  });
+
+  it('un client ne voit pas les designs privés d\'un autre client', async () => {
+    const secret = await createDesign(tokenCarol, 'Design privé de Carol');
+
+    const res = await request.get('/api/designs').set(auth(tokenBob));
+    assert.equal(res.status, 200);
+    assert.ok(!res.body.some((d) => d.id === secret.id), 'bob ne doit pas voir le design de carol');
+  });
+
+  it('un superuser voit tous les designs, y compris les privés', async () => {
+    const secret = await createDesign(tokenCarol, 'Autre privé de Carol');
+
+    const res = await request.get('/api/designs').set(auth(tokenAlice));
+    assert.equal(res.status, 200);
+    assert.ok(res.body.some((d) => d.id === secret.id), 'alice (superuser) doit tout voir');
+  });
+});
+
+// ── POST /api/designs ─────────────────────────────────────────────────────────
+
+describe('POST /api/designs', () => {
+  it('crée un design et une version initiale', async () => {
+    const design = await createDesign(tokenBob, 'Mariage Léa & Hugo');
+    assert.equal(design.name, 'Mariage Léa & Hugo');
+    assert.equal(design.is_template, 0);
+    assert.equal(design.config.version, 1);
+
+    const versions = await request.get(`/api/designs/${design.id}/versions`).set(auth(tokenBob));
+    assert.equal(versions.status, 200);
+    assert.equal(versions.body.length, 1, 'une version initiale doit exister');
+    assert.equal(versions.body[0].author, 'bob@dz.test');
+  });
+
+  it('sans config, reprend la config par défaut (Cutealism)', async () => {
+    const design = await createDesign(tokenBob, 'Depuis défaut');
+    assert.equal(design.config.colors.bg, '#FFF8EE');
+  });
+
+  it('la création par défaut survit au renommage du template Cutealism', async () => {
+    // Le défaut vient d'une constante, pas d'un SELECT ... WHERE name = 'Cutealism' :
+    // un superuser qui renomme le template ne doit pas casser POST /api/designs.
+    const list = await request.get('/api/designs').set(auth(tokenAlice));
+    const cute = list.body.find((d) => d.name === 'Cutealism');
+    await request.put(`/api/designs/${cute.id}`).set(auth(tokenAlice)).send({ name: 'Cutealism renommé' });
+
+    const design = await createDesign(tokenBob, 'Après renommage');
+    assert.equal(design.config.colors.bg, '#FFF8EE');
+
+    await request.put(`/api/designs/${cute.id}`).set(auth(tokenAlice)).send({ name: 'Cutealism' }); // restaure
+  });
+
+  it('refuse un nom vide (400)', async () => {
+    const res = await request.post('/api/designs').set(auth(tokenBob)).send({ name: '  ' });
+    assert.equal(res.status, 400);
+  });
+
+  it('refuse une config invalide (400)', async () => {
+    const cases = [
+      { label: 'clé couleur inconnue', config: { version: 1, colors: { 'evil-key': '#ffffff' } } },
+      { label: 'hex malformé', config: { version: 1, colors: { bg: '#fff' } } },
+      { label: 'valeur CSS libre', config: { version: 1, colors: { bg: 'url(https://evil.test/x)' } } },
+      { label: 'layout hors enum', config: { version: 1, layouts: { start: 'diagonal' } } },
+      { label: 'radius hors enum', config: { version: 1, radius: 'enorme' } },
+      { label: 'asset SVG', config: { version: 1, assets: { logo: '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.svg' } } },
+      { label: 'version absente', config: { colors: { bg: '#ffffff' } } },
+      { label: 'clé racine inconnue', config: { version: 1, style: 'position:fixed' } },
+      { label: 'custom property injectée', config: { version: 1, '--evil': 'url(x)' } },
+      { label: 'JSON > 16 Ko', config: { version: 1, assets: { logo: 'x'.repeat(17000) } } },
+    ];
+    for (const { label, config } of cases) {
+      const res = await request.post('/api/designs').set(auth(tokenBob)).send({ name: label, config });
+      assert.equal(res.status, 400, `${label} : attendu 400, reçu ${res.status}`);
+      assert.ok(res.body.error, `${label} : message d'erreur attendu`);
+    }
+  });
+});
+
+// ── GET /api/designs/:id ──────────────────────────────────────────────────────
+
+describe('GET /api/designs/:id', () => {
+  it('404 si inconnu', async () => {
+    const res = await request.get('/api/designs/inexistant').set(auth(tokenBob));
+    assert.equal(res.status, 404);
+  });
+
+  it('403 sur le design privé d\'un autre client', async () => {
+    const secret = await createDesign(tokenCarol, 'Privé Carol GET');
+    const res = await request.get(`/api/designs/${secret.id}`).set(auth(tokenBob));
+    assert.equal(res.status, 403);
+  });
+
+  it('un client lit un template', async () => {
+    const list = await request.get('/api/designs').set(auth(tokenBob));
+    const template = list.body.find((d) => d.is_template === 1);
+    const res = await request.get(`/api/designs/${template.id}`).set(auth(tokenBob));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.id, template.id);
+  });
+
+  it('un superuser lit le design privé d\'un client', async () => {
+    const secret = await createDesign(tokenCarol, 'Privé Carol vu par alice');
+    const res = await request.get(`/api/designs/${secret.id}`).set(auth(tokenAlice));
+    assert.equal(res.status, 200);
+  });
+});
+
+// ── PUT /api/designs/:id ──────────────────────────────────────────────────────
+
+describe('PUT /api/designs/:id', () => {
+  it('met à jour et versionne à chaque sauvegarde', async () => {
+    const design = await createDesign(tokenBob, 'À éditer');
+
+    const put1 = await request.put(`/api/designs/${design.id}`).set(auth(tokenBob))
+      .send({ config: { ...design.config, colors: { ...design.config.colors, bg: '#000000' } } });
+    assert.equal(put1.status, 200);
+    assert.equal(put1.body.config.colors.bg, '#000000');
+
+    const put2 = await request.put(`/api/designs/${design.id}`).set(auth(tokenBob))
+      .send({ name: 'Renommé' });
+    assert.equal(put2.status, 200);
+    assert.equal(put2.body.name, 'Renommé');
+
+    // 1 version initiale + 2 sauvegardes
+    const versions = await request.get(`/api/designs/${design.id}/versions`).set(auth(tokenBob));
+    assert.equal(versions.body.length, 3);
+  });
+
+  it('refuse une config invalide (400)', async () => {
+    const design = await createDesign(tokenBob, 'Config invalide au PUT');
+    const res = await request.put(`/api/designs/${design.id}`).set(auth(tokenBob))
+      .send({ config: { version: 1, colors: { bg: 'red' } } });
+    assert.equal(res.status, 400);
+  });
+
+  it('403 sur le design d\'un autre client', async () => {
+    const secret = await createDesign(tokenCarol, 'Privé Carol PUT');
+    const res = await request.put(`/api/designs/${secret.id}`).set(auth(tokenBob)).send({ name: 'pirate' });
+    assert.equal(res.status, 403);
+  });
+
+  it('un client ne peut PAS modifier un template (403)', async () => {
+    const list = await request.get('/api/designs').set(auth(tokenBob));
+    const template = list.body.find((d) => d.is_template === 1);
+    const res = await request.put(`/api/designs/${template.id}`).set(auth(tokenBob)).send({ name: 'détourné' });
+    assert.equal(res.status, 403);
+  });
+
+  it('un superuser peut modifier un template', async () => {
+    const list = await request.get('/api/designs').set(auth(tokenAlice));
+    const template = list.body.find((d) => d.name === 'Moderne');
+    const res = await request.put(`/api/designs/${template.id}`).set(auth(tokenAlice))
+      .send({ name: 'Moderne' }); // même nom : on vérifie l'autorisation, pas le renommage
+    assert.equal(res.status, 200);
+  });
+});
+
+// ── DELETE /api/designs/:id ───────────────────────────────────────────────────
+
+describe('DELETE /api/designs/:id', () => {
+  it('supprime le design, ses versions et son dossier d\'assets', async () => {
+    const design = await createDesign(tokenBob, 'À supprimer');
+
+    // Simule un asset déjà uploadé (design.E remplira ce dossier pour de vrai).
+    const assetsDir = join(dir, 'designs', design.id);
+    mkdirSync(assetsDir, { recursive: true });
+    writeFileSync(join(assetsDir, 'logo.png'), 'fake');
+
+    const res = await request.delete(`/api/designs/${design.id}`).set(auth(tokenBob));
+    assert.equal(res.status, 200);
+
+    const after = await request.get(`/api/designs/${design.id}`).set(auth(tokenBob));
+    assert.equal(after.status, 404);
+    assert.ok(!existsSync(assetsDir), 'le dossier d\'assets doit être supprimé');
+
+    // ON DELETE CASCADE : plus aucune version orpheline.
+    const db = getDb();
+    const { n } = db.prepare('SELECT COUNT(*) AS n FROM design_versions WHERE design_id = ?').get(design.id);
+    assert.equal(n, 0);
+  });
+
+  it('403 sur le design d\'un autre client', async () => {
+    const secret = await createDesign(tokenCarol, 'Privé Carol DELETE');
+    const res = await request.delete(`/api/designs/${secret.id}`).set(auth(tokenBob));
+    assert.equal(res.status, 403);
+  });
+
+  it('404 si inconnu', async () => {
+    const res = await request.delete('/api/designs/inexistant').set(auth(tokenBob));
+    assert.equal(res.status, 404);
+  });
+
+  it('un :id de path traversal ne touche jamais au disque (404)', async () => {
+    // Le dossier ciblé par une traversée doit survivre intacte.
+    const victim = join(dir, 'events');
+    mkdirSync(victim, { recursive: true });
+    writeFileSync(join(victim, 'canary.txt'), 'ne doit pas être supprimé');
+
+    for (const evil of ['..', '../events', '%2e%2e%2fevents', 'a/../../events']) {
+      const res = await request.delete(`/api/designs/${encodeURIComponent(evil)}`).set(auth(tokenBob));
+      assert.equal(res.status, 404, `${evil} : attendu 404`);
+    }
+
+    assert.ok(existsSync(join(victim, 'canary.txt')), 'aucun fichier hors designs/ ne doit être supprimé');
+  });
+});
+
+// ── POST /api/designs/:id/duplicate ───────────────────────────────────────────
+
+describe('POST /api/designs/:id/duplicate', () => {
+  it('un client duplique un template : la copie lui appartient et n\'est pas template', async () => {
+    const list = await request.get('/api/designs').set(auth(tokenBob));
+    const template = list.body.find((d) => d.name === 'Sombre');
+
+    const res = await request.post(`/api/designs/${template.id}/duplicate`).set(auth(tokenBob)).send({});
+    assert.equal(res.status, 201);
+    assert.equal(res.body.name, 'Sombre (copie)');
+    assert.equal(res.body.is_template, 0, 'une copie n\'hérite pas du statut template');
+    assert.deepEqual(res.body.config, template.config);
+
+    // La copie est modifiable par bob (contrairement au template d'origine).
+    const put = await request.put(`/api/designs/${res.body.id}`).set(auth(tokenBob)).send({ name: 'Ma version' });
+    assert.equal(put.status, 200);
+  });
+
+  it('copie les fichiers assets (la copie ne partage pas le dossier source)', async () => {
+    const source = await createDesign(tokenBob, 'Avec assets');
+    const srcDir = join(dir, 'designs', source.id);
+    mkdirSync(srcDir, { recursive: true });
+    writeFileSync(join(srcDir, 'image.png'), 'fake-bytes');
+
+    const res = await request.post(`/api/designs/${source.id}/duplicate`).set(auth(tokenBob)).send({});
+    assert.equal(res.status, 201);
+    assert.ok(existsSync(join(dir, 'designs', res.body.id, 'image.png')), 'l\'asset doit être copié');
+
+    // Supprimer la source ne doit pas casser la copie.
+    await request.delete(`/api/designs/${source.id}`).set(auth(tokenBob));
+    assert.ok(existsSync(join(dir, 'designs', res.body.id, 'image.png')));
+  });
+
+  it('403 sur le design privé d\'un autre client', async () => {
+    const secret = await createDesign(tokenCarol, 'Privé Carol DUP');
+    const res = await request.post(`/api/designs/${secret.id}/duplicate`).set(auth(tokenBob)).send({});
+    assert.equal(res.status, 403);
+  });
+
+  it('404 si inconnu', async () => {
+    const res = await request.post('/api/designs/inexistant/duplicate').set(auth(tokenBob)).send({});
+    assert.equal(res.status, 404);
+  });
+});
+
+// ── POST /api/designs/:id/promote ─────────────────────────────────────────────
+
+describe('POST /api/designs/:id/promote', () => {
+  it('un superuser promeut un design en template', async () => {
+    const design = await createDesign(tokenBob, 'À promouvoir');
+
+    const res = await request.post(`/api/designs/${design.id}/promote`).set(auth(tokenAlice)).send({});
+    assert.equal(res.status, 200);
+    assert.equal(res.body.is_template, 1);
+
+    // Devenu template : carol (autre client) le voit maintenant.
+    const list = await request.get('/api/designs').set(auth(tokenCarol));
+    assert.ok(list.body.some((d) => d.id === design.id));
+  });
+
+  it('403 pour un client (même sur son propre design)', async () => {
+    const design = await createDesign(tokenBob, 'Promotion interdite');
+    const res = await request.post(`/api/designs/${design.id}/promote`).set(auth(tokenBob)).send({});
+    assert.equal(res.status, 403);
+  });
+
+  it('404 si inconnu', async () => {
+    const res = await request.post('/api/designs/inexistant/promote').set(auth(tokenAlice)).send({});
+    assert.equal(res.status, 404);
+  });
+});
+
+// ── versions & restore ────────────────────────────────────────────────────────
+
+describe('versions et restauration', () => {
+  it('GET /versions/:vid retourne le snapshot complet', async () => {
+    const design = await createDesign(tokenBob, 'Snapshot');
+    const versions = await request.get(`/api/designs/${design.id}/versions`).set(auth(tokenBob));
+    const vid = versions.body[0].id;
+
+    const res = await request.get(`/api/designs/${design.id}/versions/${vid}`).set(auth(tokenBob));
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.snapshot, design.config);
+  });
+
+  it('restore remet la config d\'une version antérieure sans perdre l\'état courant', async () => {
+    const design = await createDesign(tokenBob, 'À restaurer');
+    const originalBg = design.config.colors.bg;
+
+    // Version initiale (v1) = état d'origine.
+    const v1 = (await request.get(`/api/designs/${design.id}/versions`).set(auth(tokenBob))).body[0].id;
+
+    // On modifie : le fond devient noir.
+    await request.put(`/api/designs/${design.id}`).set(auth(tokenBob))
+      .send({ config: { ...design.config, colors: { ...design.config.colors, bg: '#000000' } } });
+
+    // On restaure v1 → le fond redevient celui d'origine.
+    const res = await request.post(`/api/designs/${design.id}/restore`).set(auth(tokenBob)).send({ version_id: v1 });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.config.colors.bg, originalBg);
+
+    // Append-only : l'état écrasé (#000000) reste consultable dans l'historique.
+    const versions = await request.get(`/api/designs/${design.id}/versions`).set(auth(tokenBob));
+    const snapshots = [];
+    for (const v of versions.body) {
+      const full = await request.get(`/api/designs/${design.id}/versions/${v.id}`).set(auth(tokenBob));
+      snapshots.push(full.body.snapshot.colors.bg);
+    }
+    assert.ok(snapshots.includes('#000000'), 'la config écrasée doit rester dans l\'historique');
+  });
+
+  it('restore : 400 sans version_id, 404 si la version appartient à un autre design', async () => {
+    const design = await createDesign(tokenBob, 'Restore invalide');
+    const other = await createDesign(tokenBob, 'Autre design');
+    const otherVid = (await request.get(`/api/designs/${other.id}/versions`).set(auth(tokenBob))).body[0].id;
+
+    const noBody = await request.post(`/api/designs/${design.id}/restore`).set(auth(tokenBob)).send({});
+    assert.equal(noBody.status, 400);
+
+    const wrongVersion = await request.post(`/api/designs/${design.id}/restore`).set(auth(tokenBob))
+      .send({ version_id: otherVid });
+    assert.equal(wrongVersion.status, 404);
+  });
+
+  it('restore : version_id non scalaire → 400 (et non 500)', async () => {
+    const design = await createDesign(tokenBob, 'Restore non scalaire');
+    // better-sqlite3 lèverait sur un bind d'objet/tableau → la garde doit répondre 400.
+    for (const version_id of [{}, [], null, 'abc', 1.5]) {
+      const res = await request.post(`/api/designs/${design.id}/restore`).set(auth(tokenBob)).send({ version_id });
+      assert.equal(res.status, 400, `version_id=${JSON.stringify(version_id)} : attendu 400`);
+    }
+  });
+
+  it('403 : un client ne peut ni lire ni restaurer les versions d\'un autre client', async () => {
+    const secret = await createDesign(tokenCarol, 'Versions privées');
+    const vid = (await request.get(`/api/designs/${secret.id}/versions`).set(auth(tokenCarol))).body[0].id;
+
+    const list = await request.get(`/api/designs/${secret.id}/versions`).set(auth(tokenBob));
+    assert.equal(list.status, 403);
+
+    const get = await request.get(`/api/designs/${secret.id}/versions/${vid}`).set(auth(tokenBob));
+    assert.equal(get.status, 403);
+
+    const restore = await request.post(`/api/designs/${secret.id}/restore`).set(auth(tokenBob)).send({ version_id: vid });
+    assert.equal(restore.status, 403);
+  });
+});

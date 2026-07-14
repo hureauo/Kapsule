@@ -1,30 +1,24 @@
 ---
 status: tests-pending
-base_commit: 2a1af81dd68d9d041f6e1494691f05e981f58846
-workspaces: []
-generated_at: 2026-07-14T00:00:00Z
-verdict: COMMIT À CORRIGER
+base_commit: 21ec73e0994a38500005f92fa87fd73a8d0e65d0
+workspaces: [@kapsule/core, @kapsule/hub-server]
+generated_at: 2026-07-14T20:15:00Z
+verdict: COMMIT OK
 ---
 
 # Relais de review → tests
 
 Workspaces à tester :
-- (aucun) — le diff ne touche que PROJET.md (documentation contractuelle §9bis), aucun fichier testable.
+- @kapsule/core (raison : `packages/core/src/design.js` — `validateDesign` + whitelist racine `DESIGN_KEYS`, barrière anti-injection CSS §11.28 ; barrel `index.js` modifié)
+- @kapsule/hub-server (raison : `routes/designs.js` monté dans `index.js`, tables `designs`/`design_versions` + seed dans `registry.js`)
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- Aucun test ne couvre ce diff (doc seule). Le finding ❌ est purement documentaire : la
-  section §9bis décrit `captureSnapshot`/`readSnapshot` comme « restreint à `META_KEYS` »,
-  ce que le code (`apps/hub/server/src/versioning.js`) contredit — `readSnapshot` lit TOUT
-  `event_meta` sans filtre. À traiter par correction de la doc, pas par un test.
+- Re-review du sous-lot design.B : les 5 findings de la review précédente (1 ❌ + 4 ⚠️) sont vérifiés corrigés dans le code réel. Aucun nouveau ❌ ni ⚠️.
+- Confirmer que le cas « JSON > 16 Ko » (`packages/core/test/design.test.js:141`) passe bien sur le message `/octets/` (clé légitime `assets.logo` gonflée) et non sur « clé racine inconnue » — c'était la « bonne raison » demandée.
+- Confirmer que le test de path traversal (`apps/hub/server/test/designs.test.js:282`) laisse le canari `events/canary.txt` intact (`designDir()` jette avant `join()`) et rend bien 404 sur les 4 formes.
+- Non couvert par les tests (💡, non bloquant) : l'idempotence du seed sur un **second** `openRegistry` du même `DATA_DIR` (le garde-fou `COUNT(*) > 0` est correct par construction, mais aucun test ne rouvre un registre existant).
+- Pas de smoke test requis : aucun changement Docker/nginx/env/package.json dans ce sous-lot.
 
 ## Corrections demandées
 
-> Cette section est lue par l'agent principal pour implémenter les corrections.
-> Chaque item est coché par l'agent principal une fois corrigé.
-
-- [ ] ❌ `PROJET.md:679-682` — Corriger le paragraphe « Conséquence pour `captureSnapshot` ».
-  Le code réel (`versioning.js` `readSnapshot`) fait `SELECT key, value FROM event_meta`
-  sans aucune restriction à `META_KEYS` et sans boucle `META_KEYS` : `event_meta.design`
-  sera capturé automatiquement dès qu'il existera, aucune adaptation n'est requise. Reformuler
-  pour refléter que le snapshot lit déjà tout `event_meta` (donc `design` est tracé sans
-  changement), ou supprimer la « conséquence » erronée.
+Aucune correction requise.

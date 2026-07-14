@@ -13,6 +13,7 @@ import { makeSyncRouter } from './routes/sync.js';
 import { makeGalleryRouter } from './routes/gallery.js';
 import { makePreviewGalleryRouter } from './routes/previewGallery.js';
 import { makeVersionsRouter } from './routes/versions.js';
+import { makeDesignsRouter } from './routes/designs.js';
 import { createMailer, createNullMailer } from './email/mailer.js';
 
 async function seedAdminIfNeeded() {
@@ -39,6 +40,7 @@ export function createApp(dataDir, opts = {}, { docker, resolvePreviewBase, mail
   app.use('/api/events', makeEventsRouter(dataDir, { docker }));
   app.use('/api/events/:eventId/questions', makeQuestionsRouter(dataDir));
   app.use('/api/admin', makeAdminRouter(dataDir, { mailer: mail }));
+  app.use('/api/designs', makeDesignsRouter(dataDir));
   app.use('/api/sync', makeSyncRouter(dataDir, opts.sync));
   app.use('/api/events/:eventId/versions', makeVersionsRouter(dataDir));
   app.use('/api/events/:eventId', makePreviewGalleryRouter({ resolveBase: resolvePreviewBase }));
