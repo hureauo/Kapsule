@@ -21,7 +21,7 @@ export const DESIGN_COLOR_KEYS = [
 ];
 
 export const DESIGN_RADIUS = ['sharp', 'soft', 'round'];
-export const DESIGN_FONTS = ['sans', 'serif', 'rounded', 'mono'];
+export const DESIGN_FONTS = ['sans', 'serif', 'rounded', 'mono', 'humanist', 'grotesk', 'slab', 'elegant'];
 export const DESIGN_LAYOUTS = {
   start: ['centered', 'cover', 'split'],
   thanks: ['centered', 'cover'],
@@ -49,6 +49,10 @@ export const FONT_PRESETS = {
   serif: "Georgia, 'Times New Roman', serif",
   rounded: "'Comic Sans MS', 'Marker Felt', casual, sans-serif",
   mono: "'SF Mono', 'Cascadia Code', monospace",
+  humanist: "'Optima', 'Segoe UI', 'Helvetica Neue', sans-serif",
+  grotesk: "'Helvetica Neue', Arial, sans-serif",
+  slab: "'Rockwell', 'Courier Bold', Georgia, serif",
+  elegant: "'Didot', 'Bodoni MT', Georgia, serif",
 };
 
 // Hex 6 ou 8 chiffres (8 = canal alpha). Rien d'autre : pas de rgb(), pas de nom CSS.

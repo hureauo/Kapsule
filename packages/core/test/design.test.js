@@ -29,7 +29,7 @@ describe('constantes design', () => {
 
   test('les enums sont fermées', () => {
     assert.deepEqual(DESIGN_RADIUS, ['sharp', 'soft', 'round']);
-    assert.deepEqual(DESIGN_FONTS, ['sans', 'serif', 'rounded', 'mono']);
+    assert.deepEqual(DESIGN_FONTS, ['sans', 'serif', 'rounded', 'mono', 'humanist', 'grotesk', 'slab', 'elegant']);
     assert.deepEqual(DESIGN_LAYOUTS.start, ['centered', 'cover', 'split']);
     assert.deepEqual(DESIGN_LAYOUTS.thanks, ['centered', 'cover']);
   });
