@@ -1,32 +1,29 @@
 ---
 status: tests-pending
-base_commit: ee012d12a4bf016130d80ed86f1b5db0fda16519
-workspaces: [@kapsule/core, @kapsule/hub-server, @kapsule/borne-server, @kapsule/hub-web, @kapsule/borne-web]
+base_commit: 4d697da80ef0b33692e1b3a3a234d302b7bf6bea
+workspaces: [@kapsule/hub-web]
 generated_at: 2026-07-15T00:00:00Z
 verdict: COMMIT OK
 ---
 
 # Relais de review → tests
 
-Re-review des corrections design.E+F. Le ❌ (écriture arbitraire au pull) et les
-5 ⚠️ de la review précédente ont été vérifiés dans le code réel et sont corrigés.
-Seule dérive résiduelle trouvée : deux notes obsolètes dans ARCHITECTURE.md décrivant
-l'ancien comportement vulnérable — corrigées par le reviewer (doc only, pas de code).
+Retouches UI post-test de la page Designs (candidat `phase design: retouches UI post-test`).
+Diff 100% front Hub (`apps/hub/web/`) — aucun fichier serveur, core ni infra. Seule écriture
+hors code : deux notes ARCHITECTURE.md rafraîchies par le reviewer (entrées de navigation vers
+`/designs`, mécanisme d'échelle mesuré du DesignPreview, `hub-main--wide` + media query desktop).
 
 Workspaces à tester :
-- @kapsule/core (raison : `isValidAssetFilename` ajouté à `packages/core/src/design.js`)
-- @kapsule/hub-server (raison : `restoreEventDesign` dans `routes/events.js`, import dans `routes/versions.js`, ordre vérif/rmSync dans `PUT /:eventId/design`, `routes/sync.js` design)
-- @kapsule/borne-server (raison : `pull.js` validation filename + `dropDesignMeta`, `routes/events.js` `GET /event/design/:filename` durci)
-- @kapsule/hub-web (raison : DesignEditor.jsx / EventDetailPage.jsx / client.js modifiés)
-- @kapsule/borne-web (raison : `utils/design.js` nouveau, StartScreen/ThankYouScreen/GuestPage modifiés)
+- @kapsule/hub-web (raison : DesignPreview.jsx, VersionHistory.jsx, DesignsPage.jsx, AdminPage.jsx, EventDetailPage.jsx et app.css modifiés)
 
-Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- Pull avec `filename: '../db.sqlite'` → doit rejeter ET laisser db.sqlite intact (test présent sync.pull.test.js:454).
-- Pull avec checksum invalide → `event_meta.design` doit être absent après échec (test présent sync.pull.test.js:466).
-- `PUT /:eventId/design` aux images source manquantes → 409 SANS détruire le design déjà appliqué (test présent eventDesign.test.js:141).
-- Restore d'une version antérieure au design → retire le design ; restore d'une version avec design → réapplique (tests présents eventDesign.test.js:212/234).
-- Route publique borne `GET /api/event/design/:filename` : un filename légitime reste servi en 200 (non-régression à confirmer).
-- Absence de cycle d'import versions.js ↔ events.js confirmée par lecture (events.js n'importe pas versions.js).
+Note : pas d'infra de test front dans ce projet (CLAUDE.md). Aucun fichier serveur/core touché →
+ni supertest ni smoke à déclencher. La validation réelle de ces retouches est visuelle (navigateur
+desktop / iPad Safari), donc humaine — cf. points ci-dessous.
+
+Points d'attention pour les tests (à confirmer par un humain, non automatisable ici) :
+- Aperçu épinglé (`position: sticky`, `@media (min-width: 1100px)`) : vérifier sur desktop réel qu'il reste fixe pendant le défilement des réglages. Chaîne d'ancêtres vérifiée statiquement OK — les seuls `overflow:hidden` (`.designs-preview__viewport`, `.design-preview`) sont des DESCENDANTS du sticky, sans effet sur lui.
+- Rafraîchissement de l'historique (`VersionHistory` dépend désormais de l'objet `design`, pas de `design.id`) : après « Enregistrer », la nouvelle version doit apparaître sans clignotement. Pas de boucle : le `load()` local de VersionHistory ne modifie pas le state `designs` de la page. Double-fetch ponctuel après un restore jugé acceptable à cette échelle.
+- Facteur d'échelle mesuré (`ResizeObserver` + `useLayoutEffect`) : sur iPad Safari, vérifier que l'aperçu se réduit correctement et sans vide sous le cadre aux 3 largeurs (360/820/1280).
 
 ## Corrections demandées
 

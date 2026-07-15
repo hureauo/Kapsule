@@ -595,6 +595,27 @@ button { cursor: pointer; font: inherit; }
 .designs-editor { display: flex; flex-direction: column; gap: 20px; }
 .designs-editor__form { display: flex; flex-direction: column; gap: 20px; }
 
+/* La page Designs a besoin de plus que les 960px du .hub-main standard :
+   form (420) + aperçu + historique (320) ne tiennent pas dessous. */
+.hub-main--wide { max-width: 1400px; }
+
+/* Desktop : réglages à gauche, aperçu épinglé à droite — il reste visible
+   pendant qu'on fait défiler les réglages (sticky, pas fixed : il suit sa
+   colonne et s'arrête à la fin de l'éditeur). */
+@media (min-width: 1100px) {
+  .designs-editor {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+  .designs-editor__form { flex: 0 0 420px; }
+  .designs-editor__preview {
+    flex: 1 1 auto;
+    min-width: 0;
+    position: sticky;
+    top: 12px;
+  }
+}
+
 .designs-editor__actions {
   display: flex;
   align-items: center;
@@ -603,7 +624,9 @@ button { cursor: pointer; font: inherit; }
   position: sticky;
   top: 0;
   padding: 8px 0;
-  background: var(--surface);
+  /* La barre est sticky : un fond est nécessaire pour masquer le contenu qui
+     défile dessous — celui de la PAGE (--bg), pas --surface (blanc). */
+  background: var(--bg);
   z-index: 1;
 }
 
@@ -660,7 +683,8 @@ button { cursor: pointer; font: inherit; }
 .designs-preview__group { display: flex; gap: 6px; flex-wrap: wrap; }
 
 /* Le cadre garde sa largeur cible (360/820/1280) et est réduit par transform
-   pour tenir dans la colonne : la maquette reste fidèle aux proportions. */
+   pour tenir dans la colonne. Le facteur d'échelle et la hauteur visuelle sont
+   calculés par DesignPreview (ResizeObserver) — pas de valeur magique ici. */
 .designs-preview__viewport {
   overflow: hidden;
   border: 1px solid var(--border);
@@ -668,7 +692,6 @@ button { cursor: pointer; font: inherit; }
   background: var(--bg);
 }
 .designs-preview__scaler {
-  transform: scale(calc(100% / (var(--preview-width) / 1px) * 3.4));
   transform-origin: top left;
 }
 

@@ -639,6 +639,7 @@ export default function EventDetailPage() {
         <Link to="/events" className="btn btn--ghost btn--sm hub-header__back">← Événements</Link>
         <span className="hub-header__title">{event.name}</span>
         <div className="hub-header__actions">
+          <button className="btn btn--ghost btn--sm" onClick={() => navigate('/designs')}>Designs</button>
           {isSuperuser && (
             <button className="btn btn--ghost btn--sm" onClick={() => navigate('/admin')}>Administration</button>
           )}

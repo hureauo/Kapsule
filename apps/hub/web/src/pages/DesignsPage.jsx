@@ -110,7 +110,7 @@ export default function DesignsPage() {
         </div>
       </header>
 
-      <main className="hub-main">
+      <main className="hub-main hub-main--wide">
         {error && <p className="error-msg">{error}</p>}
 
         {selected ? (

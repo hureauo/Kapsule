@@ -20,7 +20,10 @@ export default function VersionHistory({ design, readOnly, onRestored, onError }
     } finally {
       setLoading(false);
     }
-  }, [design.id, onError]);
+    // Dépendre de l'OBJET design (recréé à chaque rechargement de la liste par
+    // la page), pas seulement de design.id : chaque enregistrement crée une
+    // version, l'historique doit la voir sans changer de design sélectionné.
+  }, [design, onError]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -42,8 +45,10 @@ export default function VersionHistory({ design, readOnly, onRestored, onError }
     }
   }
 
-  if (loading) return <p className="text--muted">Chargement…</p>;
-  if (versions.length === 0) return <p className="text--muted">Aucune version.</p>;
+  // « Chargement… » seulement au premier affichage : lors d'un rafraîchissement
+  // (après un enregistrement), on garde la liste visible plutôt que de clignoter.
+  if (loading && versions.length === 0) return <p className="text--muted">Chargement…</p>;
+  if (!loading && versions.length === 0) return <p className="text--muted">Aucune version.</p>;
 
   return (
     <ul className="designs-versions">

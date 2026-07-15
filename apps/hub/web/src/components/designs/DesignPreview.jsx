@@ -6,7 +6,7 @@
 // Les presets (rayons, polices) viennent de @kapsule/core — même source que le
 // runtime kiosque, donc pas de dérive possible sur CES valeurs-là.
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useLayoutEffect } from 'react';
 import { DESIGN_COLOR_KEYS, RADIUS_PRESETS, FONT_PRESETS } from '@kapsule/core';
 
 const WIDTHS = [
@@ -33,9 +33,29 @@ function cssVarsFor(config) {
 export default function DesignPreview({ config }) {
   const [widthKey, setWidthKey] = useState('ipad');
   const [screen, setScreen] = useState('start');
+  const viewportRef = useRef(null);
+  const [scale, setScale] = useState(1);
 
   const target = WIDTHS.find((w) => w.key === widthKey) ?? WIDTHS[1];
   const vars = cssVarsFor(config);
+
+  // Le facteur de réduction est MESURÉ sur le conteneur (ResizeObserver) plutôt
+  // que deviné en CSS : la colonne de l'aperçu change de largeur avec la fenêtre
+  // et la mise en page (aperçu épinglé à droite sur desktop).
+  useLayoutEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return undefined;
+    const update = () => setScale(Math.min(1, el.clientWidth / target.width));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [target.width]);
+
+  // La transform ne change pas la hauteur de layout : sans hauteur explicite,
+  // un grand vide subsisterait sous l'aperçu réduit. 3/4 = aspect-ratio 4/3
+  // du .design-preview (voir app.css).
+  const scaledHeight = Math.round(target.width * (3 / 4) * scale);
 
   return (
     <div className="designs-preview">
@@ -69,12 +89,13 @@ export default function DesignPreview({ config }) {
         </div>
       </div>
 
-      {/* Le cadre a la largeur cible réelle et est réduit pour tenir dans la
-          colonne : c'est ce qui rend la bascule mobile/iPad/desktop honnête. */}
-      <div className="designs-preview__viewport">
+      {/* Le cadre a la largeur cible réelle (360/820/1280) et est réduit par
+          transform pour tenir dans la colonne : c'est ce qui rend la bascule
+          mobile/iPad/desktop honnête. */}
+      <div className="designs-preview__viewport" ref={viewportRef} style={{ height: scaledHeight }}>
         <div
           className="designs-preview__scaler"
-          style={{ width: target.width, '--preview-width': `${target.width}px` }}
+          style={{ width: target.width, transform: `scale(${scale})` }}
         >
           <div className="design-preview" style={vars}>
             <Screen screen={screen} config={config} />

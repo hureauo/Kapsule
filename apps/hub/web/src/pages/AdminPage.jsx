@@ -997,6 +997,7 @@ export default function AdminPage() {
         <span className="hub-header__title">Administration</span>
         <div className="hub-header__actions">
           <button className="btn btn--ghost btn--sm" onClick={() => navigate('/events')}>Événements</button>
+          <button className="btn btn--ghost btn--sm" onClick={() => navigate('/designs')}>Designs</button>
           <button className="btn btn--ghost btn--sm" onClick={logout}>Déconnexion</button>
         </div>
       </header>
