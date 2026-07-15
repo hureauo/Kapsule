@@ -659,13 +659,55 @@ button { cursor: pointer; font: inherit; }
 .designs-fieldset:disabled { opacity: .7; }
 .designs-fieldset__legend { font-weight: 600; padding: 0 6px; }
 
+/* Regroupement par écran (DesignEditor, groupColorsByScreen) */
+.designs-color-group { display: flex; flex-direction: column; gap: 8px; }
+.designs-color-group__title {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+/* Une ligne couleur est un <button> entier (pas juste le picker) : cliquer
+   n'importe où dessus bascule l'aperçu sur l'écran concerné. */
 .designs-color-row {
   display: grid;
-  grid-template-columns: 1fr auto 110px;
+  grid-template-columns: auto 1fr auto 110px;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 6px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s;
+}
+.designs-color-row:hover { background: var(--surface-alt, rgba(0,0,0,0.03)); }
+/* Sélectionnée au clic : reste marquée tant qu'une autre ligne n'est pas cliquée. */
+.designs-color-row--active {
+  background: var(--primary-tint, rgba(0,0,0,0.06));
+  border-color: var(--primary);
 }
 .designs-color-row__label { font-size: 14px; }
+
+/* Indice cliquable : invite à cliquer pour voir la couleur dans l'aperçu.
+   Discret par défaut, se révèle au survol de la ligne pour ne pas surcharger
+   la liste — la ligne active le garde visible en permanence. */
+.designs-color-row__cue {
+  font-size: 13px;
+  opacity: 0.35;
+  transition: opacity 0.15s;
+}
+.designs-color-row:hover .designs-color-row__cue,
+.designs-color-row--active .designs-color-row__cue {
+  opacity: 1;
+}
 
 /* <input type="color"> natif : la stack est figée, pas de color picker externe. */
 .designs-color-picker {
@@ -752,6 +794,56 @@ button { cursor: pointer; font: inherit; }
   justify-content: center;
   gap: 16px;
   text-align: center;
+}
+
+/* Écran avec bandeau bas (RecordingScreen) : colonne pleine hauteur, pas de
+   padding bas (le bandeau va jusqu'au bord, comme .question-nav sur la borne). */
+.dp-screen--column {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.dp-center--grow { flex: 1; justify-content: center; min-height: 0; }
+
+/* Bandeau bas — calque de .question-nav (app.css borne, RecordingScreen.jsx) */
+.dp-nav {
+  flex-shrink: 0;
+  background: var(--surface);
+  border-radius: var(--radius, 16px) var(--radius, 16px) 0 0;
+  overflow: hidden;
+  margin: 0 -32px;
+}
+.dp-nav__progress {
+  height: 6px;
+  width: 100%;
+  background: var(--primary-tint, rgba(0,0,0,0.1));
+}
+.dp-nav__progress-fill {
+  height: 100%;
+  background: var(--primary);
+}
+.dp-nav__row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 12px 20px;
+}
+.dp-nav__dots { display: flex; gap: 8px; flex: 1; justify-content: center; }
+.dp-nav__dot {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--text-muted);
+  background: transparent;
+}
+.dp-nav__dot--current  { border-color: var(--accent); background: var(--accent); transform: scale(1.2); }
+.dp-nav__dot--answered { border-color: var(--primary); background: var(--primary); }
+.dp-nav__label {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
 .dp-title { font-size: 34px; margin: 0; color: var(--text); }

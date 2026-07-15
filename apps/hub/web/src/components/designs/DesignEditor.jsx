@@ -57,6 +57,28 @@ const COLOR_TARGET = {
   'btn-secondary-hover': { screen: 'name', key: 'btn-secondary-bg' },
 };
 
+// Regroupement des couleurs par écran (au lieu de l'ordre technique de
+// DESIGN_COLOR_KEYS) : on clique une couleur, on veut la voir dans l'écran où
+// elle apparaît sans avoir à re-switcher — donc les couleurs d'un même écran
+// sont voisines dans le formulaire. Dérivé de COLOR_TARGET (même source que le
+// couplage maquette), pas dupliqué à la main.
+const SCREEN_LABELS = {
+  start: 'Écran d\'accueil',
+  name: 'Écran « Prénom »',
+  recording: 'Écran d\'enregistrement',
+};
+const SCREEN_ORDER = ['start', 'name', 'recording'];
+
+function groupColorsByScreen() {
+  const groups = new Map(SCREEN_ORDER.map((s) => [s, []]));
+  for (const key of DESIGN_COLOR_KEYS) {
+    const screen = COLOR_TARGET[key]?.screen ?? 'start';
+    if (!groups.has(screen)) groups.set(screen, []);
+    groups.get(screen).push(key);
+  }
+  return [...groups.entries()].filter(([, keys]) => keys.length > 0);
+}
+
 const RADIUS_LABELS = { sharp: 'Anguleux', soft: 'Doux', round: 'Très arrondi' };
 const FONT_LABELS = {
   sans: 'Sans serif',
@@ -95,7 +117,10 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
   const [dirty, setDirty] = useState(false);
   const [invalid, setInvalid] = useState('');
   const [usage, setUsage] = useState([]);
-  const [hoverColorKey, setHoverColorKey] = useState(null);
+  // Sélection au clic (plutôt qu'au survol) : reste affichée tant qu'on ne
+  // clique pas une autre ligne, pour laisser le temps de regarder l'aperçu
+  // sans avoir à garder la souris immobile dessus.
+  const [activeColorKey, setActiveColorKey] = useState(null);
 
   // Changer de design sélectionné réinitialise le formulaire.
   useEffect(() => {
@@ -192,31 +217,55 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
 
         <fieldset className="designs-fieldset" disabled={readOnly}>
           <legend className="designs-fieldset__legend">Couleurs</legend>
-          {DESIGN_COLOR_KEYS.map((key) => (
-            <div
-              className="designs-color-row"
-              key={key}
-              onMouseEnter={() => setHoverColorKey(key)}
-              onMouseLeave={() => setHoverColorKey((k) => (k === key ? null : k))}
-            >
-              <label className="designs-color-row__label" htmlFor={`color-${key}`}>
-                {COLOR_LABELS[key]}
-              </label>
-              <input
-                id={`color-${key}`}
-                type="color"
-                className="designs-color-picker"
-                value={toPickerValue(config.colors?.[key])}
-                onChange={(e) => setColor(key, e.target.value)}
-              />
-              <input
-                type="text"
-                className="hub-input designs-color-hex"
-                value={config.colors?.[key] ?? ''}
-                onChange={(e) => setColor(key, e.target.value)}
-                placeholder="#rrggbb"
-                spellCheck="false"
-              />
+          <p className="text--muted designs-hint">
+            Cliquez une couleur pour l'afficher dans l'aperçu.
+          </p>
+          {groupColorsByScreen().map(([screen, keys]) => (
+            <div className="designs-color-group" key={screen}>
+              <p className="designs-color-group__title">{SCREEN_LABELS[screen] ?? screen}</p>
+              {keys.map((key) => (
+                // Pas de <button> ici : un bouton ne peut pas contenir <input>
+                // (contenu interactif imbriqué invalide — le navigateur ferme
+                // la balise prématurément). role="button" reproduit la
+                // sémantique clic/clavier sans ce problème.
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className={`designs-color-row ${activeColorKey === key ? 'designs-color-row--active' : ''}`}
+                  key={key}
+                  onClick={() => setActiveColorKey(key)}
+                  onKeyDown={(e) => {
+                    if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) {
+                      e.preventDefault();
+                      setActiveColorKey(key);
+                    }
+                  }}
+                >
+                  <span className="designs-color-row__cue" aria-hidden="true">👁</span>
+                  <label className="designs-color-row__label" htmlFor={`color-${key}`}>
+                    {COLOR_LABELS[key]}
+                  </label>
+                  <input
+                    id={`color-${key}`}
+                    type="color"
+                    className="designs-color-picker"
+                    value={toPickerValue(config.colors?.[key])}
+                    onClick={(e) => e.stopPropagation()}
+                    onFocus={() => setActiveColorKey(key)}
+                    onChange={(e) => setColor(key, e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    className="hub-input designs-color-hex"
+                    value={config.colors?.[key] ?? ''}
+                    onClick={(e) => e.stopPropagation()}
+                    onFocus={() => setActiveColorKey(key)}
+                    onChange={(e) => setColor(key, e.target.value)}
+                    placeholder="#rrggbb"
+                    spellCheck="false"
+                  />
+                </div>
+              ))}
             </div>
           ))}
         </fieldset>
@@ -297,7 +346,7 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
       </div>
 
       <div className="designs-editor__preview">
-        <DesignPreview config={config} hoverTarget={hoverColorKey ? COLOR_TARGET[hoverColorKey] : null} />
+        <DesignPreview config={config} hoverTarget={activeColorKey ? COLOR_TARGET[activeColorKey] : null} />
       </div>
     </div>
   );

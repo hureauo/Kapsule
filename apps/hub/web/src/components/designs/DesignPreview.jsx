@@ -31,9 +31,9 @@ function cssVarsFor(config) {
 }
 
 // hoverTarget vient de COLOR_TARGET (DesignEditor, design2.D) : { screen, key }.
-// Le survol d'une ligne couleur bascule l'aperçu sur l'écran concerné (la
-// bascule reste au départ du survol, cf. §9bis « survol ») et fait pulser
-// l'élément marqué data-color-target={key} (animation CSS .dp-pulse).
+// Posé au CLIC sur une ligne couleur (plus fiable qu'un hover : reste affiché
+// le temps de regarder l'aperçu). Bascule l'aperçu sur l'écran concerné et
+// fait pulser l'élément marqué data-color-target={key} (animation CSS .dp-pulse).
 export default function DesignPreview({ config, hoverTarget = null }) {
   const [widthKey, setWidthKey] = useState('ipad');
   const [screen, setScreen] = useState('start');
@@ -41,8 +41,8 @@ export default function DesignPreview({ config, hoverTarget = null }) {
   const previewRef = useRef(null);
   const [scale, setScale] = useState(1);
 
-  // Le survol bascule l'écran automatiquement ; sortir du survol garde l'écran
-  // atteint (pas de retour en arrière — cf. plan design2.D).
+  // Chaque clic bascule l'écran automatiquement ; changer de ligne cliquée
+  // vers un autre écran re-bascule, mais rien ne revient en arrière tout seul.
   useEffect(() => {
     if (hoverTarget?.screen) setScreen(hoverTarget.screen);
   }, [hoverTarget?.screen]);
@@ -189,14 +189,38 @@ function NameScreen() {
 
 function RecordingScreen() {
   return (
-    <div className="dp-screen dp-center">
-      <p className="dp-muted">Question 2 sur 5</p>
-      <h2 className="dp-title dp-title--sm">Quel est ton meilleur souvenir avec eux ?</h2>
-      <div className="dp-video" data-color-target="surface-alt">
-        <span className="dp-rec" data-color-target="text-error">● REC</span>
-        <span className="dp-timer">0:12</span>
+    <div className="dp-screen dp-screen--column">
+      <div className="dp-center dp-center--grow">
+        <p className="dp-muted">Question 2 sur 5</p>
+        <h2 className="dp-title dp-title--sm">Quel est ton meilleur souvenir avec eux ?</h2>
+        <div className="dp-video" data-color-target="surface-alt">
+          <span className="dp-rec" data-color-target="text-error">● REC</span>
+          <span className="dp-timer">0:12</span>
+        </div>
+        <button className="dp-btn dp-btn--accent" data-color-target="primary">■ Stop</button>
       </div>
-      <button className="dp-btn dp-btn--accent" data-color-target="primary">■ Stop</button>
+      {/* Bandeau bas — reproduit QuestionNav.jsx (borne) : barre de remplissage
+          + dots + « Question X / N ». Répond aux mêmes tokens que le kiosque réel. */}
+      <div className="dp-nav" data-color-target="surface">
+        <div className="dp-nav__progress">
+          <div className="dp-nav__progress-fill" data-color-target="primary" style={{ width: '40%' }} />
+        </div>
+        <div className="dp-nav__row">
+          <div className="dp-nav__dots">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <span
+                key={i}
+                className={[
+                  'dp-nav__dot',
+                  i === 1 ? 'dp-nav__dot--current' : '',
+                  i === 0 ? 'dp-nav__dot--answered' : '',
+                ].filter(Boolean).join(' ')}
+              />
+            ))}
+          </div>
+          <span className="dp-nav__label">Question 2 / 5</span>
+        </div>
+      </div>
     </div>
   );
 }
