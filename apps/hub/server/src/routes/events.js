@@ -9,6 +9,7 @@ import {
 import {
   getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog, upsertEventUser,
   getUserByEmail, insertUser, createRegistrationToken, listUsers, getDesign,
+  setEventDesignRef, deleteEventDesignRef,
 } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { META_KEYS, applyEventConfig } from '../eventConfig.js';
@@ -35,6 +36,58 @@ const STATUS_FROZEN  = new Set(['live', 'closed', 'pushed', 'processed', 'waitin
 const eventDesignDir = (dataDir, eventId) => join(dataDir, 'events', eventId, 'design');
 
 /**
+ * Copie snapshot (§11.26) : matérialise la config + les fichiers d'un design
+ * dans le dossier d'un événement, puis écrit `event_meta.design`. Partagé par
+ * PUT /:eventId/design (application manuelle) et refreshPreviewEvents (design2,
+ * rafraîchissement automatique des events `preview` après édition du design
+ * source) — un seul endroit qui copie fichiers + config, pas de duplication.
+ *
+ * Ne touche PAS event_meta.design_source_id ni event_design_refs : c'est
+ * l'appelant qui décide s'il faut (re)poser la provenance ou non.
+ *
+ * @returns {{ ok: true }|{ ok: false, status: number, error: string }}
+ */
+export function materializeEventDesign(dataDir, eventId, design) {
+  const config = JSON.parse(design.config_json);
+  const check = validateDesign(config);
+  if (!check.ok) return { ok: false, status: 409, error: `Design invalide : ${check.error}` };
+
+  // Toutes les sources sont vérifiées AVANT de toucher au dossier de
+  // l'événement : sortir en erreur après un rmSync détruirait les images du
+  // design déjà appliqué, que event_meta référence encore.
+  const srcDir = join(dataDir, 'designs', design.id);
+  const toCopy = [];
+  for (const slot of DESIGN_ASSET_SLOTS) {
+    const filename = config.assets?.[slot];
+    if (!filename) continue;
+    const src = join(srcDir, filename);
+    if (!existsSync(src)) {
+      return { ok: false, status: 409, error: `Image manquante pour le design : ${slot}` };
+    }
+    toCopy.push({ src, filename });
+  }
+
+  // Le dossier est reconstruit : un asset d'un design précédemment appliqué
+  // ne doit pas y survivre.
+  const destDir = eventDesignDir(dataDir, eventId);
+  rmSync(destDir, { recursive: true, force: true });
+  mkdirSync(destDir, { recursive: true });
+  for (const { src, filename } of toCopy) {
+    copyFileSync(src, join(destDir, filename));
+  }
+
+  const edb = openEventDb(eventId, dataDir);
+  // `design` n'est PAS dans META_KEYS (§9bis « Sens unique Hub → Borne ») :
+  // applyEventConfig l'ignorerait. On écrit donc la clé directement — c'est
+  // le seul endroit qui a le droit de le faire.
+  edb.prepare(
+    'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+  ).run('design', JSON.stringify(config));
+
+  return { ok: true };
+}
+
+/**
  * Réapplique le design d'un snapshot de version lors d'un restore (§9bis).
  *
  * `design` n'est pas dans META_KEYS, donc applyEventConfig ne le touche pas :
@@ -44,14 +97,24 @@ const eventDesignDir = (dataDir, eventId) => join(dataDir, 'events', eventId, 'd
  * - snapshot sans design (ou invalide) → retire la clé et vide le dossier.
  *
  * Limite assumée : les fichiers eux-mêmes ne sont pas re-téléchargés depuis la
- * bibliothèque (le snapshot ne garde pas le design_id source). On restaure ce qui
- * est encore dans events/<id>/design/. Une image supprimée entre-temps donne un
- * design dégradé (config restaurée, image absente) plutôt qu'un échec — cohérent
- * avec le fait qu'un design appliqué est une COPIE autonome.
+ * bibliothèque. On restaure ce qui est encore dans events/<id>/design/. Une image
+ * supprimée entre-temps donne un design dégradé (config restaurée, image absente)
+ * plutôt qu'un échec — cohérent avec le fait qu'un design appliqué est une COPIE
+ * autonome.
+ *
+ * `design_source_id` (event_meta) est restauré tel quel depuis le snapshot — la
+ * provenance redevient celle de l'époque. `event_design_refs` (registre) N'EST
+ * PAS retouché ici : le mettre à jour demanderait de faire transiter `db` jusqu'à
+ * cette fonction (aujourd'hui appelée avec seulement `edb`), hors périmètre de
+ * design2.B. Conséquence assumée : après un restore, la ref peut pointer vers un
+ * design différent de `design_source_id` restauré — au pire un rafraîchissement
+ * de borne d'essai manqué ou mal ciblé, jamais une fuite de données ni une
+ * altération d'un événement non-preview.
  */
 export function restoreEventDesign(dataDir, eventId, edb, snapshot) {
   const destDir = eventDesignDir(dataDir, eventId);
   const raw = snapshot?.meta?.design ?? null;
+  const sourceId = snapshot?.meta?.design_source_id ?? null;
 
   let design = null;
   if (raw) {
@@ -63,6 +126,7 @@ export function restoreEventDesign(dataDir, eventId, edb, snapshot) {
 
   if (!design) {
     edb.prepare("DELETE FROM event_meta WHERE key = 'design'").run();
+    edb.prepare("DELETE FROM event_meta WHERE key = 'design_source_id'").run();
     rmSync(destDir, { recursive: true, force: true });
     return;
   }
@@ -70,6 +134,14 @@ export function restoreEventDesign(dataDir, eventId, edb, snapshot) {
   edb.prepare(
     'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
   ).run('design', JSON.stringify(design));
+
+  if (sourceId) {
+    edb.prepare(
+      'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+    ).run('design_source_id', sourceId);
+  } else {
+    edb.prepare("DELETE FROM event_meta WHERE key = 'design_source_id'").run();
+  }
 
   // Purge les images du dossier qui ne sont plus référencées par le design restauré.
   const referenced = new Set(
@@ -458,8 +530,10 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
   // ── PUT /api/events/:eventId/design — applique un design à l'événement ─────
   //
   // COPIE SNAPSHOT, JAMAIS RÉFÉRENCE (invariant §11.26) : on recopie la config et
-  // les fichiers du design dans l'événement. Aucun `design_id` n'est conservé —
-  // modifier ou supprimer le design source ensuite n'affecte plus cet événement.
+  // les fichiers du design dans l'événement. On garde en plus une TRACE DE
+  // PROVENANCE (event_meta.design_source_id + event_design_refs) — pas un lien
+  // vivant, juste de quoi retrouver cet événement s'il faut rafraîchir sa borne
+  // d'essai plus tard (design2, §9bis « Rafraîchissement de la borne d'essai »).
   router.put('/:eventId/design', requireUser, requireOwner, (req, res, next) => {
     try {
       const event = req.event;
@@ -482,41 +556,14 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
         || design.owner_id === req.user.sub;
       if (!readable) return res.status(403).json({ error: 'Accès interdit' });
 
-      const config = JSON.parse(design.config_json);
-      const check = validateDesign(config);
-      if (!check.ok) return res.status(409).json({ error: `Design invalide : ${check.error}` });
-
-      // Toutes les sources sont vérifiées AVANT de toucher au dossier de
-      // l'événement : sortir en 409 après un rmSync détruirait les images du
-      // design déjà appliqué, que event_meta référence encore.
-      const srcDir = join(dataDir, 'designs', design.id);
-      const toCopy = [];
-      for (const slot of DESIGN_ASSET_SLOTS) {
-        const filename = config.assets?.[slot];
-        if (!filename) continue;
-        const src = join(srcDir, filename);
-        if (!existsSync(src)) {
-          return res.status(409).json({ error: `Image manquante pour le design : ${slot}` });
-        }
-        toCopy.push({ src, filename });
-      }
-
-      // Le dossier est reconstruit : un asset d'un design précédemment appliqué
-      // ne doit pas y survivre.
-      const destDir = eventDesignDir(dataDir, event.id);
-      rmSync(destDir, { recursive: true, force: true });
-      mkdirSync(destDir, { recursive: true });
-      for (const { src, filename } of toCopy) {
-        copyFileSync(src, join(destDir, filename));
-      }
+      const result = materializeEventDesign(dataDir, event.id, design);
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
 
       const edb = openEventDb(event.id, dataDir);
-      // `design` n'est PAS dans META_KEYS (§9bis « Sens unique Hub → Borne ») :
-      // applyEventConfig l'ignorerait. On écrit donc la clé directement — c'est
-      // le seul endroit qui a le droit de le faire.
       edb.prepare(
         'INSERT INTO event_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
-      ).run('design', JSON.stringify(config));
+      ).run('design_source_id', design.id);
+      setEventDesignRef(db, { event_id: event.id, design_id: design.id });
 
       captureSnapshot(db, edb, { event_id: event.id, author: resolveAuthor(db, req.user) });
 
@@ -538,6 +585,8 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       const db = getDb();
       const edb = openEventDb(event.id, dataDir);
       edb.prepare('DELETE FROM event_meta WHERE key = ?').run('design');
+      edb.prepare('DELETE FROM event_meta WHERE key = ?').run('design_source_id');
+      deleteEventDesignRef(db, event.id);
 
       rmSync(eventDesignDir(dataDir, event.id), { recursive: true, force: true });
 

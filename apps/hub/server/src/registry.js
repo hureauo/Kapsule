@@ -128,6 +128,18 @@ export function openRegistry(dataDir) {
       author     TEXT,                           -- email du user, comme event_versions
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    -- Trace de provenance « cet événement vient du design X » (§9bis « Rafraîchissement
+    -- de la borne d'essai », design2). PAS un lien vivant : sert uniquement à retrouver
+    -- les événements 'preview' à rafraîchir quand un design source est édité — les
+    -- événements non-preview restent des copies figées (invariant §11.26).
+    -- RGPD : deux ids, aucune donnée invité.
+    CREATE TABLE IF NOT EXISTS event_design_refs (
+      event_id   TEXT PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+      design_id  TEXT NOT NULL,                  -- pas de FK : un design supprimé détache
+                                                  -- l'événement, il ne le casse pas
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   runMigrations(db);
@@ -698,6 +710,34 @@ export function listDesignVersions(db, design_id) {
 
 export function getDesignVersion(db, id) {
   return db.prepare('SELECT * FROM design_versions WHERE id = ?').get(id);
+}
+
+// ── event_design_refs ────────────────────────────────────────────────────────
+// Trace de provenance (§9bis « Rafraîchissement de la borne d'essai »), pas un
+// lien vivant. Sert à retrouver les événements 'preview' à rafraîchir.
+
+export function setEventDesignRef(db, { event_id, design_id }) {
+  return db.prepare(`
+    INSERT INTO event_design_refs (event_id, design_id) VALUES (?, ?)
+    ON CONFLICT(event_id) DO UPDATE SET design_id = excluded.design_id, updated_at = CURRENT_TIMESTAMP
+  `).run(event_id, design_id);
+}
+
+export function deleteEventDesignRef(db, event_id) {
+  return db.prepare('DELETE FROM event_design_refs WHERE event_id = ?').run(event_id);
+}
+
+// Événements issus d'un design donné, avec leur nom et statut — sert à la fois
+// à l'avertissement d'usage de l'éditeur (design2.C) et au rafraîchissement des
+// events 'preview' après une édition du design (design2.B).
+export function listEventsByDesignSource(db, designId) {
+  return db.prepare(`
+    SELECT e.id AS event_id, e.name, e.status
+    FROM event_design_refs r
+    INNER JOIN events e ON e.id = r.event_id
+    WHERE r.design_id = ?
+    ORDER BY e.name
+  `).all(designId);
 }
 
 // ── seed des templates ────────────────────────────────────────────────────────

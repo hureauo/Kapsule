@@ -6,8 +6,11 @@ import { join } from 'node:path';
 import supertest from 'supertest';
 import argon2 from 'argon2';
 import { createApp } from '../src/index.js';
-import { getDb, closeRegistry, insertUser, updateEvent } from '../src/registry.js';
+import {
+  getDb, closeRegistry, insertUser, updateEvent, insertBoxToken,
+} from '../src/registry.js';
 import { openEventDb, closeAllEventDbs } from '../src/eventStore.js';
+import { randomBytes, createHash } from 'node:crypto';
 
 // Application d'un design à un événement (§9bis) : copie snapshot, jamais référence.
 
@@ -84,11 +87,12 @@ describe('PUT /api/events/:eventId/design', () => {
     assert.ok(existsSync(join(dir, 'events', eventId, 'design', design.filename)));
   });
 
-  it('snapshot, pas référence : modifier le design source n\'affecte pas l\'événement', async () => {
+  it('snapshot, pas référence : modifier le design source n\'affecte pas un événement non-preview (§11.26)', async () => {
     const eventId = await createEvent();
     const design = await createDesignWithLogo();
 
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
+    updateEvent(getDb(), eventId, { status: 'ready' }); // hors preview : ne doit JAMAIS être rafraîchi (design2, §9bis)
     const before_ = JSON.parse(readMeta(eventId, 'design'));
 
     // On modifie le design dans la bibliothèque…
@@ -283,5 +287,111 @@ describe('sens unique Hub → Borne', () => {
     // 'design' n'est pas dans META_KEYS : applyEventConfig itère sur la whitelist,
     // donc la clé du payload est ignorée — le design appliqué reste intact.
     assert.equal(readMeta(eventId, 'design'), applied);
+  });
+});
+
+// ── design2 : provenance + rafraîchissement de la borne d'essai ──────────────
+
+describe('PUT /api/events/:eventId/design — provenance', () => {
+  it('écrit design_source_id et la ref registre event_design_refs', async () => {
+    const eventId = await createEvent();
+    const design = await createDesignWithLogo();
+
+    await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
+
+    assert.equal(readMeta(eventId, 'design_source_id'), design.id);
+    const ref = getDb().prepare('SELECT * FROM event_design_refs WHERE event_id = ?').get(eventId);
+    assert.equal(ref.design_id, design.id);
+  });
+
+  it('DELETE design event retire design_source_id et la ref', async () => {
+    const eventId = await createEvent();
+    const design = await createDesignWithLogo();
+    await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
+
+    const res = await request.delete(`/api/events/${eventId}/design`).set(auth(tokenAlice));
+    assert.equal(res.status, 200);
+
+    assert.equal(readMeta(eventId, 'design_source_id'), null);
+    const ref = getDb().prepare('SELECT * FROM event_design_refs WHERE event_id = ?').get(eventId);
+    assert.equal(ref, undefined);
+  });
+
+  it('supprimer l\'événement purge la ref (ON DELETE CASCADE)', async () => {
+    const eventName = 'Événement design à purger';
+    const eventId = await createEvent(eventName);
+    const design = await createDesignWithLogo();
+    await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
+
+    const del = await request.delete(`/api/events/${eventId}`).set(auth(tokenAlice)).send({ confirm: eventName });
+    assert.equal(del.status, 200);
+
+    const ref = getDb().prepare('SELECT * FROM event_design_refs WHERE event_id = ?').get(eventId);
+    assert.equal(ref, undefined);
+  });
+});
+
+describe('PUT /api/designs/:id — rafraîchissement de la borne d\'essai (design2)', () => {
+  it('éditer le design rafraîchit un événement preview mais PAS un événement ready — §11.26', async () => {
+    const previewEventId = await createEvent('Preview vivant');
+    const readyEventId = await createEvent('Ready figé');
+    const design = await createDesignWithLogo();
+
+    await request.put(`/api/events/${previewEventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
+    await request.put(`/api/events/${readyEventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
+    updateEvent(getDb(), readyEventId, { status: 'ready' });
+
+    const readyBefore = JSON.parse(readMeta(readyEventId, 'design'));
+
+    // Édite le design source (couleur bg).
+    const full = (await request.get(`/api/designs/${design.id}`).set(auth(tokenAlice))).body;
+    const res = await request.put(`/api/designs/${design.id}`).set(auth(tokenAlice))
+      .send({ config: { ...full.config, colors: { ...full.config.colors, bg: '#abcdef' } } });
+    assert.equal(res.status, 200);
+
+    // L'événement preview reflète la nouvelle couleur.
+    const previewAfter = JSON.parse(readMeta(previewEventId, 'design'));
+    assert.equal(previewAfter.colors.bg, '#abcdef');
+
+    // L'événement ready n'a PAS bougé (invariant §11.26 — copie figée).
+    const readyAfter = JSON.parse(readMeta(readyEventId, 'design'));
+    assert.deepEqual(readyAfter, readyBefore);
+    assert.notEqual(readyAfter.colors.bg, '#abcdef');
+  });
+
+  it('un événement preview détaché (design supprimé) n\'est plus rafraîchi', async () => {
+    const eventId = await createEvent();
+    const design = await createDesignWithLogo();
+    await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
+
+    await request.delete(`/api/designs/${design.id}`).set(auth(tokenAlice));
+
+    // La copie figée survit (déjà couvert par un autre test) ; ici on vérifie
+    // juste que la ref a disparu — rien à rafraîchir pour cet event désormais.
+    const ref = getDb().prepare('SELECT * FROM event_design_refs WHERE event_id = ?').get(eventId);
+    assert.equal(ref, undefined);
+  });
+});
+
+describe('design_source_id reste Hub-only (bundle de pull)', () => {
+  it('le bundle GET /api/sync/events/:id/bundle n\'expose jamais design_source_id', async () => {
+    const eventId = await createEvent('Preview bundle');
+    const design = await createDesignWithLogo();
+    await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
+    assert.ok(readMeta(eventId, 'design_source_id'), 'précondition : la trace de provenance existe côté Hub');
+
+    const raw = randomBytes(16).toString('hex');
+    insertBoxToken(getDb(), {
+      event_id: eventId,
+      token_hash: createHash('sha256').update(raw).digest('hex'),
+      token_clear: raw,
+      label: 'preview',
+      is_preview: 1,
+    });
+
+    const res = await request.get(`/api/sync/events/${eventId}/bundle`).set('X-Box-Token', raw);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.event.meta.design_source_id, undefined);
+    assert.ok(res.body.event.meta.design, 'la config du design copiée doit, elle, être présente');
   });
 });

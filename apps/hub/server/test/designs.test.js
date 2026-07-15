@@ -221,6 +221,48 @@ describe('GET /api/designs/:id', () => {
   });
 });
 
+// ── GET /api/designs/:id/usage ────────────────────────────────────────────────
+// Alimente l'avertissement d'usage de l'éditeur (design2.C).
+
+describe('GET /api/designs/:id/usage', () => {
+  async function createEvent(token, name = 'Événement usage') {
+    const res = await request.post('/api/events').set(auth(token)).send({ name });
+    assert.equal(res.status, 201);
+    return res.body.id;
+  }
+
+  it('vide pour un design jamais appliqué', async () => {
+    const design = await createDesign(tokenAlice, 'Design isolé');
+    const res = await request.get(`/api/designs/${design.id}/usage`).set(auth(tokenAlice));
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, []);
+  });
+
+  it('liste les événements issus du design, avec nom et statut', async () => {
+    const design = await createDesign(tokenAlice, 'Design utilisé');
+    const eventId = await createEvent(tokenAlice, 'Événement Alice');
+    await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
+
+    const res = await request.get(`/api/designs/${design.id}/usage`).set(auth(tokenAlice));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.length, 1);
+    assert.equal(res.body[0].event_id, eventId);
+    assert.equal(res.body[0].name, 'Événement Alice');
+    assert.equal(res.body[0].status, 'preview');
+  });
+
+  it('404 si le design est inconnu', async () => {
+    const res = await request.get('/api/designs/inexistant/usage').set(auth(tokenAlice));
+    assert.equal(res.status, 404);
+  });
+
+  it('403 sur le design privé d\'un autre client', async () => {
+    const secret = await createDesign(tokenCarol, 'Privé Carol usage');
+    const res = await request.get(`/api/designs/${secret.id}/usage`).set(auth(tokenBob));
+    assert.equal(res.status, 403);
+  });
+});
+
 // ── PUT /api/designs/:id ──────────────────────────────────────────────────────
 
 describe('PUT /api/designs/:id', () => {

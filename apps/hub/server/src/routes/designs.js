@@ -11,7 +11,10 @@ import {
   insertDesign, getDesign, listDesigns, updateDesign, deleteDesign,
   insertDesignVersion, listDesignVersions, getDesignVersion,
   defaultDesignConfig, getUserById,
+  listEventsByDesignSource, deleteEventDesignRef,
 } from '../registry.js';
+import { materializeEventDesign } from './events.js';
+import { triggerPreviewPull } from './previewGallery.js';
 
 // Images d'un design : raster uniquement, jamais de SVG (invariant §11.28 — un
 // SVG peut embarquer <script>/on*). L'extension est dérivée du mimetype, jamais
@@ -83,6 +86,26 @@ function authorEmail(db, user) {
   return getUserById(db, user.sub)?.email ?? null;
 }
 
+/**
+ * Borne d'essai vivante (design2, §9bis « Rafraîchissement de la borne d'essai ») :
+ * après une édition du design (config ou asset), re-matérialise la copie des
+ * événements EN STATUT `preview` qui en sont issus, puis déclenche leur pull.
+ * Les événements non-preview ne sont jamais touchés — l'invariant §11.26 tient :
+ * ce n'est pas une référence vivante, juste un rafraîchissement explicite et
+ * borné aux données jetables de la borne d'essai.
+ */
+function refreshPreviewEvents(db, dataDir, designId) {
+  const design = getDesign(db, designId);
+  if (!design) return; // design supprimé entre-temps : rien à rafraîchir
+  const refs = listEventsByDesignSource(db, designId);
+  for (const ref of refs) {
+    if (ref.status !== 'preview') continue;
+    const result = materializeEventDesign(dataDir, ref.event_id, design);
+    if (!result.ok) continue; // design dégradé (image manquante) : on laisse la copie précédente
+    triggerPreviewPull(ref.event_id);
+  }
+}
+
 // Monté sous /api/designs
 export function makeDesignsRouter(dataDir) {
   const router = Router();
@@ -130,6 +153,19 @@ export function makeDesignsRouter(dataDir) {
     res.json(withParsedConfig(design));
   });
 
+  // ── GET /api/designs/:id/usage ────────────────────────────────────────────
+  // Événements issus de ce design (§9bis) — alimente l'avertissement d'usage de
+  // l'éditeur : « seront mis à jour » (preview) vs « gardent leur version » (autres).
+  router.get('/:id/usage', requireUser, (req, res) => {
+    const design = loadDesign(req, res);
+    if (!design) return;
+    if (!canRead(design, req.user)) return res.status(403).json({ error: 'Accès interdit' });
+
+    const usage = listEventsByDesignSource(getDb(), design.id)
+      .map((r) => ({ event_id: r.event_id, name: r.name, status: r.status }));
+    res.json(usage);
+  });
+
   // ── PUT /api/designs/:id ──────────────────────────────────────────────────
   // Chaque sauvegarde insère une version du NOUVEL état (append-only).
   router.put('/:id', requireUser, (req, res, next) => {
@@ -167,11 +203,15 @@ export function makeDesignsRouter(dataDir) {
         author: authorEmail(db, req.user),
       });
 
+      if (config !== undefined) refreshPreviewEvents(db, dataDir, design.id);
+
       res.json(withParsedConfig(updated));
     } catch (err) { next(err); }
   });
 
   // ── DELETE /api/designs/:id ───────────────────────────────────────────────
+  // Détache les événements (retrait des event_design_refs) : leur copie figée
+  // subsiste, ils ne sont simplement plus rafraîchissables (§9bis).
   router.delete('/:id', requireUser, (req, res, next) => {
     try {
       const db = getDb();
@@ -183,6 +223,10 @@ export function makeDesignsRouter(dataDir) {
       // la table est non vide, donc il ne reviendrait jamais (hors périmètre v1).
       if (isSeedTemplate(design)) {
         return res.status(409).json({ error: 'Un template d\'origine ne peut pas être supprimé.' });
+      }
+
+      for (const ref of listEventsByDesignSource(db, design.id)) {
+        deleteEventDesignRef(db, ref.event_id);
       }
 
       deleteDesign(db, design.id); // design_versions suit par ON DELETE CASCADE
@@ -423,6 +467,8 @@ export function makeDesignsRouter(dataDir) {
         rmSync(join(designDir(dataDir, design.id), previous), { force: true });
       }
 
+      refreshPreviewEvents(db, dataDir, design.id);
+
       res.status(201).json({ filename: req.file.filename });
     } catch (err) {
       if (req.file) rmSync(req.file.path, { force: true });
@@ -450,6 +496,8 @@ export function makeDesignsRouter(dataDir) {
       insertDesignVersion(db, { design_id: design.id, snapshot: config_json, author: authorEmail(db, req.user) });
 
       rmSync(join(designDir(dataDir, design.id), filename), { force: true });
+
+      refreshPreviewEvents(db, dataDir, design.id);
 
       res.json({ ok: true });
     } catch (err) { next(err); }

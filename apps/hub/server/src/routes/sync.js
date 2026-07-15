@@ -225,6 +225,9 @@ export function makeSyncRouter(dataDir, opts = {}) {
 
       const metaRows = edb.prepare('SELECT key, value FROM event_meta').all();
       const meta = Object.fromEntries(metaRows.map(r => [r.key, r.value]));
+      // design_source_id est une notion Hub-only (bibliothèque de designs, §9bis) :
+      // la Borne ne doit jamais la recevoir, comme le rôle 'general' est exclu ci-dessous.
+      delete meta.design_source_id;
 
       // Bundle users : uniquement les rôles borne (admin_borne, tech_borne).
       // Le rôle 'general' n'est pas pullé — son auth est proxiée vers le Hub à chaque login (§11.24).

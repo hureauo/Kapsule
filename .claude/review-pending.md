@@ -1,40 +1,25 @@
 ---
 status: tests-pending
-base_commit: 63bdd261cdcd289ff63fe064b8fde5706b19edd4
-workspaces: []
+base_commit: 039c72e7aa50965655d1027038946db7f1eac1ac
+workspaces: [@kapsule/core, @kapsule/hub-server, @kapsule/hub-web]
 generated_at: 2026-07-15T00:00:00Z
 verdict: COMMIT OK
 ---
 
 # Relais de review → tests
 
-Workspaces à tester : aucun.
+Workspaces à tester :
+- @kapsule/core (raison : DESIGN_FONTS/FONT_PRESETS étendus, design.test.js mis à jour)
+- @kapsule/hub-server (raison : registry.js table event_design_refs + helpers, routes/events.js materializeEventDesign/provenance, routes/designs.js refreshPreviewEvents + GET /:id/usage, routes/sync.js exclusion bundle, tests designs/eventDesign)
+- @kapsule/hub-web (raison : DesignEditor.jsx, DesignPreview.jsx, DesignsPage.jsx, client.js, app.css — pas de test unitaire mais build/lint pertinent)
 
-Le sous-lot design2.A est purement documentaire (PROJET.md §5.3 / §9bis / §11.26 + ROADMAP.md,
-plus le plan non tracké `.claude/plans/design-v2-lien-vivant.md`). Aucun fichier source, aucun test,
-aucune infra Docker/nginx touchés. Rien à exécuter pour kapsule-tester.
-
-Points d'attention pour les tests (à confirmer lors de design2.B, quand le code arrivera) :
-- Vérifier que `event_meta.design_source_id` (nouvelle clé `event_meta`) n'est PAS transmis à la
-  borne par le bundle de pull ni traité par la borne : `design_source_id` est une notion Hub-only
-  (retrouver les previews à rafraîchir), la borne n'en a aucun usage.
-- Vérifier que la restauration de version (`restoreEventDesign`) et `captureSnapshot`/`readSnapshot`
-  se comportent correctement vis-à-vis de `design_source_id` : `readSnapshot` fait
-  `SELECT key,value FROM event_meta` sans filtre, donc la clé sera capturée dans `event_versions`.
-- Vérifier la cascade : suppression d'un événement vide bien `event_design_refs` ; suppression d'un
-  design détache (retire les refs) sans casser la copie figée des événements.
+Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
+- Rafraîchissement borne d'essai : seuls les events `status === 'preview'` doivent être re-matérialisés ; un event `ready` ne doit JAMAIS bouger (couvert par eventDesign.test.js « éditer le design rafraîchit un événement preview mais PAS un événement ready »).
+- `design_source_id` absent du bundle de pull (couvert par « design_source_id reste Hub-only »).
+- Purge de `event_design_refs` par ON DELETE CASCADE à la suppression d'un événement (couvert).
+- GET /api/designs/:id/usage : cas nominal + 404 + 403 (couvert par designs.test.js).
+- Core : le test « chaque valeur d'enum a son preset » doit rester vert avec les 8 polices.
 
 ## Corrections demandées
 
-> Cette section est lue par l'agent principal pour implémenter les corrections.
-> Chaque item est coché par l'agent principal une fois corrigé.
-
-- [ ] ⚠️ `PROJET.md:723-724` — la « Limite assumée » de `restoreEventDesign` affirme « le snapshot
-  ne conserve pas le `design_id` source ». Or `design2` introduit `event_meta.design_source_id`, et
-  `readSnapshot` capture tout `event_meta` sans filtre : le snapshot conservera désormais l'id
-  source. Ajuster cette phrase (ou préciser explicitement que `design_source_id` est exclu du
-  snapshot / non ré-appliqué à la restauration) pour lever la contradiction avant design2.B.
-- [ ] ⚠️ `PROJET.md:693-697` / §5.3 — la spec ne dit pas si `event_meta.design_source_id` doit être
-  exclu du bundle Hub→Borne. Comme `event_meta.design` circule par le bundle, préciser noir sur
-  blanc que `design_source_id` reste Hub-only (non transmis à la borne) pour que design2.B tranche
-  sans ambiguïté et éviter une fuite de notion registre côté borne.
+Aucune correction requise.
