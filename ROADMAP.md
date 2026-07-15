@@ -336,3 +336,30 @@ cas d'erreur), relu par `kapsule-reviewer` (`/verif-spec`), committé en `phase 
 **Terminé quand** : un client crée/édite/duplique/versionne ses designs sur le Hub, un superuser
 promeut un design en template, l'application à un événement copie un snapshot (config + assets)
 que la borne pull et rend fidèlement (tokens, variantes, images), sans affecter l'admin Borne.
+
+## Phase design2 — borne d'essai vivante, avertissement d'usage, survol, polices
+
+Voir PROJET.md §9bis (sous-section « Rafraîchissement de la borne d'essai » : trace de provenance
+`design_source_id` + table `event_design_refs`) et l'invariant §11.26 **reformulé mais conservé**
+(un design appliqué à un événement reste une copie figée ; seuls les événements en statut `preview`
+sont rafraîchis quand le design source est édité). Plan : `.claude/plans/design-v2-lien-vivant.md`.
+
+Décisions actées : la borne d'essai des événements `preview` se met à jour à l'édition d'un design
+(via `triggerPreviewPull`) ; avertissement informatif (non bloquant) listant les événements qui
+utilisent le design ; survol d'une couleur → aperçu bascule sur l'écran pertinent + pulse ; plus de
+polices (stacks système, pas d'upload). Hors périmètre : référence vivante permanente, figeage au
+pull, rafraîchissement des événements non-`preview`, upload de polices, édition de design côté borne.
+
+Mêmes règles : un sous-lot backend n'est terminé que **testé** (nominal + cas d'erreur), relu par
+`kapsule-reviewer` (`/verif-spec`), committé en `phase design2.X: …`.
+
+- [x] design2.A : spec (PROJET.md §9bis provenance + §5.3 `event_design_refs` + §11.26, cette section)
+- [ ] design2.B : registry `event_design_refs` + provenance à l'application + rafraîchissement des previews, tests
+- [ ] design2.C : avertissement d'usage à l'édition (`GET /api/designs/:id/usage` + bandeau éditeur)
+- [ ] design2.D : highlight au survol d'une couleur (bascule d'écran + pulse dans l'aperçu)
+- [ ] design2.E : plus de polices (stacks système)
+- [ ] 🧑 design2.F : vérif borne d'essai réelle (édition design → preview à jour) + iPad (nouvelles polices)
+
+**Terminé quand** : éditer un design met à jour la borne d'essai des événements `preview` qui
+l'utilisent sans re-cliquer « Appliquer » ; un événement `ready`+ garde sa copie figée ; l'éditeur
+prévient de l'usage, met en avant les couleurs au survol, et propose plus de polices.

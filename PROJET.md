@@ -397,9 +397,19 @@ sync_log (
   detail TEXT,                                 -- JSON libre
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+event_design_refs (                            -- trace de provenance « cet événement vient du design X »
+  event_id  TEXT PRIMARY KEY                   -- un événement ↔ au plus un design source
+            REFERENCES events(id) ON DELETE CASCADE,
+  design_id TEXT NOT NULL,                      -- id du design de la bibliothèque (pas de FK : un design
+                                                -- supprimé détache l'événement, il ne le casse pas)
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);                                             -- RGPD : deux ids, AUCUNE donnée invité. Sert à retrouver
+                                               -- les événements 'preview' à rafraîchir quand un design est
+                                               -- édité (§9bis « Rafraîchissement de la borne d'essai »).
 ```
 
-**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` ne stocke que des hash ; `box_tokens` stocke à la fois le hash (auth) et le token en clair (consultation admin, cf. §11.13). Jamais de donnée invité dans le registre. La suppression d'un événement (`DELETE /api/events/:id`) est **totale** : conteneur preview déprovisionné, `rm -rf events/<id>`, puis suppression de la ligne `events` du registre. Le `ON DELETE CASCADE` (`box_tokens`, `event_users`, `event_versions`) retire au passage tout ce qui dépend de l'événement ; `jobs` (sans FK) est vidé explicitement. Seule une ligne `sync_log` action `delete` subsiste comme trace d'audit — elle ne contient aucune donnée invité (juste l'id et le nom de l'événement).
+**RGPD** : aucun nom d'invité, aucune vidéo, aucun contenu dans le registre — uniquement des comptes clients et des métadonnées d'orchestration. `registration_tokens` ne stocke que des hash ; `box_tokens` stocke à la fois le hash (auth) et le token en clair (consultation admin, cf. §11.13). Jamais de donnée invité dans le registre. La suppression d'un événement (`DELETE /api/events/:id`) est **totale** : conteneur preview déprovisionné, `rm -rf events/<id>`, puis suppression de la ligne `events` du registre. Le `ON DELETE CASCADE` (`box_tokens`, `event_users`, `event_versions`, `event_design_refs`) retire au passage tout ce qui dépend de l'événement ; `jobs` (sans FK) est vidé explicitement. Seule une ligne `sync_log` action `delete` subsiste comme trace d'audit — elle ne contient aucune donnée invité (juste l'id et le nom de l'événement).
 
 ### 5.4 Registre de la Borne — `registry.sqlite`
 
@@ -668,7 +678,37 @@ et ses fichiers assets (dans `events/<id>/design/`) au moment de l'application. 
 source (bibliothèque) et l'événement n'ont ensuite plus aucun lien : modifier ou supprimer le
 design d'origine n'affecte jamais un événement auquel il a déjà été appliqué. C'est le même
 principe que la configuration existante (questions, `event_meta`) transférée par le bundle de
-pull — voir §7 (`GET /api/sync/events/:id/bundle`).
+pull — voir §7 (`GET /api/sync/events/:id/bundle`). **Cet invariant (§11.26) tient sans
+exception** : un événement `ready`/`loaded`/`live`/… garde sa copie figée.
+
+### Rafraîchissement de la borne d'essai (événements en preview)
+
+Le principe copie-figée ci-dessus est parfait le jour J, mais gênant *pendant la configuration* :
+le client règle son design dans la bibliothèque et veut voir sa **borne d'essai** se mettre à jour
+sans devoir re-cliquer « Appliquer » à chaque retouche. On rafraîchit donc — **uniquement pour les
+événements en statut `preview`** (données jetables, borne d'essai) — leur copie de design quand le
+design source change. Les événements non-`preview` ne sont jamais touchés : **§11.26 reste vrai**.
+
+Mécanisme, sans introduire de référence vivante (la copie reste autonome) :
+- À l'application (`PUT /api/events/:eventId/design`), on écrit **en plus** une *trace de
+  provenance* : `event_meta.design_source_id` (l'id du design source) et une ligne dans la table
+  registre `event_design_refs (event_id, design_id)`. Ce n'est pas un lien vivant — juste
+  l'information « cette copie vient du design X », qui permet de retrouver les événements concernés
+  sans scanner tous les `events/<id>/db.sqlite`. RGPD : deux ids, aucune donnée invité.
+- Après une édition de design (`PUT /api/designs/:id` ou une modification d'asset), le Hub liste
+  via `event_design_refs` les événements **en `preview`** issus de ce design, **re-matérialise**
+  leur `event_meta.design` (config + fichiers copiés à neuf depuis la bibliothèque) et déclenche
+  `triggerPreviewPull` — la borne d'essai re-tire et s'actualise. Les événements d'un autre statut
+  sont ignorés.
+- Supprimer un design (`DELETE /api/designs/:id`) **détache** les événements (retrait des lignes
+  `event_design_refs`) : leur copie figée subsiste, ils ne sont simplement plus rafraîchissables.
+- La table `event_design_refs` est purgée à la suppression d'un événement (`ON DELETE CASCADE`).
+
+**`design_source_id` reste Hub-only.** C'est une notion de bibliothèque (le registre Hub), sans
+usage pour la borne, qui ne connaît que sa copie `event_meta.design`. Le constructeur du bundle
+(`GET /api/sync/events/:id/bundle`, §7) doit donc **exclure `design_source_id`** des `meta`
+transmises — comme il exclut déjà le rôle `general` (§11.24). Ne jamais le laisser fuiter dans la
+BD événement de la borne.
 
 **Sens unique Hub → Borne.** Le design ne circule que par le bundle de pull (Hub → Borne) ; il
 ne doit **jamais** remonter par `POST /api/sync/events/:id/config` (le flux `push-config`,
@@ -687,8 +727,10 @@ n'est pas), donc restaurer ne rétablirait pas le design du snapshot. `restoreEv
 (`routes/events.js`, appelée par `routes/versions.js`) comble ce trou : elle réécrit
 `event_meta.design` depuis le snapshot (ou retire la clé si le snapshot n'en avait pas) et purge
 les images orphelines du dossier de l'événement. **Limite assumée** : les fichiers images ne sont
-pas re-téléchargés depuis la bibliothèque (le snapshot ne conserve pas le `design_id` source) — on
-restaure ce qui est encore dans `events/<id>/design/`. Une image supprimée entre-temps donne un
+pas re-téléchargés depuis la bibliothèque — même si le snapshot conserve désormais
+`design_source_id` (design2), une restauration doit rétablir la *copie de l'époque*, pas la version
+actuelle (potentiellement modifiée ou supprimée) du design source. On restaure donc ce qui est
+encore dans `events/<id>/design/`. Une image supprimée entre-temps donne un
 design *dégradé* (config restaurée, image absente), jamais un échec — cohérent avec le fait qu'un
 design appliqué est une **copie autonome**.
 
@@ -837,7 +879,7 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 23. **`event_users` Borne** : les comptes pullés dans `event_users` de la BD événement (`events/<id>/db.sqlite`) ne contiennent que `email`, `password_hash`, `roles` — **RGPD : pas de nom ni d'autre PII** (le nom reste sur le Hub). Ces données sont **écrasées à chaque pull** (DELETE+INSERT en transaction).
 24. **Preview requiresLogin (rôle `general`)** : si le bundle indique `requiresLogin: true` (au moins un user `general` assigné côté Hub), la borne stocke `requires_login=true` dans `event_meta` au pull. Le kiosque de la borne d'essai doit alors exiger un login avant d'afficher le parcours invité. Le login est **proxié vers le Hub via un seul appel** : `POST /api/preview/login` `{ email, password }` sur la borne → la borne appelle `POST /api/sync/event/login` du Hub (protégé par `X-Box-Token`). Le Hub vérifie les credentials **ET** que l'utilisateur est assigné à CET événement précis avec le rôle `general` — il répond `200 { ok: true }` / `401` / `403`. En cas de succès, la borne émet un JWT local `{ email, roles: ['general'], event_id }` (8 h). Ce JWT est stocké en `sessionStorage` (durée de session navigateur uniquement) et envoyé en Bearer à `POST /api/sessions`. **Le rôle `general` n'est jamais pullé dans le bundle ni stocké dans `event_users` borne** — la vérification de l'assignation se fait entièrement côté Hub à chaque login (la borne preview est toujours connectée).
 25. **Transitions d'état `preview`** : un token `is_preview=1` ne peut puller que si le statut Hub est `preview`. Un token réel (`is_preview=0`) ne peut puller que si le statut est `ready` ou `loaded`. `requireBox` doit vérifier cette cohérence et retourner 403 si le type de token ne correspond pas au statut attendu.
-26. **Design appliqué = snapshot copié, jamais référencé** (§9bis) : `PUT /api/events/:id/design` copie la config JSON et les fichiers assets du design vers `event_meta.design` et `events/<id>/design/` au moment de l'application. Modifier ou supprimer le design source ensuite n'affecte jamais l'événement — aucune référence (`design_id`) n'est conservée côté événement au-delà de l'action d'application.
+26. **Design appliqué = snapshot copié** (§9bis) : `PUT /api/events/:id/design` copie la config JSON et les fichiers assets du design vers `event_meta.design` et `events/<id>/design/` au moment de l'application. La copie est **autonome** : le rendu d'un événement ne dépend jamais, à la lecture (bundle, kiosque), du design source. Une *trace de provenance* (`event_meta.design_source_id` + table registre `event_design_refs`) est conservée, mais ce n'est **pas** une référence vivante — elle sert uniquement à rafraîchir la copie des événements **en statut `preview`** quand le design source est édité (borne d'essai, §9bis « Rafraîchissement de la borne d'essai »). Un événement de tout autre statut (`ready`+) n'est **jamais** modifié par une édition ou une suppression du design source.
 27. **Assets de design vérifiés par checksum au pull** (§9bis) : le bundle expose `design_assets: [{filename, size, checksum}]` ; la Borne calcule le sha256 de chaque fichier téléchargé et compare — **un mismatch est un échec de pull explicite**, jamais un fichier silencieusement corrompu.
 28. **Jamais de SVG ni de valeur CSS libre dans un design** (§9bis) : `validateDesign()` n'accepte que des couleurs hex strictes, des enums fermées (`radius`, `font`, `layouts`) et des noms de fichiers `assets` au format UUID+extension raster (`png`/`jpg`/`webp`) — toute autre valeur est un design invalide, y compris `url(...)`, `expression(...)` ou tout SVG (vecteur = risque XSS via balises `<script>`/`on*` embarquées).
 
