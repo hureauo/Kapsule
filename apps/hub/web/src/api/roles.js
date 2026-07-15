@@ -9,3 +9,7 @@ export function decodeJwtPayload(token) {
 export function getRole(token) {
   return decodeJwtPayload(token)?.role ?? null;
 }
+
+export function getUserId(token) {
+  return decodeJwtPayload(token)?.sub ?? null;
+}

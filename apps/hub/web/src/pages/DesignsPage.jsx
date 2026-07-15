@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, clearToken, getRole } from '../api/client.js';
+import { api, clearToken, getRole, getUserId } from '../api/client.js';
 import { formatSqlDate } from '../utils/format.js';
 import DesignEditor from '../components/designs/DesignEditor.jsx';
 import VersionHistory from '../components/designs/VersionHistory.jsx';
@@ -16,6 +16,7 @@ export default function DesignsPage() {
   const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
   const isSuperuser = getRole() === 'superuser';
+  const userId = getUserId();
 
   const load = useCallback(async () => {
     try {
@@ -128,6 +129,7 @@ export default function DesignsPage() {
             loading={loading}
             creating={creating}
             isSuperuser={isSuperuser}
+            userId={userId}
             onSelect={setSelectedId}
             onCreate={handleCreate}
             onRename={handleRename}
@@ -145,19 +147,22 @@ export default function DesignsPage() {
 // ── Vue liste ────────────────────────────────────────────────────────────────
 
 function DesignList({
-  designs, loading, creating, isSuperuser,
+  designs, loading, creating, isSuperuser, userId,
   onSelect, onCreate, onRename, onDuplicate, onDelete, onPromote, onDemote,
 }) {
   if (loading) return <p className="text--muted">Chargement…</p>;
 
   const templates = designs.filter((d) => d.is_template);
-  const mine = designs.filter((d) => !d.is_template && !isSuperuser);
+  // Un superuser a aussi ses propres designs (ex. avant de les promouvoir en
+  // template) : « Mes designs » compare sur owner_id, pas sur le rôle.
+  const mine = designs.filter((d) => !d.is_template && d.owner_id === userId);
 
-  // Vue superuser : tous les designs clients, groupés par propriétaire.
+  // Vue superuser : les designs des AUTRES clients, groupés par propriétaire
+  // (les siens sont déjà dans « Mes designs » ci-dessus).
   const byOwner = new Map();
   if (isSuperuser) {
     for (const d of designs) {
-      if (d.is_template) continue;
+      if (d.is_template || d.owner_id === userId) continue;
       const key = d.owner_email ?? 'Sans propriétaire';
       if (!byOwner.has(key)) byOwner.set(key, []);
       byOwner.get(key).push(d);
@@ -173,24 +178,22 @@ function DesignList({
         </button>
       </div>
 
-      {!isSuperuser && (
-        <section className="panel-section">
-          <h3 className="panel-section__title">Mes designs</h3>
-          {mine.length === 0 ? (
-            <p className="text--muted">Aucun design pour l'instant. Dupliquez un template pour démarrer.</p>
-          ) : (
-            <div className="designs-grid">
-              {mine.map((d) => (
-                <DesignCard
-                  key={d.id} design={d} isSuperuser={isSuperuser}
-                  onSelect={onSelect} onRename={onRename} onDuplicate={onDuplicate}
-                  onDelete={onDelete} onPromote={onPromote} onDemote={onDemote}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+      <section className="panel-section">
+        <h3 className="panel-section__title">Mes designs</h3>
+        {mine.length === 0 ? (
+          <p className="text--muted">Aucun design pour l'instant. Dupliquez un template pour démarrer.</p>
+        ) : (
+          <div className="designs-grid">
+            {mine.map((d) => (
+              <DesignCard
+                key={d.id} design={d} isSuperuser={isSuperuser}
+                onSelect={onSelect} onRename={onRename} onDuplicate={onDuplicate}
+                onDelete={onDelete} onPromote={onPromote} onDemote={onDemote}
+              />
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className="panel-section">
         <h3 className="panel-section__title">Templates</h3>
@@ -211,7 +214,7 @@ function DesignList({
 
       {isSuperuser && (
         <section className="panel-section">
-          <h3 className="panel-section__title">Tous les designs</h3>
+          <h3 className="panel-section__title">Designs des clients</h3>
           {byOwner.size === 0 ? (
             <p className="text--muted">Aucun design client.</p>
           ) : (

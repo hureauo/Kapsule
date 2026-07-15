@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { getRole, decodeJwtPayload } from '../src/api/roles.js';
+import { getRole, getUserId, decodeJwtPayload } from '../src/api/roles.js';
 
 // Fabrique un JWT minimal sans signature (header.payload.fakesig)
 function makeToken(payload) {
@@ -39,5 +39,20 @@ describe('getRole', () => {
   test('retourne null sur token null/invalide', () => {
     assert.equal(getRole(null), null);
     assert.equal(getRole('xxx'), null);
+  });
+});
+
+describe('getUserId', () => {
+  test('extrait sub', () => {
+    assert.equal(getUserId(makeToken({ sub: 42, role: 'superuser' })), 42);
+  });
+
+  test('retourne null si pas de sub', () => {
+    assert.equal(getUserId(makeToken({ role: 'client' })), null);
+  });
+
+  test('retourne null sur token null/invalide', () => {
+    assert.equal(getUserId(null), null);
+    assert.equal(getUserId('xxx'), null);
   });
 });
