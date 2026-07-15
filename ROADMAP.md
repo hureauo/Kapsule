@@ -354,7 +354,7 @@ Mêmes règles : un sous-lot backend n'est terminé que **testé** (nominal + ca
 `kapsule-reviewer` (`/verif-spec`), committé en `phase design2.X: …`.
 
 - [x] design2.A : spec (PROJET.md §9bis provenance + §5.3 `event_design_refs` + §11.26, cette section)
-- [ ] design2.B : registry `event_design_refs` + provenance à l'application + rafraîchissement des previews, tests
+- [x] design2.B : registry `event_design_refs` + provenance à l'application + rafraîchissement des previews, tests
 - [ ] design2.C : avertissement d'usage à l'édition (`GET /api/designs/:id/usage` + bandeau éditeur)
 - [ ] design2.D : highlight au survol d'une couleur (bascule d'écran + pulse dans l'aperçu)
 - [ ] design2.E : plus de polices (stacks système)
