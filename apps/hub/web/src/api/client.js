@@ -88,6 +88,7 @@ export const api = {
   getDesign: (id) => apiFetch(`/designs/${id}`),
   updateDesign: (id, fields) => apiFetch(`/designs/${id}`, { method: 'PUT', body: fields }),
   deleteDesign: (id) => apiFetch(`/designs/${id}`, { method: 'DELETE' }),
+  designUsage: (id) => apiFetch(`/designs/${id}/usage`),
   duplicateDesign: (id) => apiFetch(`/designs/${id}/duplicate`, { method: 'POST' }),
   promoteDesign: (id) => apiFetch(`/designs/${id}/promote`, { method: 'POST' }),
   demoteDesign: (id) => apiFetch(`/designs/${id}/demote`, { method: 'POST' }),

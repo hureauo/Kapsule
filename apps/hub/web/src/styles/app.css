@@ -630,6 +630,24 @@ button { cursor: pointer; font: inherit; }
   z-index: 1;
 }
 
+/* Avertissement d'usage (design2.C) : informatif, non bloquant. */
+.designs-usage-banner {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--surface-alt, var(--surface));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+.designs-usage-banner p { margin: 0; }
+.designs-usage-banner__list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-muted);
+}
+
 .designs-fieldset {
   border: 1px solid var(--border);
   border-radius: 8px;

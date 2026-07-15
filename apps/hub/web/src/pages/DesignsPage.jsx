@@ -120,6 +120,7 @@ export default function DesignsPage() {
             onBack={() => setSelectedId(null)}
             onChanged={load}
             onError={setError}
+            onDuplicate={() => handleDuplicate(selected)}
           />
         ) : (
           <DesignList
@@ -289,7 +290,7 @@ function DesignSwatches({ config }) {
 
 // ── Vue détail ───────────────────────────────────────────────────────────────
 
-function DesignDetail({ design, readOnly, onBack, onChanged, onError }) {
+function DesignDetail({ design, readOnly, onBack, onChanged, onError, onDuplicate }) {
   return (
     <>
       <div className="section-header">
@@ -308,7 +309,7 @@ function DesignDetail({ design, readOnly, onBack, onChanged, onError }) {
 
       <div className="designs-detail">
         <section className="panel-section designs-detail__editor">
-          <DesignEditor design={design} readOnly={readOnly} onSaved={onChanged} onError={onError} />
+          <DesignEditor design={design} readOnly={readOnly} onSaved={onChanged} onError={onError} onDuplicate={onDuplicate} />
         </section>
 
         <section className="panel-section designs-detail__side">
