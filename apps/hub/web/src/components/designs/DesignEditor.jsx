@@ -31,8 +31,43 @@ const COLOR_LABELS = {
   'btn-secondary-hover': 'Bouton secondaire — survol',
 };
 
+// Couplage maquette (design2.D) : quel écran de DesignPreview afficher et quel
+// élément faire pulser au survol d'une ligne de couleur. Documenté ici car
+// DesignPreview (data-color-target) et cette table doivent rester synchrones —
+// un couple {screen, key} sans data-color-target correspondant ne pulsera
+// simplement rien (dégradation silencieuse, pas une erreur).
+const COLOR_TARGET = {
+  bg: { screen: 'start', key: 'bg' },
+  surface: { screen: 'name', key: 'surface' },
+  'surface-alt': { screen: 'recording', key: 'surface-alt' },
+  text: { screen: 'start', key: 'text' },
+  'text-muted': { screen: 'start', key: 'text-muted' },
+  'text-error': { screen: 'recording', key: 'text-error' },
+  primary: { screen: 'recording', key: 'primary' },
+  'primary-soft': { screen: 'recording', key: 'primary' },
+  'primary-tint': { screen: 'recording', key: 'primary' },
+  accent: { screen: 'start', key: 'accent' },
+  'accent-hover': { screen: 'name', key: 'accent-hover' },
+  'accent-soft': { screen: 'start', key: 'accent' },
+  'accent-tint': { screen: 'start', key: 'accent' },
+  'input-bg': { screen: 'name', key: 'input-bg' },
+  'input-border': { screen: 'name', key: 'input-border' },
+  'input-border-focus': { screen: 'name', key: 'input-border' },
+  'btn-secondary-bg': { screen: 'name', key: 'btn-secondary-bg' },
+  'btn-secondary-hover': { screen: 'name', key: 'btn-secondary-bg' },
+};
+
 const RADIUS_LABELS = { sharp: 'Anguleux', soft: 'Doux', round: 'Très arrondi' };
-const FONT_LABELS = { sans: 'Sans serif', serif: 'Serif', rounded: 'Arrondie', mono: 'Monospace' };
+const FONT_LABELS = {
+  sans: 'Sans serif',
+  serif: 'Serif',
+  rounded: 'Arrondie',
+  mono: 'Monospace',
+  humanist: 'Humaniste',
+  grotesk: 'Grotesque',
+  slab: 'Slab serif',
+  elegant: 'Élégante',
+};
 const LAYOUT_LABELS = {
   centered: 'Centré',
   cover: 'Image plein écran',
@@ -43,11 +78,24 @@ const LAYOUT_LABELS = {
 // 6 premiers hex, et on laisse le champ texte pour saisir un #rrggbbaa complet.
 const toPickerValue = (hex) => (typeof hex === 'string' ? hex.slice(0, 7) : '#000000');
 
-export default function DesignEditor({ design, readOnly, onSaved, onError }) {
+const STATUS_LABELS = {
+  preview: 'préparation',
+  ready: 'prêt',
+  loaded: 'chargé',
+  live: 'en direct',
+  closed: 'clos',
+  pushed: 'transféré',
+  processed: 'traité',
+  waiting: 'en attente',
+};
+
+export default function DesignEditor({ design, readOnly, onSaved, onError, onDuplicate }) {
   const [config, setConfig] = useState(design.config);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [invalid, setInvalid] = useState('');
+  const [usage, setUsage] = useState([]);
+  const [hoverColorKey, setHoverColorKey] = useState(null);
 
   // Changer de design sélectionné réinitialise le formulaire.
   useEffect(() => {
@@ -55,6 +103,16 @@ export default function DesignEditor({ design, readOnly, onSaved, onError }) {
     setDirty(false);
     setInvalid('');
   }, [design.id, design.config]);
+
+  // Avertissement d'usage (design2.C, §9bis) : informatif, non bloquant — pas
+  // d'erreur affichée si l'appel échoue, ce n'est qu'un bandeau d'aide.
+  useEffect(() => {
+    let cancelled = false;
+    api.designUsage(design.id)
+      .then((rows) => { if (!cancelled) setUsage(rows); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [design.id]);
 
   function update(patch) {
     const next = { ...config, ...patch };
@@ -86,9 +144,38 @@ export default function DesignEditor({ design, readOnly, onSaved, onError }) {
     }
   }
 
+  const previewCount = usage.filter((u) => u.status === 'preview').length;
+  const otherCount = usage.length - previewCount;
+
   return (
     <div className="designs-editor">
       <div className="designs-editor__form">
+        {usage.length > 0 && (
+          <div className="designs-usage-banner">
+            <p>
+              Utilisé sur {usage.length} événement{usage.length > 1 ? 's' : ''}.{' '}
+              {previewCount > 0 && (
+                <>Les événements en préparation ({previewCount}) seront mis à jour automatiquement. </>
+              )}
+              {otherCount > 0 && (
+                <>Les autres ({otherCount}) gardent leur version actuelle (copie figée).</>
+              )}
+            </p>
+            <ul className="designs-usage-banner__list">
+              {usage.map((u) => (
+                <li key={u.event_id}>
+                  {u.name} — <span className="text--muted">{STATUS_LABELS[u.status] ?? u.status}</span>
+                </li>
+              ))}
+            </ul>
+            {onDuplicate && (
+              <button className="btn btn--sm btn--ghost" onClick={onDuplicate}>
+                Dupliquer ce design
+              </button>
+            )}
+          </div>
+        )}
+
         {!readOnly && (
           <div className="designs-editor__actions">
             <button
@@ -106,7 +193,12 @@ export default function DesignEditor({ design, readOnly, onSaved, onError }) {
         <fieldset className="designs-fieldset" disabled={readOnly}>
           <legend className="designs-fieldset__legend">Couleurs</legend>
           {DESIGN_COLOR_KEYS.map((key) => (
-            <div className="designs-color-row" key={key}>
+            <div
+              className="designs-color-row"
+              key={key}
+              onMouseEnter={() => setHoverColorKey(key)}
+              onMouseLeave={() => setHoverColorKey((k) => (k === key ? null : k))}
+            >
               <label className="designs-color-row__label" htmlFor={`color-${key}`}>
                 {COLOR_LABELS[key]}
               </label>
@@ -205,7 +297,7 @@ export default function DesignEditor({ design, readOnly, onSaved, onError }) {
       </div>
 
       <div className="designs-editor__preview">
-        <DesignPreview config={config} />
+        <DesignPreview config={config} hoverTarget={hoverColorKey ? COLOR_TARGET[hoverColorKey] : null} />
       </div>
     </div>
   );

@@ -721,6 +721,21 @@ button { cursor: pointer; font: inherit; }
   font-family: var(--font-body, system-ui, sans-serif);
   aspect-ratio: 4 / 3;
   overflow: hidden;
+  position: relative;
+}
+
+/* Highlight au survol d'une couleur (design2.D) : outline flashy en boucle tant
+   que la ligne couleur correspondante est survolée dans l'éditeur. Magenta fixe
+   (pas un token du design édité) pour rester visible quelle que soit la palette. */
+@keyframes dp-pulse {
+  0%, 100% { outline-color: transparent; }
+  50% { outline-color: #ff00c8; }
+}
+.dp-pulse {
+  outline: 3px solid transparent;
+  outline-offset: 2px;
+  border-radius: var(--radius, 4px);
+  animation: dp-pulse 1s ease-in-out infinite;
 }
 
 .dp-screen {

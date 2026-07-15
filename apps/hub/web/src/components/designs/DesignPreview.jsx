@@ -6,7 +6,7 @@
 // Les presets (rayons, polices) viennent de @kapsule/core — même source que le
 // runtime kiosque, donc pas de dérive possible sur CES valeurs-là.
 
-import React, { useState, useRef, useLayoutEffect } from 'react';
+import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
 import { DESIGN_COLOR_KEYS, RADIUS_PRESETS, FONT_PRESETS } from '@kapsule/core';
 
 const WIDTHS = [
@@ -30,14 +30,38 @@ function cssVarsFor(config) {
   return vars;
 }
 
-export default function DesignPreview({ config }) {
+// hoverTarget vient de COLOR_TARGET (DesignEditor, design2.D) : { screen, key }.
+// Le survol d'une ligne couleur bascule l'aperçu sur l'écran concerné (la
+// bascule reste au départ du survol, cf. §9bis « survol ») et fait pulser
+// l'élément marqué data-color-target={key} (animation CSS .dp-pulse).
+export default function DesignPreview({ config, hoverTarget = null }) {
   const [widthKey, setWidthKey] = useState('ipad');
   const [screen, setScreen] = useState('start');
   const viewportRef = useRef(null);
+  const previewRef = useRef(null);
   const [scale, setScale] = useState(1);
+
+  // Le survol bascule l'écran automatiquement ; sortir du survol garde l'écran
+  // atteint (pas de retour en arrière — cf. plan design2.D).
+  useEffect(() => {
+    if (hoverTarget?.screen) setScreen(hoverTarget.screen);
+  }, [hoverTarget?.screen]);
 
   const target = WIDTHS.find((w) => w.key === widthKey) ?? WIDTHS[1];
   const vars = cssVarsFor(config);
+  const pulseKey = hoverTarget?.screen === screen ? hoverTarget.key : null;
+
+  // Pose/retire la classe de pulsation sur l'élément marqué data-color-target
+  // dans LA MAQUETTE COURANTE (pas de re-render de chaque écran juste pour ça).
+  useEffect(() => {
+    const root = previewRef.current;
+    if (!root) return undefined;
+    if (!pulseKey) return undefined;
+    const el = root.querySelector(`[data-color-target="${pulseKey}"]`);
+    if (!el) return undefined;
+    el.classList.add('dp-pulse');
+    return () => el.classList.remove('dp-pulse');
+  }, [pulseKey, screen, config]);
 
   // Le facteur de réduction est MESURÉ sur le conteneur (ResizeObserver) plutôt
   // que deviné en CSS : la colonne de l'aperçu change de largeur avec la fenêtre
@@ -97,7 +121,7 @@ export default function DesignPreview({ config }) {
           className="designs-preview__scaler"
           style={{ width: target.width, transform: `scale(${scale})` }}
         >
-          <div className="design-preview" style={vars}>
+          <div className="design-preview" style={vars} ref={previewRef}>
             <Screen screen={screen} config={config} />
           </div>
         </div>
@@ -117,26 +141,26 @@ function StartScreen({ config }) {
   const layout = config?.layouts?.start ?? 'centered';
 
   return (
-    <div className={`dp-screen dp-start dp-start--${layout}`}>
+    <div className={`dp-screen dp-start dp-start--${layout}`} data-color-target="bg">
       {layout === 'split' ? (
         <>
           <div className="dp-start__aside">
             <div className="dp-logo-placeholder">Logo</div>
           </div>
           <div className="dp-start__body">
-            <h1 className="dp-title">Mariage Léa &amp; Hugo</h1>
-            <p className="dp-subtitle">Laissez-nous un message vidéo</p>
-            <button className="dp-btn dp-btn--accent">Commencer</button>
+            <h1 className="dp-title" data-color-target="text">Mariage Léa &amp; Hugo</h1>
+            <p className="dp-subtitle" data-color-target="text-muted">Laissez-nous un message vidéo</p>
+            <button className="dp-btn dp-btn--accent" data-color-target="accent">Commencer</button>
           </div>
         </>
       ) : (
         <>
-          {layout === 'cover' && <div className="dp-cover" />}
+          {layout === 'cover' && <div className="dp-cover" data-color-target="surface-alt" />}
           <div className="dp-start__body">
             <div className="dp-logo-placeholder">Logo</div>
-            <h1 className="dp-title">Mariage Léa &amp; Hugo</h1>
-            <p className="dp-subtitle">Laissez-nous un message vidéo</p>
-            <button className="dp-btn dp-btn--accent">Commencer</button>
+            <h1 className="dp-title" data-color-target="text">Mariage Léa &amp; Hugo</h1>
+            <p className="dp-subtitle" data-color-target="text-muted">Laissez-nous un message vidéo</p>
+            <button className="dp-btn dp-btn--accent" data-color-target="accent">Commencer</button>
           </div>
         </>
       )}
@@ -146,18 +170,18 @@ function StartScreen({ config }) {
 
 function NameScreen() {
   return (
-    <div className="dp-screen dp-center">
+    <div className="dp-screen dp-center" data-color-target="surface">
       <h2 className="dp-title">Comment tu t'appelles ?</h2>
-      <input className="dp-input" defaultValue="Camille" readOnly />
+      <input className="dp-input" defaultValue="Camille" readOnly data-color-target="input-bg" />
       <div className="dp-consent">
-        <span className="dp-checkbox" />
+        <span className="dp-checkbox" data-color-target="input-border" />
         <span className="dp-consent__text">
           J'accepte que mes vidéos soient enregistrées et transmises à l'organisateur.
         </span>
       </div>
       <div className="dp-actions">
-        <button className="dp-btn dp-btn--secondary">Retour</button>
-        <button className="dp-btn dp-btn--accent">Continuer</button>
+        <button className="dp-btn dp-btn--secondary" data-color-target="btn-secondary-bg">Retour</button>
+        <button className="dp-btn dp-btn--accent" data-color-target="accent-hover">Continuer</button>
       </div>
     </div>
   );
@@ -168,11 +192,11 @@ function RecordingScreen() {
     <div className="dp-screen dp-center">
       <p className="dp-muted">Question 2 sur 5</p>
       <h2 className="dp-title dp-title--sm">Quel est ton meilleur souvenir avec eux ?</h2>
-      <div className="dp-video">
-        <span className="dp-rec">● REC</span>
+      <div className="dp-video" data-color-target="surface-alt">
+        <span className="dp-rec" data-color-target="text-error">● REC</span>
         <span className="dp-timer">0:12</span>
       </div>
-      <button className="dp-btn dp-btn--accent">■ Stop</button>
+      <button className="dp-btn dp-btn--accent" data-color-target="primary">■ Stop</button>
     </div>
   );
 }
