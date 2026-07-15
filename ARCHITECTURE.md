@@ -141,8 +141,17 @@ Auto-provisioning Docker d'une borne d'essai par événement. Contrôle le démo
   (sinon 401 « Token borne invalide » → « aucun événement actif »). Fournit `TECH_PASSWORD`
   au backend (sinon il refuse de démarrer → 502). Un token sans container est inoffensif.
 - `startPreview` : idempotent — démarre les containers s'ils existent et sont arrêtés,
-  les **provisionne** s'ils n'existent pas. Partagé par la route `preview/start` et le script
-  `reconcile-previews`.
+  les **provisionne** s'ils n'existent pas. Cas supplémentaire : si le container existe mais
+  qu'un de ses réseaux a disparu (ex. `kapsule_hub_net` recréé par un `docker compose down`/`up`
+  du Hub sans reconnexion des previews — `docker start` échouerait alors avec « network … not
+  found »), `docker.networksOk(name)` le détecte (comparaison de l'ID réseau attaché au
+  container avec l'ID actuel du réseau nommé) et `startPreview` **reprovisionne** : `rm` des 2
+  containers + `networkRm` du réseau isolé, puis `provisionPreview` (le volume de données
+  `preview-data-<slug>` est **conservé** — pas de purge RGPD sur une simple réparation réseau).
+  `networksOk` est optionnel côté client Docker (les mocks de test qui ne l'implémentent pas
+  sautent la vérification). Partagé par la route `preview/start` et le script `reconcile-previews`.
+  La route `POST .../preview/start` renvoie `provisioned` = `true` sauf si le frontend tournait
+  déjà (`exists && running`) au moment de l'appel.
 - `deprovisionPreview(eventId, docker, dataDir)` : révoque le token, supprime les 2 containers + le réseau, puis **purge les données preview** : `rm -rf previews/<slug>` si `dataDir` fourni (prod), sinon `docker volume rm preview-data-<slug>` (fallback sans bind mount).
 - **DATA_DIR du container borne preview** : monté en `--mount type=bind,source=<dataDir>/previews/<slug>,target=/app/data` (visible/sauvegardable sur le filesystem Hub). `startPreview`/`provisionPreview`/`deprovisionPreview` prennent `dataDir` en 3ᵉ argument ; le script `reconcile-previews` passe `config.dataDir`.
 - **Provisioning déclenché à la création** (`POST /api/events` : statut initial `preview`, `startPreview` best-effort puis `preview_desired='running'`). `preview → ready` arrête les containers (données conservées). La suppression totale (`DELETE`) déprovisionne et efface `previews/<slug>`.

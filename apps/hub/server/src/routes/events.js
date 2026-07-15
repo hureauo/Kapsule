@@ -454,14 +454,11 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       const backend  = `preview-backend-${slug}`;
       // État désiré : doit tourner (réconcilié au boot / make vps-up).
       updateEvent(getDb(), req.event.id, { preview_desired: 'running' });
-      if (!await docker.exists(frontend)) {
-        // Pas de container → on provisionne (crée les deux containers + token).
-        await startPreview(req.event.id, docker, dataDir);
-        return res.json({ up: true, provisioned: true });
-      }
-      if (!await docker.running(frontend)) await docker.start(frontend);
-      if (await docker.exists(backend) && !await docker.running(backend)) await docker.start(backend);
-      res.json({ up: true });
+      // startPreview est idempotent : il provisionne si absent, et reprovisionne
+      // si le container existe mais que son réseau a disparu (docker.networksOk).
+      const wasRunning = await docker.exists(frontend) && await docker.running(frontend);
+      await startPreview(req.event.id, docker, dataDir);
+      res.json({ up: true, provisioned: !wasRunning });
     } catch (err) {
       console.error('[preview/start]', req.params.eventId, err.message);
       next(Object.assign(err, { _docker: true }));

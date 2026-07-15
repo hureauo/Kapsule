@@ -48,6 +48,37 @@ export const dockerCli = {
       return false;
     }
   },
+  // Un container peut exister mais référencer un réseau qui a depuis été supprimé
+  // (ex. `kapsule_hub_net` recréé lors d'un `docker compose down`/`up` du Hub, sans
+  // que les containers preview — hors compose — soient reconnectés). Docker refuse
+  // alors `start` avec "network ... not found" : on doit détecter ce cas en amont
+  // pour reprovisionner plutôt que de laisser planter la requête en 500.
+  async networksOk(name) {
+    try {
+      // Un réseau supprimé peut être recréé avec le MÊME nom mais un ID différent
+      // (ex. `docker compose down`/`up` recrée `kapsule_hub_net`). `docker network
+      // inspect <name>` résout alors sur le nouveau réseau et ne détecte rien : il
+      // faut comparer l'ID attaché au container avec l'ID actuel du réseau nommé.
+      const { stdout } = await execFileAsync('docker', [
+        'inspect', '--format', '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}={{$v.NetworkID}} {{end}}', name,
+      ]);
+      const attachments = stdout.trim().split(/\s+/).filter(Boolean).map((pair) => {
+        const [netName, netId] = pair.split('=');
+        return { netName, netId };
+      });
+      for (const { netName, netId } of attachments) {
+        try {
+          const { stdout: currentId } = await execFileAsync('docker', ['network', 'inspect', '--format', '{{.Id}}', netName]);
+          if (currentId.trim() !== netId) return false;
+        } catch {
+          return false;
+        }
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  },
   async running(name) {
     try {
       const { stdout } = await execFileAsync('docker', ['inspect', '--format', '{{.State.Running}}', name]);
@@ -200,10 +231,23 @@ export async function startPreview(eventId, docker = dockerCli, dataDir = null) 
   const slug         = slugFor(eventId);
   const frontendName = `preview-${slug}`;
   const backendName  = `preview-backend-${slug}`;
+  const netName      = `preview-net-${slug}`;
 
   if (!await docker.exists(frontendName)) {
     return provisionPreview(eventId, docker, dataDir);
   }
+
+  // Réseau(x) du container disparu (ex. kapsule_hub_net recréé sans reconnexion) :
+  // `docker start` échouerait avec "network ... not found". On repart de zéro.
+  // networksOk est optionnel (clients de test ne l'implémentent pas tous) : son
+  // absence vaut "pas de vérification à faire", pas "réseaux cassés".
+  if (docker.networksOk && !await docker.networksOk(frontendName)) {
+    await docker.rm(frontendName);
+    if (await docker.exists(backendName)) await docker.rm(backendName);
+    if (await docker.networkExists(netName)) await docker.networkRm(netName);
+    return provisionPreview(eventId, docker, dataDir);
+  }
+
   if (!await docker.running(frontendName)) await docker.start(frontendName);
   if (await docker.exists(backendName) && !await docker.running(backendName)) {
     await docker.start(backendName);

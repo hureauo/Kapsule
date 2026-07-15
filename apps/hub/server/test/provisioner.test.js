@@ -4,28 +4,32 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { slugFor, provisionPreview, deprovisionPreview } from '../src/preview/provisioner.js';
+import { slugFor, provisionPreview, deprovisionPreview, startPreview } from '../src/preview/provisioner.js';
 import { createApp } from '../src/index.js';
 import { getDb, closeRegistry, insertEvent } from '../src/registry.js';
 import { closeAllEventDbs } from '../src/eventStore.js';
 
 // ── Mock docker client ─────────────────────────────────────────────────────────
 
-function makeMockDocker({ existsResult = false, networkExistsResult = false, runningResult = false } = {}) {
-  const calls = { run: [], rm: [], exists: [], networkCreate: [], networkConnect: [], networkRm: [], networkExists: [], volumeRm: [], running: [], start: [], stop: [] };
+function makeMockDocker({ existsResult = false, networkExistsResult = false, runningResult = false, networksOkResult = true } = {}) {
+  const calls = { run: [], rm: [], exists: [], networkCreate: [], networkConnect: [], networkRm: [], networkExists: [], volumeRm: [], running: [], start: [], stop: [], networksOk: [] };
+  // rm/networkRm retirent le nom d'un set pour que exists()/networkExists() reflètent
+  // l'état réel après suppression, comme le vrai daemon Docker.
+  const removed = new Set();
   return {
     calls,
     async run(args)                    { calls.run.push(args); },
-    async rm(name)                     { calls.rm.push(name); },
-    async exists(name)                 { calls.exists.push(name); return existsResult; },
+    async rm(name)                     { calls.rm.push(name); removed.add(name); },
+    async exists(name)                 { calls.exists.push(name); return existsResult && !removed.has(name); },
     async running(name)                { calls.running.push(name); return runningResult; },
     async start(name)                  { calls.start.push(name); },
     async stop(name)                   { calls.stop.push(name); },
     async networkCreate(name)          { calls.networkCreate.push(name); },
     async networkConnect(net, ctr)     { calls.networkConnect.push({ net, ctr }); },
-    async networkRm(name)              { calls.networkRm.push(name); },
-    async networkExists(name)          { calls.networkExists.push(name); return networkExistsResult; },
+    async networkRm(name)              { calls.networkRm.push(name); removed.add(name); },
+    async networkExists(name)          { calls.networkExists.push(name); return networkExistsResult && !removed.has(name); },
     async volumeRm(name)               { calls.volumeRm.push(name); },
+    async networksOk(name)             { calls.networksOk.push(name); return networksOkResult; },
   };
 }
 
@@ -123,6 +127,28 @@ describe('provisionPreview', () => {
     const slug = slugFor(eventId);
     const frontendRun = docker.calls.run.find(args => args.includes(`preview-${slug}`));
     assert.ok(frontendRun, `les args run devraient inclure preview-${slug}`);
+  });
+});
+
+// ── startPreview ──────────────────────────────────────────────────────────────
+
+describe('startPreview', () => {
+  it('démarre le frontend/backend existants si les réseaux sont sains', async () => {
+    const docker = makeMockDocker({ existsResult: true, runningResult: false, networksOkResult: true });
+    await startPreview('test-event-prov-1', docker);
+    assert.equal(docker.calls.run.length, 0, 'ne doit pas reprovisionner');
+    assert.ok(docker.calls.start.length > 0, 'doit démarrer les containers existants');
+  });
+
+  it('reprovisionne si le container existe mais son réseau a disparu', async () => {
+    const docker = makeMockDocker({ existsResult: true, runningResult: false, networkExistsResult: true, networksOkResult: false });
+    const eventId = 'test-event-prov-3';
+    const slug = slugFor(eventId);
+    await startPreview(eventId, docker);
+    assert.ok(docker.calls.rm.includes(`preview-${slug}`), 'doit supprimer le frontend orphelin');
+    assert.ok(docker.calls.rm.includes(`preview-backend-${slug}`), 'doit supprimer le backend orphelin');
+    assert.ok(docker.calls.networkRm.includes(`preview-net-${slug}`), 'doit supprimer le réseau isolé orphelin');
+    assert.equal(docker.calls.run.length, 2, 'doit relancer les deux containers');
   });
 });
 
