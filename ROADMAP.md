@@ -355,9 +355,9 @@ Mêmes règles : un sous-lot backend n'est terminé que **testé** (nominal + ca
 
 - [x] design2.A : spec (PROJET.md §9bis provenance + §5.3 `event_design_refs` + §11.26, cette section)
 - [x] design2.B : registry `event_design_refs` + provenance à l'application + rafraîchissement des previews, tests
-- [ ] design2.C : avertissement d'usage à l'édition (`GET /api/designs/:id/usage` + bandeau éditeur)
-- [ ] design2.D : highlight au survol d'une couleur (bascule d'écran + pulse dans l'aperçu)
-- [ ] design2.E : plus de polices (stacks système)
+- [x] design2.C : avertissement d'usage à l'édition (`GET /api/designs/:id/usage` + bandeau éditeur)
+- [x] design2.D : highlight au survol d'une couleur (bascule d'écran + pulse dans l'aperçu)
+- [x] design2.E : plus de polices (stacks système)
 - [ ] 🧑 design2.F : vérif borne d'essai réelle (édition design → preview à jour) + iPad (nouvelles polices)
 
 **Terminé quand** : éditer un design met à jour la borne d'essai des événements `preview` qui
