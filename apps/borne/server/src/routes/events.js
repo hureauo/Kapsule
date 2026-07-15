@@ -5,6 +5,7 @@ import rateLimit from 'express-rate-limit';
 import {
   DEFAULTS, LIMITS, THEMES, TEXT_FIELDS, TEXT_FIELD_MAX,
   QUALITY_KEYS, VIDEO_ORIENTATIONS, DEFAULT_VIDEO_QUALITY, DEFAULT_VIDEO_ORIENTATION, resolvePreset,
+  DESIGN_ASSET_SLOTS, validateDesign, isValidAssetFilename,
 } from '@kapsule/core';
 import {
   getActiveEvent, listEvents, setActiveEvent, updateEventStatus,
@@ -39,6 +40,43 @@ function resolveVideoSettings(db) {
   const orientation = VIDEO_ORIENTATIONS.includes(rawOrientation) ? rawOrientation : DEFAULT_VIDEO_ORIENTATION;
 
   return { quality, orientation, preset: resolvePreset(quality, orientation) };
+}
+
+/**
+ * Parse le design stocké dans event_meta et le prépare pour le kiosque (§9bis).
+ *
+ * Retourne null si aucun design, si le JSON est corrompu, ou si le contenu ne
+ * respecte plus le contrat : dans tous ces cas le kiosque doit se comporter
+ * exactement comme avant (thèmes figés), jamais planter.
+ *
+ * Les noms de fichiers deviennent des URLs servies par GET /api/event/design/:filename.
+ */
+function resolveDesign(raw) {
+  if (!raw) return null;
+
+  let design;
+  try {
+    design = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  const check = validateDesign(design);
+  if (!check.ok) return null;
+
+  const assets = {};
+  for (const slot of DESIGN_ASSET_SLOTS) {
+    const filename = design.assets?.[slot] ?? null;
+    assets[slot] = filename ? `/api/event/design/${filename}` : null;
+  }
+
+  return {
+    colors: design.colors ?? {},
+    radius: design.radius ?? null,
+    font: design.font ?? null,
+    layouts: design.layouts ?? {},
+    assets,
+  };
 }
 
 export function makeEventsRouter(dataDir, cfg) {
@@ -222,6 +260,9 @@ export function makeEventsRouter(dataDir, cfg) {
         consent_text: consent,
         idle_timeout: parseInt(getMeta('idle_timeout') ?? String(DEFAULTS.IDLE_TIMEOUT_S), 10),
         theme: getMeta('theme') ?? DEFAULTS.THEME,
+        // null si aucun design appliqué OU si la meta est corrompue : le kiosque
+        // retombe alors sur les thèmes figés, sans planter (§9bis).
+        design: resolveDesign(getMeta('design')),
         welcome_title: getMeta('welcome_title') || activeEvent.name,
         welcome_subtitle: getMeta('welcome_subtitle') || consent.split('\n')[0],
         name_prompt: textOrDefault('name_prompt'),
@@ -235,6 +276,44 @@ export function makeEventsRouter(dataDir, cfg) {
         video_height: video.preset.height,
         video_bitrate: video.preset.videoBitrate,
       });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── GET /api/event/design/:filename ──────────────────────────────────────
+  // Sert une image du design appliqué. Public, comme GET /api/event (le kiosque
+  // n'est pas authentifié sur la borne physique).
+  //
+  // Anti path-traversal : le filename doit figurer dans event_meta.design. On ne
+  // construit jamais un chemin depuis l'URL sans l'avoir confronté à la config.
+  router.get('/event/design/:filename', (req, res, next) => {
+    try {
+      const activeEvent = getActiveEvent();
+      if (!activeEvent) return res.status(404).json({ error: 'Aucun événement actif' });
+
+      const db = getActiveEventDb(dataDir, activeEvent);
+      const raw = db.prepare("SELECT value FROM event_meta WHERE key='design'").get()?.value;
+
+      // Passe par resolveDesign : un design corrompu ou invalide au regard du
+      // contrat ne doit pas servir de whitelist. Sans cette revalidation, une meta
+      // corrompue transformerait ce sendFile en lecture de fichier arbitraire.
+      const design = resolveDesign(raw);
+      if (!design) return res.status(404).json({ error: 'Aucun design' });
+
+      // resolveDesign a transformé les noms en URLs : on remonte au nom de fichier.
+      const known = DESIGN_ASSET_SLOTS
+        .map((slot) => design.assets?.[slot])
+        .filter(Boolean)
+        .map((url) => url.slice(url.lastIndexOf('/') + 1));
+
+      // Double garde : le filename est déjà contraint par validateDesign (uuid +
+      // extension raster), on le revérifie avant de construire le chemin.
+      if (!known.includes(req.params.filename) || !isValidAssetFilename(req.params.filename)) {
+        return res.status(404).json({ error: 'Image introuvable' });
+      }
+
+      res.sendFile(join(dataDir, 'events', activeEvent.id, 'design', req.params.filename));
     } catch (err) {
       next(err);
     }

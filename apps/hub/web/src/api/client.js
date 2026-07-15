@@ -91,9 +91,22 @@ export const api = {
   duplicateDesign: (id) => apiFetch(`/designs/${id}/duplicate`, { method: 'POST' }),
   promoteDesign: (id) => apiFetch(`/designs/${id}/promote`, { method: 'POST' }),
   demoteDesign: (id) => apiFetch(`/designs/${id}/demote`, { method: 'POST' }),
+  // Assets : multipart, donc pas de Content-Type JSON (apiFetch laisse passer FormData).
+  uploadDesignAsset: (id, slot, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    return apiFetch(`/designs/${id}/assets?slot=${slot}`, { method: 'POST', body: form });
+  },
+  deleteDesignAsset: (id, slot) => apiFetch(`/designs/${id}/assets/${slot}`, { method: 'DELETE' }),
+  designAssetUrl: (id, filename) => `/api/designs/${id}/assets/${filename}?token=${getToken()}`,
+
   listDesignVersions: (id) => apiFetch(`/designs/${id}/versions`),
   getDesignVersion: (id, versionId) => apiFetch(`/designs/${id}/versions/${versionId}`),
   restoreDesignVersion: (id, versionId) => apiFetch(`/designs/${id}/restore`, { method: 'POST', body: { version_id: versionId } }),
+
+  // Application d'un design à un événement (copie snapshot, §11.26)
+  applyEventDesign: (eventId, designId) => apiFetch(`/events/${eventId}/design`, { method: 'PUT', body: { design_id: designId } }),
+  removeEventDesign: (eventId) => apiFetch(`/events/${eventId}/design`, { method: 'DELETE' }),
 
   // Auth : poser le mot de passe via lien d'enregistrement
   setPassword: (token, password) => apiFetch('/auth/set-password', { method: 'POST', body: { token, password } }),

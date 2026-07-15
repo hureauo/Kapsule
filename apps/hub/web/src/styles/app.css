@@ -811,3 +811,41 @@ button { cursor: pointer; font: inherit; }
 }
 .dp-thanks--cover .dp-start__body,
 .dp-start--cover .dp-start__body { z-index: 1; }
+
+/* Images d'un design (§9bis) */
+.designs-asset-row {
+  display: grid;
+  grid-template-columns: 120px 64px 1fr;
+  align-items: center;
+  gap: 12px;
+}
+.designs-asset-row__label { font-size: 14px; }
+.designs-asset-row__preview {
+  width: 64px;
+  height: 48px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.designs-asset-row__empty { font-size: 12px; color: var(--text-muted); }
+.designs-asset-row__actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.designs-asset-row__input { font-size: 13px; max-width: 220px; }
+.designs-hint { font-size: 12px; margin: 4px 0 0; }
+
+/* Design appliqué à un événement (onglet Design de l'événement) */
+.event-design {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.event-design__apply {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.event-design__apply .hub-input { max-width: 280px; }

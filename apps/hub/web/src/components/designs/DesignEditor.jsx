@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS, DESIGN_LAYOUTS, validateDesign,
+  DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS, DESIGN_LAYOUTS, DESIGN_ASSET_SLOTS,
+  validateDesign,
 } from '@kapsule/core';
 import { api } from '../../api/client.js';
 import DesignPreview from './DesignPreview.jsx';
@@ -159,6 +160,25 @@ export default function DesignEditor({ design, readOnly, onSaved, onError }) {
         </fieldset>
 
         <fieldset className="designs-fieldset" disabled={readOnly}>
+          <legend className="designs-fieldset__legend">Images</legend>
+          {DESIGN_ASSET_SLOTS.map((slot) => (
+            <AssetRow
+              key={slot}
+              slot={slot}
+              designId={design.id}
+              filename={config.assets?.[slot] ?? null}
+              readOnly={readOnly}
+              onChanged={onSaved}
+              onError={onError}
+            />
+          ))}
+          <p className="text--muted designs-hint">
+            PNG, JPEG ou WebP, 2 Mo maximum. Le fond n'est visible que sur les dispositions
+            « Image plein écran ».
+          </p>
+        </fieldset>
+
+        <fieldset className="designs-fieldset" disabled={readOnly}>
           <legend className="designs-fieldset__legend">Dispositions</legend>
           {Object.entries(DESIGN_LAYOUTS).map(([screen, options]) => (
             <div className="designs-layout-row" key={screen}>
@@ -187,6 +207,76 @@ export default function DesignEditor({ design, readOnly, onSaved, onError }) {
       <div className="designs-editor__preview">
         <DesignPreview config={config} />
       </div>
+    </div>
+  );
+}
+
+const SLOT_LABELS = { logo: 'Logo', background: 'Image de fond' };
+
+// Upload d'une image. L'upload est immédiat (il crée sa propre version côté
+// serveur) — contrairement aux tokens, il n'attend pas le bouton « Enregistrer ».
+function AssetRow({ slot, designId, filename, readOnly, onChanged, onError }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    try {
+      await api.uploadDesignAsset(designId, slot, file);
+      await onChanged?.();
+    } catch (err) {
+      onError?.(err.message);
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = ''; // permet de re-choisir le même fichier
+    }
+  }
+
+  async function handleRemove() {
+    setBusy(true);
+    try {
+      await api.deleteDesignAsset(designId, slot);
+      await onChanged?.();
+    } catch (err) {
+      onError?.(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="designs-asset-row">
+      <span className="designs-asset-row__label">{SLOT_LABELS[slot]}</span>
+
+      {filename ? (
+        <img
+          className="designs-asset-row__preview"
+          src={api.designAssetUrl(designId, filename)}
+          alt={SLOT_LABELS[slot]}
+        />
+      ) : (
+        <span className="designs-asset-row__empty">Aucune image</span>
+      )}
+
+      {!readOnly && (
+        <div className="designs-asset-row__actions">
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={handleFile}
+            disabled={busy}
+            className="designs-asset-row__input"
+          />
+          {filename && (
+            <button className="btn btn--sm btn--ghost" onClick={handleRemove} disabled={busy}>
+              Retirer
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

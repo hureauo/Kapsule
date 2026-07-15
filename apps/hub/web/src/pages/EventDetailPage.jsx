@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api, clearToken, getRole } from '../api/client.js';
 import {
@@ -43,6 +43,112 @@ function getMeta(event, key, fallback = '') {
 }
 
 // ── Onglet Design ─────────────────────────────────────────────────────────────
+
+// Applique un design de la bibliothèque à l'événement (§9bis).
+// COPIE SNAPSHOT : le design appliqué est figé ici — modifier ensuite le design
+// dans la bibliothèque n'affecte plus cet événement (invariant §11.26).
+function EventDesignSection({ event, frozen, onChanged }) {
+  const [designs, setDesigns] = useState([]);
+  const [selected, setSelected] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  // Le design appliqué vit dans event_meta, sérialisé.
+  const applied = useMemo(() => {
+    if (!event?.meta?.design) return null;
+    try { return JSON.parse(event.meta.design); } catch { return null; }
+  }, [event?.meta?.design]);
+
+  useEffect(() => {
+    api.listDesigns().then(setDesigns).catch((err) => setMsg(`Erreur : ${err.message}`));
+  }, []);
+
+  async function handleApply() {
+    if (!selected) return;
+    setBusy(true);
+    setMsg('');
+    try {
+      await api.applyEventDesign(event.id, selected);
+      setMsg('Design appliqué.');
+      await onChanged();
+    } catch (err) {
+      setMsg(`Erreur : ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleRemove() {
+    if (!window.confirm('Retirer le design ? L\'événement reviendra au thème choisi ci-dessous.')) return;
+    setBusy(true);
+    setMsg('');
+    try {
+      await api.removeEventDesign(event.id);
+      setMsg('Design retiré.');
+      await onChanged();
+    } catch (err) {
+      setMsg(`Erreur : ${err.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel-section">
+      <h3 className="panel-section__title">Design personnalisé</h3>
+
+      {applied ? (
+        <div className="event-design">
+          <div className="designs-swatches">
+            {['bg', 'surface', 'text', 'primary', 'accent'].map((k) => (
+              <span
+                key={k}
+                className="designs-swatch"
+                style={{ background: applied.colors?.[k] ?? 'transparent' }}
+                title={k}
+              />
+            ))}
+          </div>
+          <span className="text--muted">
+            Un design est appliqué : il remplace le thème visuel ci-dessous sur la borne.
+          </span>
+          {!frozen && (
+            <button className="btn btn--sm btn--ghost" onClick={handleRemove} disabled={busy}>
+              Retirer le design
+            </button>
+          )}
+        </div>
+      ) : (
+        <p className="text--muted">
+          Aucun design appliqué — la borne utilise le thème visuel ci-dessous.
+        </p>
+      )}
+
+      {!frozen && (
+        <div className="event-design__apply">
+          <select
+            className="hub-input"
+            value={selected}
+            onChange={(e) => setSelected(e.target.value)}
+          >
+            <option value="">Choisir un design…</option>
+            {designs.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}{d.is_template ? ' (template)' : ''}
+              </option>
+            ))}
+          </select>
+          <button className="btn btn--primary btn--sm" onClick={handleApply} disabled={busy || !selected}>
+            {busy ? 'Application…' : applied ? 'Remplacer' : 'Appliquer'}
+          </button>
+          <Link to="/designs" className="btn btn--ghost btn--sm">Gérer les designs</Link>
+        </div>
+      )}
+
+      {msg && <p className="text--muted" style={{ fontSize: '13px' }}>{msg}</p>}
+    </section>
+  );
+}
 
 function DesignTab({ event, frozen, onSaved }) {
   const meta = event?.meta ?? {};
@@ -96,6 +202,10 @@ function DesignTab({ event, frozen, onSaved }) {
 
   return (
     <div className="tab-content">
+      {/* Hors du <form> : appliquer un design est une action immédiate, elle ne
+          passe pas par le bouton « Sauvegarder le design » des textes/thème. */}
+      <EventDesignSection event={event} frozen={frozen} onChanged={onSaved} />
+
       <form onSubmit={handleSave}>
         {!frozen && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>

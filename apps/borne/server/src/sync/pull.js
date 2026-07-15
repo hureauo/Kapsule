@@ -1,8 +1,10 @@
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
+import { sha256File } from '@kapsule/core/src/checksum.js';
+import { isValidAssetFilename } from '@kapsule/core';
 import { getRegistry, insertEvent, setActiveEvent, listStalePreviewEvents, deleteEvent } from '../registry.js';
-import { hubFetchJson } from './hubClient.js';
+import { hubFetchJson, hubFetchBuffer } from './hubClient.js';
 import { config } from '../config.js';
 
 let _lastPull = null;
@@ -96,7 +98,66 @@ export async function pullEvent(hubEventId, dataDir) {
     edb.close();
   }
 
+  // 6. Assets du design (§9bis). Seul contenu binaire du bundle : il ne transite
+  // pas dans le JSON mais via un endpoint dédié, fichier par fichier, chacun
+  // vérifié par checksum. Un mismatch fait ÉCHOUER le pull (invariant §11.27) —
+  // mieux vaut pas de design du tout qu'un fichier corrompu servi au kiosque.
+  //
+  // En cas d'échec, on retire aussi `event_meta.design` : sinon le kiosque
+  // servirait un design dont les images sont absentes (404 à l'affichage). Sans
+  // la clé, il retombe proprement sur le thème figé.
+  try {
+    await pullDesignAssets(hubEventId, eventDir, bundle.design_assets ?? []);
+  } catch (err) {
+    dropDesignMeta(eventDir);
+    throw err;
+  }
+
   return { ok: true, eventId: hubEventId, questions: bundle.questions.length };
+}
+
+function dropDesignMeta(eventDir) {
+  const edb = createEventDb(join(eventDir, 'db.sqlite'));
+  try {
+    edb.prepare("DELETE FROM event_meta WHERE key = 'design'").run();
+  } finally {
+    edb.close();
+  }
+}
+
+async function pullDesignAssets(hubEventId, eventDir, assets) {
+  const designDir = join(eventDir, 'design');
+
+  // Le dossier est reconstruit à chaque pull : un asset d'un design précédent ne
+  // doit pas survivre à un changement (ou à un retrait) de design côté Hub.
+  rmSync(designDir, { recursive: true, force: true });
+  if (assets.length === 0) return;
+  mkdirSync(designDir, { recursive: true });
+
+  for (const asset of assets) {
+    // Le filename vient du bundle, donc du réseau : le valider AVANT de construire
+    // un chemin avec. Sans ça, un `../db.sqlite` écraserait la base de l'événement.
+    // Le Hub est de confiance, mais on ne s'appuie pas là-dessus pour une écriture.
+    if (!isValidAssetFilename(asset.filename)) {
+      rmSync(designDir, { recursive: true, force: true });
+      throw new Error(`Nom d'image invalide dans le bundle : ${asset.filename} — pull interrompu`);
+    }
+
+    const dest = join(designDir, asset.filename);
+    const buf = await hubFetchBuffer(
+      `/api/sync/events/${hubEventId}/design/${encodeURIComponent(asset.filename)}`,
+    );
+    writeFileSync(dest, buf);
+
+    const actual = await sha256File(dest);
+    if (actual !== asset.checksum) {
+      rmSync(designDir, { recursive: true, force: true });
+      throw new Error(
+        `Checksum invalide pour l'image ${asset.filename} `
+        + `(attendu ${asset.checksum}, reçu ${actual}) — pull interrompu`,
+      );
+    }
+  }
 }
 
 /**

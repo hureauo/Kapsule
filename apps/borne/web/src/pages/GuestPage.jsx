@@ -8,6 +8,7 @@ import QuestionSheet from '../components/guest/QuestionSheet.jsx';
 import RecordingScreen from '../components/guest/RecordingScreen.jsx';
 import RecapScreen from '../components/guest/RecapScreen.jsx';
 import ThankYouScreen from '../components/guest/ThankYouScreen.jsx';
+import { applyDesign } from '../utils/design.js';
 
 // ── sessionStorage : reprise après crash/reload (spec §8) ────────────────────
 const SESSION_KEY = 'kapsule_session';
@@ -185,6 +186,11 @@ export default function GuestPage({ isPreview = false }) {
 
       // Applique le thème choisi par l'admin (data-theme sur <html>) — défaut 'cute'.
       document.documentElement.setAttribute('data-theme', evtData.theme ?? 'cute');
+
+      // Puis, s'il existe, le design personnalisé de l'événement : il pose des
+      // custom properties par-dessus le thème (§9bis). `null` retire tout et
+      // rend la main au thème figé.
+      applyDesign(evtData.design ?? null);
 
       if (evtData.status === 'closed') {
         setScreen(S.CLOSED);
@@ -493,6 +499,7 @@ export default function GuestPage({ isPreview = false }) {
         <ThankYouScreen
           onRestart={handleRestart}
           thanksText={event?.thanks_text}
+          design={event?.design ?? null}
         />
       )}
     </>

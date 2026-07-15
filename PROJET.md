@@ -131,6 +131,8 @@ kapsule/
 │   │           ├── main.jsx, App.jsx # routes : "/" → GuestPage, "/admin/*" → AdminPage
 │   │           ├── api/client.js
 │   │           ├── hooks/useMediaRecorder.js
+│   │           ├── utils/design.js    # applyDesign() : pose les tokens d'un design sur
+│   │           │                      # <html> (whitelist DESIGN_COLOR_KEYS, §9bis)
 │   │           ├── pages/GuestPage.jsx
 │   │           ├── pages/AdminPage.jsx
 │   │           ├── components/guest/
@@ -678,8 +680,17 @@ même si le payload `push-config` de la Borne la contient. Le design se gère un
 `PUT /api/events/:eventId/design` (Hub) ; `event_meta.design` n'est écrit que par cette route.
 **`captureSnapshot`** (historique `event_versions`, voir « Codé en live » de ROADMAP.md) capture
 déjà l'intégralité d'`event_meta` sans filtrage par `META_KEYS` (`readSnapshot` fait
-`SELECT key, value FROM event_meta` sans restriction) — `event_meta.design` sera donc tracé dans
-l'historique de versions **sans aucune adaptation** de ce mécanisme.
+`SELECT key, value FROM event_meta` sans restriction) — `event_meta.design` est donc tracé dans
+l'historique de versions **sans adaptation** de ce mécanisme. La **restauration** d'une version,
+en revanche, demande un traitement dédié : `applyEventConfig` itère sur `META_KEYS` (où `design`
+n'est pas), donc restaurer ne rétablirait pas le design du snapshot. `restoreEventDesign`
+(`routes/events.js`, appelée par `routes/versions.js`) comble ce trou : elle réécrit
+`event_meta.design` depuis le snapshot (ou retire la clé si le snapshot n'en avait pas) et purge
+les images orphelines du dossier de l'événement. **Limite assumée** : les fichiers images ne sont
+pas re-téléchargés depuis la bibliothèque (le snapshot ne conserve pas le `design_id` source) — on
+restaure ce qui est encore dans `events/<id>/design/`. Une image supprimée entre-temps donne un
+design *dégradé* (config restaurée, image absente), jamais un échec — cohérent avec le fait qu'un
+design appliqué est une **copie autonome**.
 
 ### Canal de transfert des assets (bundle + download + checksum)
 

@@ -2,8 +2,9 @@ import { Router } from 'express';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { rmSync, existsSync, mkdirSync, cpSync } from 'node:fs';
+import multer from 'multer';
 
-import { validateDesign } from '@kapsule/core';
+import { validateDesign, DESIGN_ASSET_SLOTS } from '@kapsule/core';
 import { requireUser } from '../middleware/auth.js';
 import {
   getDb,
@@ -11,6 +12,16 @@ import {
   insertDesignVersion, listDesignVersions, getDesignVersion,
   defaultDesignConfig, getUserById,
 } from '../registry.js';
+
+// Images d'un design : raster uniquement, jamais de SVG (invariant §11.28 — un
+// SVG peut embarquer <script>/on*). L'extension est dérivée du mimetype, jamais
+// du nom envoyé par le client.
+const ASSET_MIME_EXT = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+};
+const ASSET_MAX_BYTES = 2 * 1024 * 1024; // 2 Mo
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -333,6 +344,136 @@ export function makeDesignsRouter(dataDir) {
       insertDesignVersion(db, { design_id: design.id, snapshot: version.snapshot, author });
 
       res.json(withParsedConfig(getDesign(db, design.id)));
+    } catch (err) { next(err); }
+  });
+
+  // ── Assets (images du design) ─────────────────────────────────────────────
+
+  // Le fichier est écrit sous un nom que NOUS générons (uuid + extension dérivée
+  // du mimetype) : le nom d'origine du client n'atteint jamais le disque.
+  const uploadAsset = multer({
+    storage: multer.diskStorage({
+      destination(req, file, cb) {
+        try {
+          const dir = designDir(dataDir, req.design.id);
+          mkdirSync(dir, { recursive: true });
+          cb(null, dir);
+        } catch (err) { cb(err); }
+      },
+      filename(req, file, cb) {
+        cb(null, `${randomUUID()}${ASSET_MIME_EXT[file.mimetype]}`);
+      },
+    }),
+    limits: { fileSize: ASSET_MAX_BYTES, files: 1 },
+    fileFilter(req, file, cb) {
+      // Whitelist de mimetypes. Contrairement aux vidéos (§11.4, Safari envoie
+      // parfois un mime générique), ici la source est un <input type="file"> de
+      // l'éditeur Hub sur desktop : on peut être strict.
+      if (!ASSET_MIME_EXT[file.mimetype]) {
+        return cb(Object.assign(new Error('Format accepté : PNG, JPEG ou WebP.'), { status: 400 }));
+      }
+      cb(null, true);
+    },
+  });
+
+  // Résout le design et vérifie le droit d'écriture AVANT multer : sans ça, un
+  // upload non autorisé serait écrit sur disque puis rejeté.
+  function loadWritableDesign(req, res, next) {
+    const design = loadDesign(req, res);
+    if (!design) return;
+    if (!canWrite(design, req.user)) return res.status(403).json({ error: 'Accès interdit' });
+    req.design = design;
+    next();
+  }
+
+  // ── POST /api/designs/:id/assets?slot=logo|background ─────────────────────
+  router.post('/:id/assets', requireUser, loadWritableDesign, uploadAsset.single('file'), (req, res, next) => {
+    try {
+      const db = getDb();
+      const { slot } = req.query;
+      const design = req.design;
+
+      const cleanup = () => { if (req.file) rmSync(req.file.path, { force: true }); };
+
+      if (!DESIGN_ASSET_SLOTS.includes(slot)) {
+        cleanup(); // le fichier est déjà écrit : ne pas le laisser orphelin
+        return res.status(400).json({ error: `slot doit valoir ${DESIGN_ASSET_SLOTS.join(' ou ')}.` });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: 'Aucun fichier reçu (champ « file »).' });
+      }
+
+      const config = JSON.parse(design.config_json);
+      const previous = config.assets?.[slot] ?? null;
+      const next_ = { ...config, assets: { ...config.assets, [slot]: req.file.filename } };
+
+      const check = validateDesign(next_);
+      if (!check.ok) {
+        cleanup();
+        return res.status(400).json({ error: check.error });
+      }
+
+      const config_json = JSON.stringify(next_);
+      updateDesign(db, design.id, { config_json });
+      insertDesignVersion(db, { design_id: design.id, snapshot: config_json, author: authorEmail(db, req.user) });
+
+      // L'ancien fichier du slot n'est plus référencé : on le supprime APRÈS
+      // l'écriture en base (même logique que le remplacement de vidéo, §11.9).
+      if (previous && previous !== req.file.filename) {
+        rmSync(join(designDir(dataDir, design.id), previous), { force: true });
+      }
+
+      res.status(201).json({ filename: req.file.filename });
+    } catch (err) {
+      if (req.file) rmSync(req.file.path, { force: true });
+      next(err);
+    }
+  });
+
+  // ── DELETE /api/designs/:id/assets/:slot ──────────────────────────────────
+  router.delete('/:id/assets/:slot', requireUser, loadWritableDesign, (req, res, next) => {
+    try {
+      const db = getDb();
+      const { slot } = req.params;
+      const design = req.design;
+
+      if (!DESIGN_ASSET_SLOTS.includes(slot)) {
+        return res.status(400).json({ error: `slot doit valoir ${DESIGN_ASSET_SLOTS.join(' ou ')}.` });
+      }
+
+      const config = JSON.parse(design.config_json);
+      const filename = config.assets?.[slot] ?? null;
+      if (!filename) return res.status(404).json({ error: 'Aucune image sur ce slot.' });
+
+      const config_json = JSON.stringify({ ...config, assets: { ...config.assets, [slot]: null } });
+      updateDesign(db, design.id, { config_json });
+      insertDesignVersion(db, { design_id: design.id, snapshot: config_json, author: authorEmail(db, req.user) });
+
+      rmSync(join(designDir(dataDir, design.id), filename), { force: true });
+
+      res.json({ ok: true });
+    } catch (err) { next(err); }
+  });
+
+  // ── GET /api/designs/:id/assets/:filename ─────────────────────────────────
+  // Anti path-traversal : le filename doit figurer dans la config du design.
+  // On ne fait donc jamais confiance au paramètre d'URL pour construire le chemin.
+  router.get('/:id/assets/:filename', requireUser, (req, res, next) => {
+    try {
+      const design = loadDesign(req, res);
+      if (!design) return;
+      if (!canRead(design, req.user)) return res.status(403).json({ error: 'Accès interdit' });
+
+      const config = JSON.parse(design.config_json);
+      const known = DESIGN_ASSET_SLOTS
+        .map((slot) => config.assets?.[slot])
+        .filter(Boolean);
+
+      if (!known.includes(req.params.filename)) {
+        return res.status(404).json({ error: 'Image introuvable' });
+      }
+
+      res.sendFile(join(designDir(dataDir, design.id), req.params.filename));
     } catch (err) { next(err); }
   });
 

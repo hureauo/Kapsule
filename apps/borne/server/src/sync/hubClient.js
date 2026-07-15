@@ -72,3 +72,18 @@ export async function hubFetchJson(path, options = {}) {
   }
   return body;
 }
+
+/**
+ * Variante binaire : retourne le corps en Buffer (images du design, §9bis).
+ * Lève si le statut est >= 400 — l'appelant traite l'échec comme un échec de pull.
+ */
+export async function hubFetchBuffer(path, options = {}) {
+  const res = await hubFetch(path, options);
+  if (!res.ok) {
+    throw Object.assign(
+      new Error(`Hub ${res.status}: ${res.statusText}`),
+      { status: res.status }
+    );
+  }
+  return Buffer.from(await res.arrayBuffer());
+}

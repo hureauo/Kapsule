@@ -1,11 +1,11 @@
 import { Router } from 'express';
-import { existsSync, mkdirSync, renameSync, writeFileSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, writeFileSync, readFileSync, readdirSync, unlinkSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
 import argon2 from 'argon2';
 import { sha256File } from '@kapsule/core/src/checksum.js';
-import { LIMITS } from '@kapsule/core';
+import { LIMITS, isValidAssetFilename } from '@kapsule/core';
 import { getDb, getEvent, updateEvent, insertSyncLog, getUserByEmail } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { applyEventConfig } from '../eventConfig.js';
@@ -200,7 +200,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
   });
 
   // ── GET /api/sync/events/:id/bundle ──────────────────────────────────────
-  router.get('/events/:id/bundle', validateUuidParams('id'), (req, res, next) => {
+  router.get('/events/:id/bundle', validateUuidParams('id'), async (req, res, next) => {
     try {
       const db = getDb();
       const event = getEvent(db, req.params.id);
@@ -262,9 +262,62 @@ export function makeSyncRouter(dataDir, opts = {}) {
           AND eu.roles LIKE '%general%'
       `).get(event.id).n > 0;
 
+      // Assets du design appliqué (§9bis). Le reste du bundle est du texte ; les
+      // images sont des binaires, donc on n'envoie ici que leur manifest — la
+      // borne les télécharge ensuite une par une et vérifie chaque checksum.
+      const designDir = join(evDir(dataDir, event.id), 'design');
+      const design_assets = [];
+      if (existsSync(designDir)) {
+        for (const filename of readdirSync(designDir)) {
+          const path = join(designDir, filename);
+          if (!statSync(path).isFile()) continue;
+          design_assets.push({
+            filename,
+            size: statSync(path).size,
+            checksum: await sha256File(path),
+          });
+        }
+      }
+
       const freshEvent = getEvent(db, event.id);
-      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  users=${usersWithHash.length}  status=${freshEvent.status}  requiresLogin=${hasGeneral}`);
-      res.json({ event: { ...freshEvent, meta }, questions, users: usersWithHash, requiresLogin: hasGeneral });
+      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  users=${usersWithHash.length}  status=${freshEvent.status}  requiresLogin=${hasGeneral}  design_assets=${design_assets.length}`);
+      res.json({
+        event: { ...freshEvent, meta },
+        questions,
+        users: usersWithHash,
+        requiresLogin: hasGeneral,
+        design_assets,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ── GET /api/sync/events/:id/design/:filename ────────────────────────────
+  // Télécharge un asset du design appliqué. Anti path-traversal : le filename
+  // doit figurer dans le listing réel du dossier — on ne concatène jamais un
+  // paramètre d'URL pour construire un chemin sans l'avoir confronté au disque.
+  router.get('/events/:id/design/:filename', validateUuidParams('id'), (req, res, next) => {
+    try {
+      if (req.params.id !== req.box.event_id) {
+        return res.status(403).json({ error: 'Token non autorisé sur cet événement' });
+      }
+
+      // Double garde, homogène avec les surfaces kiosque : la forme du filename
+      // est vérifiée en plus de sa présence dans le listing réel du dossier.
+      if (!isValidAssetFilename(req.params.filename)) {
+        return res.status(404).json({ error: 'Asset introuvable' });
+      }
+
+      const designDir = join(evDir(dataDir, req.params.id), 'design');
+      if (!existsSync(designDir)) return res.status(404).json({ error: 'Aucun asset' });
+
+      const known = readdirSync(designDir);
+      if (!known.includes(req.params.filename)) {
+        return res.status(404).json({ error: 'Asset introuvable' });
+      }
+
+      res.sendFile(join(designDir, req.params.filename));
     } catch (err) {
       next(err);
     }

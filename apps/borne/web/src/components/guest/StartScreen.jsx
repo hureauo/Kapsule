@@ -11,14 +11,38 @@ export default function StartScreen({ event, onStart, onVideoSettingsChange }) {
   // Les dimensions affichées dépendent de l'orientation courante.
   const presets = VIDEO_QUALITY[currentOrientation] ?? VIDEO_QUALITY[DEFAULT_VIDEO_ORIENTATION];
 
-  return (
-    <div className="screen screen--center">
-      <h1 className="start__title">
-        {event?.welcome_title || event?.name || 'Kapsule'}
-      </h1>
-      {event?.welcome_subtitle && (
-        <p className="start__tagline">{event.welcome_subtitle}</p>
-      )}
+  // Variante de disposition du design (§9bis). Sans design : 'centered', qui rend
+  // exactement comme avant l'introduction des designs.
+  const design = event?.design ?? null;
+  const layout = design?.layouts?.start ?? 'centered';
+  const logo = design?.assets?.logo ?? null;
+  const background = design?.assets?.background ?? null;
+
+  // L'image de fond n'est posée que sur la variante qui la prévoit : un fond
+  // téléversé ne doit pas s'inviter sur une disposition qui ne l'attend pas.
+  const coverStyle = layout === 'cover' && background
+    ? { backgroundImage: `url("${background}")` }
+    : undefined;
+
+  const title = (
+    <h1 className="start__title">
+      {event?.welcome_title || event?.name || 'Kapsule'}
+    </h1>
+  );
+  const tagline = event?.welcome_subtitle
+    ? <p className="start__tagline">{event.welcome_subtitle}</p>
+    : null;
+  const logoImg = logo
+    ? <img className="start__logo" src={logo} alt="" />
+    : null;
+
+  // Le contenu est identique quelle que soit la variante — seule la disposition
+  // change (le CSS place .start__body et .start__aside).
+  const body = (
+    <div className="start__body">
+      {layout !== 'split' && logoImg}
+      {title}
+      {tagline}
 
       {isPreview && onVideoSettingsChange && (
         <div className="preview-quality-picker" style={{ marginBottom: '20px', textAlign: 'center' }}>
@@ -57,6 +81,13 @@ export default function StartScreen({ event, onStart, onVideoSettingsChange }) {
       <button className="btn btn--primary btn--large" onClick={onStart}>
         Commencer
       </button>
+    </div>
+  );
+
+  return (
+    <div className={`screen screen--center start--${layout}`} style={coverStyle}>
+      {layout === 'split' && <div className="start__aside">{logoImg}</div>}
+      {body}
     </div>
   );
 }

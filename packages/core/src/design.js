@@ -56,6 +56,16 @@ const HEX_RE = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
 // UUID + extension raster. Jamais de chemin (pas de '/', pas de '..'), jamais de SVG.
 const ASSET_FILENAME_RE = /^[0-9a-f-]{36}\.(png|jpg|webp)$/;
 
+/**
+ * Un nom de fichier d'asset est-il légal ? Exporté car tout consommateur d'un nom
+ * venu du réseau (le bundle de pull, une route qui sert un fichier) doit pouvoir
+ * le vérifier AVANT de construire un chemin avec — un `../db.sqlite` ne doit
+ * jamais atteindre un writeFile/sendFile.
+ */
+export function isValidAssetFilename(filename) {
+  return typeof filename === 'string' && ASSET_FILENAME_RE.test(filename);
+}
+
 const fail = (error) => ({ ok: false, error });
 
 /**

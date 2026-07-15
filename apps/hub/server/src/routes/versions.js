@@ -4,6 +4,7 @@ import { getDb, listEventVersions, getEventVersion, getPreviousEventVersion } fr
 import { openEventDb } from '../eventStore.js';
 import { applyEventConfig } from '../eventConfig.js';
 import { captureSnapshot, resolveAuthor } from '../versioning.js';
+import { restoreEventDesign } from './events.js';
 
 // Monté sous /api/events/:eventId/versions (mergeParams: true)
 export function makeVersionsRouter(dataDir) {
@@ -47,6 +48,9 @@ export function makeVersionsRouter(dataDir) {
 
       const edb = openEventDb(req.event.id, dataDir);
       applyEventConfig(edb, { mode: 'overwrite', ...version.snapshot });
+      // `design` n'est pas dans META_KEYS (donc applyEventConfig l'ignore) : on
+      // le restaure séparément pour que l'historique dise vrai (§9bis).
+      restoreEventDesign(dataDir, req.event.id, edb, version.snapshot);
 
       // Capture un snapshot de restauration
       const author = resolveAuthor(db, req.user);

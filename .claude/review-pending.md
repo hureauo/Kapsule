@@ -1,25 +1,32 @@
 ---
 status: tests-pending
-base_commit: d885b9d9cb1bb29f1d43740b54488e4bc3a69629
-workspaces: [@kapsule/core, @kapsule/hub-server, @kapsule/hub-web]
-generated_at: 2026-07-14T22:30:00Z
+base_commit: ee012d12a4bf016130d80ed86f1b5db0fda16519
+workspaces: [@kapsule/core, @kapsule/hub-server, @kapsule/borne-server, @kapsule/hub-web, @kapsule/borne-web]
+generated_at: 2026-07-15T00:00:00Z
 verdict: COMMIT OK
 ---
 
 # Relais de review → tests
 
-Workspaces à tester :
-- @kapsule/core (raison : `packages/core/src/design.js` — ajout de `RADIUS_PRESETS`/`FONT_PRESETS`, réexportés par le barrel ; `test/design.test.js` étendu)
-- @kapsule/hub-server (raison : `registry.js#listDesigns` scindé en deux requêtes — la jointure `owner_email` n'existe plus que dans la branche superuser ; `routes/designs.js` — `canSeeAuthor`/`stripAuthor`, 409 seed sur `DELETE`, 409 no-op sur `promote`/`demote` ; `test/designs.test.js` étendu)
-- @kapsule/hub-web (raison : `utils/format.js` — nouveau `formatSqlDate` ; `test/format.test.js` étendu de 3 cas)
+Re-review des corrections design.E+F. Le ❌ (écriture arbitraire au pull) et les
+5 ⚠️ de la review précédente ont été vérifiés dans le code réel et sont corrigés.
+Seule dérive résiduelle trouvée : deux notes obsolètes dans ARCHITECTURE.md décrivant
+l'ancien comportement vulnérable — corrigées par le reviewer (doc only, pas de code).
 
-Pas de smoke test requis : aucun changement Docker / nginx / .env / package.json / scripts. Aucune dépendance ajoutée (stack figée respectée) ; un seul stylesheet par app (`app.css` du Hub étendu en fin de fichier).
+Workspaces à tester :
+- @kapsule/core (raison : `isValidAssetFilename` ajouté à `packages/core/src/design.js`)
+- @kapsule/hub-server (raison : `restoreEventDesign` dans `routes/events.js`, import dans `routes/versions.js`, ordre vérif/rmSync dans `PUT /:eventId/design`, `routes/sync.js` design)
+- @kapsule/borne-server (raison : `pull.js` validation filename + `dropDesignMeta`, `routes/events.js` `GET /event/design/:filename` durci)
+- @kapsule/hub-web (raison : DesignEditor.jsx / EventDetailPage.jsx / client.js modifiés)
+- @kapsule/borne-web (raison : `utils/design.js` nouveau, StartScreen/ThankYouScreen/GuestPage modifiés)
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- Re-review de design.C : les 4 findings (2 ❌ + 2 ⚠️) sont vérifiés corrigés **dans le code réel**, sans voie de contournement. `getDesign` est un `SELECT * FROM designs` nu (aucune jointure `users`) → `GET /api/designs/:id` sur un template promu ne peut pas fuiter d'email ; la table `designs` ne porte pas d'email, seulement `owner_id` (UUID).
-- design.D : aucune valeur CSS libre n'atteint le DOM. `cssVarsFor()` itère sur `DESIGN_COLOR_KEYS` (jamais sur les clés reçues) et n'écrit que des **custom properties** (`--*`) ; aucun `url()` dans le CSS `dp-`/`design-preview` (donc pas de vecteur d'exfiltration par `var()` interpolée dans une `url()`), aucun `dangerouslySetInnerHTML`. Le seul `style={}` sur une propriété CSS **standard** (`DesignsPage.jsx:282`, `background`) est alimenté par la config **persistée**, donc déjà validée par `validateDesign` côté backend.
-- Vérifier que les 3 nouveaux tests de `format.test.js` passent quelle que soit la TZ du conteneur de test (ils comparent deux formatages entre eux plutôt qu'à une chaîne littérale — a priori robustes, mais c'est le point le plus fragile du lot).
-- `POST /api/designs/:id/restore` réapplique `version.snapshot` **sans repasser par `validateDesign`** (dette de design.B, non bloquante : tout snapshot a été validé à l'insertion). À garder en tête si les règles de validation se durcissent.
+- Pull avec `filename: '../db.sqlite'` → doit rejeter ET laisser db.sqlite intact (test présent sync.pull.test.js:454).
+- Pull avec checksum invalide → `event_meta.design` doit être absent après échec (test présent sync.pull.test.js:466).
+- `PUT /:eventId/design` aux images source manquantes → 409 SANS détruire le design déjà appliqué (test présent eventDesign.test.js:141).
+- Restore d'une version antérieure au design → retire le design ; restore d'une version avec design → réapplique (tests présents eventDesign.test.js:212/234).
+- Route publique borne `GET /api/event/design/:filename` : un filename légitime reste servi en 200 (non-régression à confirmer).
+- Absence de cycle d'import versions.js ↔ events.js confirmée par lecture (events.js n'importe pas versions.js).
 
 ## Corrections demandées
 

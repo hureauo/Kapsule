@@ -1,8 +1,9 @@
 import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 
 import { openRegistry, closeRegistry, getRegistry, insertEvent } from '../src/registry.js';
@@ -328,5 +329,164 @@ describe('pull — pullMyEvent', () => {
     });
     const count = await pullMyEvent(dir);
     assert.equal(count, 0);
+  });
+});
+
+// ── Assets du design (§9bis) ──────────────────────────────────────────────────
+//
+// Seul contenu binaire du bundle : téléchargé fichier par fichier et vérifié par
+// checksum. Un mismatch fait ÉCHOUER le pull (invariant §11.27) — mieux vaut pas
+// de design du tout qu'une image corrompue servie au kiosque.
+
+describe('pull — assets du design', () => {
+  let dir;
+  let savedFetch;
+  const origHubUrl = config.hubUrl;
+  const origBoxToken = config.boxToken;
+
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  // sha256 du buffer ci-dessus.
+  const PNG_SHA = createHash('sha256').update(PNG).digest('hex');
+  const LOGO = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.png';
+
+  const bundleWith = (design_assets, design) => ({
+    event: {
+      id: 'hub-ev-1',
+      name: 'Événement design',
+      status: 'loaded',
+      meta: design ? { design: JSON.stringify(design) } : {},
+    },
+    questions: [],
+    design_assets,
+  });
+
+  // Répond le JSON du bundle sur /bundle, le PNG sur /design/<filename>.
+  function mockHub(bundle, { corrupt = false } = {}) {
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('/design/')) {
+        const body = corrupt ? Buffer.from('contenu corrompu') : PNG;
+        return {
+          ok: true, status: 200,
+          arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+        };
+      }
+      return { ok: true, status: 200, json: async () => bundle };
+    };
+  }
+
+  before(() => {
+    savedFetch = globalThis.fetch;
+    config.hubUrl = 'https://hub.test';
+    config.boxToken = 'tok';
+  });
+
+  after(() => {
+    globalThis.fetch = savedFetch;
+    config.hubUrl = origHubUrl;
+    config.boxToken = origBoxToken;
+  });
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-pull-design-'));
+    openRegistry(dir);
+  });
+
+  afterEach(() => {
+    closeEventDb();
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const designWithLogo = {
+    version: 1,
+    colors: { bg: '#ffffff' },
+    assets: { logo: LOGO, background: null },
+  };
+
+  it('télécharge les images et vérifie leur checksum', async () => {
+    mockHub(bundleWith([{ filename: LOGO, size: PNG.length, checksum: PNG_SHA }], designWithLogo));
+
+    const res = await pullEvent('hub-ev-1', dir);
+    assert.equal(res.ok, true);
+
+    const file = join(dir, 'events', 'hub-ev-1', 'design', LOGO);
+    assert.ok(existsSync(file), 'l\'image doit être téléchargée');
+    assert.deepEqual(readFileSync(file), PNG);
+
+    // La config du design arrive par event_meta (le bundle la porte comme le reste).
+    const edb = new Database(join(dir, 'events', 'hub-ev-1', 'db.sqlite'));
+    const raw = edb.prepare("SELECT value FROM event_meta WHERE key='design'").get()?.value;
+    edb.close();
+    assert.equal(JSON.parse(raw).assets.logo, LOGO);
+  });
+
+  it('un checksum invalide fait ÉCHOUER le pull et ne laisse aucun fichier', async () => {
+    mockHub(bundleWith([{ filename: LOGO, size: PNG.length, checksum: PNG_SHA }], designWithLogo), { corrupt: true });
+
+    await assert.rejects(
+      () => pullEvent('hub-ev-1', dir),
+      (err) => {
+        assert.match(err.message, /[Cc]hecksum/);
+        return true;
+      },
+    );
+
+    // Aucun fichier corrompu ne doit subsister.
+    assert.ok(!existsSync(join(dir, 'events', 'hub-ev-1', 'design', LOGO)));
+  });
+
+  it('un pull sans design vide le dossier d\'un design précédent', async () => {
+    // 1er pull : avec design.
+    mockHub(bundleWith([{ filename: LOGO, size: PNG.length, checksum: PNG_SHA }], designWithLogo));
+    await pullEvent('hub-ev-1', dir);
+    assert.ok(existsSync(join(dir, 'events', 'hub-ev-1', 'design', LOGO)));
+
+    // 2e pull : le design a été retiré côté Hub.
+    mockHub(bundleWith([], null));
+    await pullEvent('hub-ev-1', dir);
+
+    assert.ok(!existsSync(join(dir, 'events', 'hub-ev-1', 'design', LOGO)), 'l\'ancienne image doit disparaître');
+  });
+
+  it('rejette un filename de traversée dans le bundle (jamais d\'écriture hors du dossier)', async () => {
+    // Un Hub compromis ne doit pas pouvoir écraser db.sqlite via un filename piégé.
+    mockHub(bundleWith([{ filename: '../db.sqlite', size: 4, checksum: 'x' }], designWithLogo));
+
+    await assert.rejects(() => pullEvent('hub-ev-1', dir), /invalide|interrompu/i);
+
+    // La base de l'événement doit être intacte (lisible).
+    const edb = new Database(join(dir, 'events', 'hub-ev-1', 'db.sqlite'));
+    assert.doesNotThrow(() => edb.prepare('SELECT 1').get());
+    edb.close();
+  });
+
+  it('un checksum invalide retire event_meta.design (pas de design aux images 404)', async () => {
+    mockHub(bundleWith([{ filename: LOGO, size: PNG.length, checksum: PNG_SHA }], designWithLogo), { corrupt: true });
+
+    await assert.rejects(() => pullEvent('hub-ev-1', dir), /[Cc]hecksum/);
+
+    // Après l'échec, la clé design ne doit pas subsister (sinon GET /api/event
+    // servirait un design dont les images sont absentes).
+    const edb = new Database(join(dir, 'events', 'hub-ev-1', 'db.sqlite'));
+    const raw = edb.prepare("SELECT value FROM event_meta WHERE key='design'").get();
+    edb.close();
+    assert.equal(raw, undefined);
+  });
+
+  it('un bundle sans design_assets (Hub non migré) ne casse pas le pull', async () => {
+    globalThis.fetch = async () => ({
+      ok: true, status: 200,
+      json: async () => ({
+        event: { id: 'hub-ev-1', name: 'Sans design', status: 'loaded', meta: {} },
+        questions: [],
+        // pas de champ design_assets du tout
+      }),
+    });
+
+    const res = await pullEvent('hub-ev-1', dir);
+    assert.equal(res.ok, true);
   });
 });

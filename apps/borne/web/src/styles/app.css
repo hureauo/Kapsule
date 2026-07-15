@@ -8,7 +8,9 @@ html, body, #root {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+  /* --font-body n'est posée QUE par un design personnalisé (§9bis) : sans design,
+     le fallback conserve exactement la pile de polices historique. */
+  font-family: var(--font-body, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif);
   -webkit-font-smoothing: antialiased;
   /* Kiosque : désactiver la sélection de texte hors inputs pour éviter les sélections accidentelles */
   user-select: none;
@@ -168,6 +170,11 @@ input, textarea, [contenteditable] {
   background-color: var(--bg);
   color: var(--text);
   min-height: 100%;
+  /* Les tokens ci-dessus neutralisent déjà un design posé sur <html> (héritage
+     CSS : un élément plus profond gagne). La POLICE, elle, est appliquée par
+     `body { font-family: var(--font-body, …) }` — donc un design en Comic Sans
+     déteindrait sur l'admin. On la refixe ici. (§9bis : admin non affecté.) */
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
   /* Admin : réactiver la sélection pour copier/coller */
   user-select: text;
   -webkit-user-select: text;
@@ -1389,3 +1396,65 @@ input, textarea, [contenteditable] {
   background: var(--surface);
 }
 .qsheet__item--future .qsheet__index { background: var(--text-muted); }
+
+/* ── Variantes de disposition des designs (§9bis) ─────────────────────────────
+   Sans design, aucune de ces classes n'est posée autrement qu'en 'centered',
+   dont le rendu est celui d'avant l'introduction des designs. Mobile-first,
+   tout passe par les tokens.                                                  */
+
+.start__body,
+.thanks__body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+  /* Au-dessus de l'image de fond des variantes 'cover'. */
+  position: relative;
+  z-index: 1;
+}
+
+/* Logo : hauteur bornée pour ne pas écraser le titre sur un petit écran. */
+.start__logo {
+  max-height: 120px;
+  max-width: 80%;
+  object-fit: contain;
+}
+
+/* Variante 'cover' : l'image occupe tout l'écran, le contenu se superpose.
+   Un voile assombri/éclairci n'est pas posé (le client choisit ses couleurs) —
+   la lisibilité relève du design, pas du code. */
+.start--cover,
+.thanks--cover {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* Variante 'split' : logo à gauche, textes à droite. Sur mobile, on repasse en
+   pile verticale — deux colonnes sur 360 px seraient illisibles. */
+.start--split {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.start--split .start__aside {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.start--split .start__logo { max-height: 140px; }
+
+@media (min-width: 700px) {
+  .start--split {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 48px;
+  }
+  .start--split .start__body {
+    align-items: flex-start;
+    text-align: left;
+  }
+  .start--split .start__logo { max-height: 220px; }
+}

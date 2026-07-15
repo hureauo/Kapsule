@@ -1,6 +1,6 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
@@ -549,5 +549,159 @@ describe('PUT /api/event/video-quality (qualité + orientation)', () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.video_orientation, 'paysage');
     assert.equal(res.body.video_width, 1280);
+  });
+});
+
+// ── Design appliqué (§9bis) ───────────────────────────────────────────────────
+
+describe('GET /api/event — design', () => {
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const LOGO = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.png';
+
+  // Applique un design (config en meta + fichier sur disque), comme le fait le pull.
+  function applyDesign(dir, id, design, { withFile = true } = {}) {
+    const db = createEventDb(join(dir, 'events', id, 'db.sqlite'));
+    db.prepare("INSERT OR REPLACE INTO event_meta (key,value) VALUES ('design', ?)").run(JSON.stringify(design));
+    db.close();
+    if (withFile) {
+      const designDir = join(dir, 'events', id, 'design');
+      mkdirSync(designDir, { recursive: true });
+      writeFileSync(join(designDir, LOGO), PNG);
+    }
+  }
+
+  const DESIGN = {
+    version: 1,
+    colors: { bg: '#101020', accent: '#ff8800' },
+    radius: 'round',
+    font: 'serif',
+    layouts: { start: 'split', thanks: 'cover' },
+    assets: { logo: LOGO, background: null },
+  };
+
+  test('expose le design, avec les images sous forme d\'URL', async () => {
+    const { dir, app } = await setup();
+    try {
+      const id = makeEvent(dir, 'ev-design');
+      setActiveEvent(id);
+      applyDesign(dir, id, DESIGN);
+
+      const res = await request(app).get('/api/event');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.design.colors.bg, '#101020');
+      assert.equal(res.body.design.radius, 'round');
+      assert.equal(res.body.design.layouts.start, 'split');
+      assert.equal(res.body.design.assets.logo, `/api/event/design/${LOGO}`);
+      assert.equal(res.body.design.assets.background, null);
+    } finally { teardown(dir); }
+  });
+
+  test('design null si aucun design appliqué (comportement d\'avant : thèmes)', async () => {
+    const { dir, app } = await setup();
+    try {
+      const id = makeEvent(dir, 'ev-nodesign');
+      setActiveEvent(id);
+
+      const res = await request(app).get('/api/event');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.design, null);
+      assert.ok(res.body.theme, 'le thème figé reste exposé');
+    } finally { teardown(dir); }
+  });
+
+  test('design corrompu → null, sans planter', async () => {
+    const { dir, app } = await setup();
+    try {
+      const id = makeEvent(dir, 'ev-corrompu');
+      setActiveEvent(id);
+      const db = createEventDb(join(dir, 'events', id, 'db.sqlite'));
+      db.prepare("INSERT OR REPLACE INTO event_meta (key,value) VALUES ('design', ?)").run('{ pas du json');
+      db.close();
+
+      const res = await request(app).get('/api/event');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.design, null);
+    } finally { teardown(dir); }
+  });
+
+  test('design invalide au regard du contrat → null (pas de config hostile servie)', async () => {
+    const { dir, app } = await setup();
+    try {
+      const id = makeEvent(dir, 'ev-invalide');
+      setActiveEvent(id);
+      applyDesign(dir, id, { version: 1, colors: { bg: 'url(https://evil.test/x)' } }, { withFile: false });
+
+      const res = await request(app).get('/api/event');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.design, null);
+    } finally { teardown(dir); }
+  });
+});
+
+describe('GET /api/event/design/:filename', () => {
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  const LOGO = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.png';
+
+  async function setupWithDesign() {
+    const ctx = await setup();
+    const id = makeEvent(ctx.dir, 'ev-assets');
+    setActiveEvent(id);
+
+    const db = createEventDb(join(ctx.dir, 'events', id, 'db.sqlite'));
+    db.prepare("INSERT OR REPLACE INTO event_meta (key,value) VALUES ('design', ?)").run(JSON.stringify({
+      version: 1, assets: { logo: LOGO, background: null },
+    }));
+    db.close();
+
+    const designDir = join(ctx.dir, 'events', id, 'design');
+    mkdirSync(designDir, { recursive: true });
+    writeFileSync(join(designDir, LOGO), PNG);
+    // Fichier présent sur disque mais NON référencé par la config.
+    writeFileSync(join(designDir, 'orphelin.png'), 'nope');
+
+    return ctx;
+  }
+
+  test('sert l\'image référencée (public, sans auth)', async () => {
+    const { dir, app } = await setupWithDesign();
+    try {
+      const res = await request(app).get(`/api/event/design/${LOGO}`);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, PNG);
+    } finally { teardown(dir); }
+  });
+
+  test('404 sur un fichier présent mais non référencé par la config', async () => {
+    const { dir, app } = await setupWithDesign();
+    try {
+      const res = await request(app).get('/api/event/design/orphelin.png');
+      assert.equal(res.status, 404);
+    } finally { teardown(dir); }
+  });
+
+  test('404 sur une traversée de chemin (registry.sqlite hors de portée)', async () => {
+    const { dir, app } = await setupWithDesign();
+    try {
+      for (const evil of ['..%2F..%2Fregistry.sqlite', '%2e%2e%2fdb.sqlite', '..%2Fdb.sqlite']) {
+        const res = await request(app).get(`/api/event/design/${evil}`);
+        assert.ok(res.status === 404 || res.status === 400, `${evil} → ${res.status}`);
+      }
+    } finally { teardown(dir); }
+  });
+
+  test('404 si aucun design appliqué', async () => {
+    const { dir, app } = await setup();
+    try {
+      const id = makeEvent(dir, 'ev-sans-design');
+      setActiveEvent(id);
+      const res = await request(app).get(`/api/event/design/${LOGO}`);
+      assert.equal(res.status, 404);
+    } finally { teardown(dir); }
   });
 });
