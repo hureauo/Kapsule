@@ -291,6 +291,38 @@ describe('PUT /api/designs/:id', () => {
     assert.equal(res.status, 400);
   });
 
+  // design3 : screenOverrides persiste et se relit à l'identique (round-trip),
+  // le backend ne fait que revalider/stocker — pas de logique métier propre.
+  it('persiste et relit screenOverrides à l\'identique (round-trip)', async () => {
+    const design = await createDesign(tokenBob, 'Avec surcharges par écran');
+    const screenOverrides = {
+      start: { colors: { text: '#0000ff' } },
+      recording: { colors: { primary: '#ff0000', 'text-error': '#aa0000' } },
+    };
+
+    const res = await request.put(`/api/designs/${design.id}`).set(auth(tokenBob))
+      .send({ config: { ...design.config, screenOverrides } });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.config.screenOverrides, screenOverrides);
+
+    const reread = await request.get(`/api/designs/${design.id}`).set(auth(tokenBob));
+    assert.deepEqual(reread.body.config.screenOverrides, screenOverrides);
+  });
+
+  it('refuse un screenOverrides invalide (écran inconnu) — 400', async () => {
+    const design = await createDesign(tokenBob, 'screenOverrides invalide');
+    const res = await request.put(`/api/designs/${design.id}`).set(auth(tokenBob))
+      .send({ config: { ...design.config, screenOverrides: { unknown_screen: { colors: {} } } } });
+    assert.equal(res.status, 400);
+  });
+
+  it('refuse un screenOverrides invalide (hex malformé dans une surcharge) — 400', async () => {
+    const design = await createDesign(tokenBob, 'screenOverrides hex invalide');
+    const res = await request.put(`/api/designs/${design.id}`).set(auth(tokenBob))
+      .send({ config: { ...design.config, screenOverrides: { start: { colors: { bg: 'red' } } } } });
+    assert.equal(res.status, 400);
+  });
+
   it('403 sur le design d\'un autre client', async () => {
     const secret = await createDesign(tokenCarol, 'Privé Carol PUT');
     const res = await request.put(`/api/designs/${secret.id}`).set(auth(tokenBob)).send({ name: 'pirate' });

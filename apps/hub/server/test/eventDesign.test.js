@@ -87,6 +87,23 @@ describe('PUT /api/events/:eventId/design', () => {
     assert.ok(existsSync(join(dir, 'events', eventId, 'design', design.filename)));
   });
 
+  it('screenOverrides survit intact dans la copie snapshot (design3)', async () => {
+    const eventId = await createEvent();
+    const design = await createDesignWithLogo();
+    const screenOverrides = {
+      start: { colors: { text: '#0000ff' } },
+      recording: { colors: { primary: '#ff0000' } },
+    };
+    const full = (await request.get(`/api/designs/${design.id}`).set(auth(tokenAlice))).body;
+    await request.put(`/api/designs/${design.id}`).set(auth(tokenAlice))
+      .send({ config: { ...full.config, screenOverrides } });
+
+    await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
+
+    const meta = JSON.parse(readMeta(eventId, 'design'));
+    assert.deepEqual(meta.screenOverrides, screenOverrides);
+  });
+
   it('snapshot, pas référence : modifier le design source n\'affecte pas un événement non-preview (§11.26)', async () => {
     const eventId = await createEvent();
     const design = await createDesignWithLogo();
