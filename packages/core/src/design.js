@@ -27,11 +27,17 @@ export const DESIGN_LAYOUTS = {
   thanks: ['centered', 'cover'],
 };
 
+// Les 4 écrans du parcours invité pouvant recevoir une surcharge de couleurs
+// (design3). Même vocabulaire que DESIGN_LAYOUTS ; correspond aux états
+// S.START/S.NAME/S.QUESTIONS/S.THANKS de GuestPage.jsx (borne) — QUESTIONS ↔
+// 'recording' est la seule correspondance non littérale, câblée côté runtime.
+export const DESIGN_SCREENS = ['start', 'name', 'recording', 'thanks'];
+
 export const DESIGN_ASSET_SLOTS = ['logo', 'background'];
 // Les SEULES clés admises à la racine d'un design. Une clé inconnue ici serait
 // stockée verbatim puis recopiée dans event_meta.design et servie au kiosque :
 // c'est le premier niveau de la barrière, pas un détail cosmétique.
-export const DESIGN_KEYS = ['version', 'colors', 'radius', 'font', 'layouts', 'assets'];
+export const DESIGN_KEYS = ['version', 'colors', 'radius', 'font', 'layouts', 'assets', 'screenOverrides'];
 export const DESIGN_VERSION = 1;
 export const DESIGN_MAX_JSON = 16384;
 
@@ -72,6 +78,29 @@ export function isValidAssetFilename(filename) {
 
 const fail = (error) => ({ ok: false, error });
 
+// Factorise la validation d'un objet colors (racine ou surcharge par écran,
+// design3) : même règle des deux côtés — clé inconnue rejetée, valeur hex
+// stricte, clé manquante autorisée (fallback). `label` sert uniquement au
+// message d'erreur (ex. 'colors' ou 'screenOverrides.start.colors').
+function validateColorsObject(colors, label) {
+  if (!colors || typeof colors !== 'object' || Array.isArray(colors)) {
+    return `${label} doit être un objet.`;
+  }
+  for (const key of Object.keys(colors)) {
+    if (!DESIGN_COLOR_KEYS.includes(key)) {
+      return `Clé de couleur inconnue dans ${label} : ${key}.`;
+    }
+  }
+  for (const key of DESIGN_COLOR_KEYS) {
+    const value = colors[key];
+    if (value === undefined) continue; // clé manquante autorisée → fallback
+    if (typeof value !== 'string' || !HEX_RE.test(value)) {
+      return `${label}.${key} doit être une couleur hexadécimale (#rrggbb ou #rrggbbaa).`;
+    }
+  }
+  return null;
+}
+
 /**
  * Valide un objet design contre le contrat version 1.
  * @param {unknown} obj
@@ -108,24 +137,8 @@ export function validateDesign(obj) {
 
   // ── colors ────────────────────────────────────────────────────────────────
   if (obj.colors !== undefined) {
-    const colors = obj.colors;
-    if (!colors || typeof colors !== 'object' || Array.isArray(colors)) {
-      return fail('colors doit être un objet.');
-    }
-    // Clé inconnue → invalide. On compare l'ensemble reçu à notre whitelist, mais on
-    // n'itère jamais sur les clés reçues pour LIRE des valeurs (cf. en-tête).
-    for (const key of Object.keys(colors)) {
-      if (!DESIGN_COLOR_KEYS.includes(key)) {
-        return fail(`Clé de couleur inconnue : ${key}.`);
-      }
-    }
-    for (const key of DESIGN_COLOR_KEYS) {
-      const value = colors[key];
-      if (value === undefined) continue; // clé manquante autorisée → fallback thème
-      if (typeof value !== 'string' || !HEX_RE.test(value)) {
-        return fail(`colors.${key} doit être une couleur hexadécimale (#rrggbb ou #rrggbbaa).`);
-      }
-    }
+    const error = validateColorsObject(obj.colors, 'colors');
+    if (error) return fail(error);
   }
 
   // ── radius / font ─────────────────────────────────────────────────────────
@@ -156,6 +169,39 @@ export function validateDesign(obj) {
     }
   }
 
+  // ── screenOverrides ──────────────────────────────────────────────────────
+  // Surcharge de couleurs par écran (design3). Même pattern que layouts : on
+  // whitelist les écrans reçus contre DESIGN_SCREENS, puis on valide chaque
+  // sous-objet colors avec la MÊME fonction que colors racine (validateColorsObject) —
+  // pas de logique dupliquée qui pourrait diverger.
+  if (obj.screenOverrides !== undefined) {
+    const overrides = obj.screenOverrides;
+    if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) {
+      return fail('screenOverrides doit être un objet.');
+    }
+    for (const key of Object.keys(overrides)) {
+      if (!DESIGN_SCREENS.includes(key)) {
+        return fail(`Écran de surcharge inconnu : ${key}.`);
+      }
+    }
+    for (const screen of DESIGN_SCREENS) {
+      const entry = overrides[screen];
+      if (entry === undefined) continue;
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return fail(`screenOverrides.${screen} doit être un objet.`);
+      }
+      for (const key of Object.keys(entry)) {
+        if (key !== 'colors') {
+          return fail(`Clé de surcharge inconnue dans screenOverrides.${screen} : ${key}.`);
+        }
+      }
+      if (entry.colors !== undefined) {
+        const error = validateColorsObject(entry.colors, `screenOverrides.${screen}.colors`);
+        if (error) return fail(error);
+      }
+    }
+  }
+
   // ── assets ────────────────────────────────────────────────────────────────
   if (obj.assets !== undefined) {
     const assets = obj.assets;
@@ -177,4 +223,31 @@ export function validateDesign(obj) {
   }
 
   return { ok: true };
+}
+
+/**
+ * Résout les 18 couleurs effectives d'un écran donné : surcharge de cet écran
+ * si présente (design3), sinon valeur globale (`colors`). Source unique de
+ * vérité utilisée par le runtime kiosque (apps/borne/web) ET l'éditeur Hub
+ * (aperçu live) — aucun des deux ne doit recalculer cette logique à la main,
+ * sous peine de divergence entre ce que le client voit et ce que la borne rend.
+ *
+ * Itère uniquement sur DESIGN_COLOR_KEYS (jamais sur les clés reçues) — même
+ * barrière anti-injection que validateDesign, même si l'entrée est déjà censée
+ * avoir été validée en amont : une fonction exportée doit être sûre seule.
+ *
+ * @param {unknown} config objet design (potentiellement invalide/partiel)
+ * @param {string} screen un des DESIGN_SCREENS ; toute autre valeur retombe
+ *   silencieusement sur les couleurs globales (pas de surcharge trouvée)
+ * @returns {Record<string, string>} objet { [colorKey]: hexValue }, clés
+ *   manquantes omises (même contrat que `colors` : absence = fallback thème)
+ */
+export function resolveScreenColors(config, screen) {
+  const override = config?.screenOverrides?.[screen]?.colors;
+  const resolved = {};
+  for (const key of DESIGN_COLOR_KEYS) {
+    const value = override?.[key] !== undefined ? override[key] : config?.colors?.[key];
+    if (value !== undefined) resolved[key] = value;
+  }
+  return resolved;
 }

@@ -2,8 +2,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS, DESIGN_LAYOUTS,
-  DESIGN_MAX_JSON, RADIUS_PRESETS, FONT_PRESETS, validateDesign,
+  DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS, DESIGN_LAYOUTS, DESIGN_SCREENS,
+  DESIGN_MAX_JSON, RADIUS_PRESETS, FONT_PRESETS, validateDesign, resolveScreenColors,
 } from '../src/design.js';
 
 // Design minimal valide — sert de base à muter dans chaque cas.
@@ -32,6 +32,7 @@ describe('constantes design', () => {
     assert.deepEqual(DESIGN_FONTS, ['sans', 'serif', 'rounded', 'mono', 'humanist', 'grotesk', 'slab', 'elegant']);
     assert.deepEqual(DESIGN_LAYOUTS.start, ['centered', 'cover', 'split']);
     assert.deepEqual(DESIGN_LAYOUTS.thanks, ['centered', 'cover']);
+    assert.deepEqual(DESIGN_SCREENS, ['start', 'name', 'recording', 'thanks']);
   });
 
   test('chaque valeur d\'enum a son preset CSS (aperçu Hub et kiosque partagent la source)', () => {
@@ -75,6 +76,29 @@ describe('validateDesign — cas valides', () => {
   test('nom de fichier asset valide', () => {
     const logo = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.png';
     assert.deepEqual(validateDesign({ ...base(), assets: { logo } }), { ok: true });
+  });
+
+  test('screenOverrides absent reste valide (rétrocompatibilité design2 et antérieurs)', () => {
+    assert.deepEqual(validateDesign(base()), { ok: true });
+    assert.equal('screenOverrides' in base(), false);
+  });
+
+  test('screenOverrides : surcharge partielle sur un seul écran', () => {
+    const design = { ...base(), screenOverrides: { start: { colors: { text: '#0000ff' } } } };
+    assert.deepEqual(validateDesign(design), { ok: true });
+  });
+
+  test('screenOverrides : surcharge complète sur plusieurs écrans', () => {
+    const design = {
+      ...base(),
+      screenOverrides: {
+        start: { colors: { text: '#0000ff', bg: '#111111' } },
+        name: { colors: {} },
+        recording: { colors: { primary: '#ff0000', 'text-error': '#aa0000' } },
+        thanks: { colors: { accent: '#00ff00' } },
+      },
+    };
+    assert.deepEqual(validateDesign(design), { ok: true });
   });
 });
 
@@ -153,6 +177,33 @@ describe('validateDesign — cas invalides', () => {
     assert.deepEqual(validateDesign(full), { ok: true });
   });
 
+  test('screenOverrides : écran inconnu → invalide', () => {
+    invalid({ ...base(), screenOverrides: { unknown_screen: { colors: {} } } }, 'écran inconnu');
+  });
+
+  test('screenOverrides : clé couleur inconnue dans une surcharge → invalide', () => {
+    invalid({ ...base(), screenOverrides: { start: { colors: { 'evil-key': '#000000' } } } }, 'clé couleur inconnue');
+  });
+
+  test('screenOverrides : hex malformé dans une surcharge → invalide', () => {
+    invalid({ ...base(), screenOverrides: { start: { colors: { bg: '#fff' } } } }, 'hex 3 chiffres');
+    invalid({ ...base(), screenOverrides: { start: { colors: { bg: 'red' } } } }, 'nom CSS');
+  });
+
+  test('screenOverrides : valeur CSS libre refusée dans une surcharge (anti-injection)', () => {
+    invalid({ ...base(), screenOverrides: { start: { colors: { bg: 'url(https://evil.example/x.png)' } } } }, 'url() dans surcharge');
+  });
+
+  test('screenOverrides : clé inconnue à l\'intérieur d\'un écran → invalide', () => {
+    invalid({ ...base(), screenOverrides: { start: { radius: 'soft' } } }, 'radius dans screenOverrides.start');
+  });
+
+  test('screenOverrides : forme incorrecte → invalide', () => {
+    invalid({ ...base(), screenOverrides: 'not-an-object' }, 'screenOverrides non-objet');
+    invalid({ ...base(), screenOverrides: { start: 'not-an-object' } }, 'screenOverrides.start non-objet');
+    invalid({ ...base(), screenOverrides: [] }, 'screenOverrides array');
+  });
+
   test('JSON trop volumineux (> 16 Ko) → invalide', () => {
     // La garde de taille s'applique avant la validation du contenu : un design dont
     // toutes les clés sont légitimes mais dont une valeur est démesurée est rejeté
@@ -161,5 +212,59 @@ describe('validateDesign — cas invalides', () => {
     const r = validateDesign(huge);
     assert.equal(r.ok, false);
     assert.match(r.error, /octets/);
+  });
+});
+
+describe('resolveScreenColors', () => {
+  test('sans surcharge, retombe sur les couleurs globales', () => {
+    const config = { ...base(), colors: { bg: '#111111', text: '#eeeeee' } };
+    assert.deepEqual(resolveScreenColors(config, 'start'), { bg: '#111111', text: '#eeeeee' });
+  });
+
+  test('applique la surcharge d\'un écran et ignore les autres écrans', () => {
+    const config = {
+      ...base(),
+      colors: { bg: '#111111', text: '#eeeeee' },
+      screenOverrides: { start: { colors: { text: '#0000ff' } } },
+    };
+    assert.deepEqual(resolveScreenColors(config, 'start'), { bg: '#111111', text: '#0000ff' });
+    // 'name' n'a pas de surcharge → couleurs globales intactes.
+    assert.deepEqual(resolveScreenColors(config, 'name'), { bg: '#111111', text: '#eeeeee' });
+  });
+
+  test('surcharge partielle d\'un écran : seule la clé surchargée change, le reste hérite', () => {
+    const config = {
+      ...base(),
+      colors: { bg: '#111111', text: '#eeeeee', accent: '#ff8800' },
+      screenOverrides: { recording: { colors: { accent: '#00ff00' } } },
+    };
+    assert.deepEqual(resolveScreenColors(config, 'recording'), {
+      bg: '#111111', text: '#eeeeee', accent: '#00ff00',
+    });
+  });
+
+  test('écran hors DESIGN_SCREENS retombe silencieusement sur le global', () => {
+    const config = { ...base(), colors: { bg: '#111111' }, screenOverrides: { start: { colors: { bg: '#0000ff' } } } };
+    assert.deepEqual(resolveScreenColors(config, 'unknown_screen'), { bg: '#111111' });
+  });
+
+  test('config vide/absente ne casse pas (retourne un objet vide)', () => {
+    assert.deepEqual(resolveScreenColors(undefined, 'start'), {});
+    assert.deepEqual(resolveScreenColors({}, 'start'), {});
+    assert.deepEqual(resolveScreenColors({ version: 1 }, 'start'), {});
+  });
+
+  test('itère uniquement sur DESIGN_COLOR_KEYS, jamais sur les clés reçues (barrière anti-injection)', () => {
+    const config = {
+      ...base(),
+      colors: { bg: '#111111' },
+      screenOverrides: { start: { colors: { 'evil; background: url(x)': 'red' } } },
+    };
+    // Un design invalide échapperait normalement à validateDesign en amont, mais
+    // resolveScreenColors doit rester sûre seule : la clé hostile ne doit jamais
+    // apparaître dans le résultat, même si elle a été écrite directement en config.
+    const resolved = resolveScreenColors(config, 'start');
+    assert.ok(!('evil; background: url(x)' in resolved));
+    assert.deepEqual(resolved, { bg: '#111111' });
   });
 });

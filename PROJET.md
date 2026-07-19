@@ -647,7 +647,11 @@ designs et peuvent promouvoir un design en **template** public partagé.
   "radius": "soft",
   "font": "sans",
   "layouts": { "start": "centered", "thanks": "centered" },
-  "assets": { "logo": "3f2a….png", "background": null }
+  "assets": { "logo": "3f2a….png", "background": null },
+  "screenOverrides": {
+    "start": { "colors": { "text": "#0000ff" } },
+    "recording": { "colors": { "primary": "#ff0000", "text-error": "#aa0000" } }
+  }
 }
 ```
 
@@ -664,12 +668,25 @@ designs et peuvent promouvoir un design en **template** public partagé.
   `['centered', 'cover']`. Pas de variante en v1 pour les autres écrans.
 - `assets.logo` / `assets.background` : `null` ou nom de fichier matchant
   `/^[0-9a-f-]{36}\.(png|jpg|webp)$/` (UUID + extension — jamais de chemin, jamais de SVG).
-- Taille totale du JSON sérialisé ≤ 16 384 octets.
+- `screenOverrides` (design3) : objet dont **chaque clé appartient à `DESIGN_SCREENS`**
+  (`['start', 'name', 'recording', 'thanks']` — les 4 écrans du parcours invité). Chaque entrée
+  `screenOverrides.<screen>` n'admet que la clé `colors`, validée avec **exactement les mêmes
+  règles** que `colors` racine (whitelist `DESIGN_COLOR_KEYS`, hex strict). Écran ou couleur
+  absent(e) → hérite de la valeur globale correspondante, résolu par `resolveScreenColors(config,
+  screen)` (`packages/core/src/design.js`) : surcharge de l'écran si présente, sinon `colors`
+  global, sinon absent (fallback thème CSS). Objet `screenOverrides` entier optionnel — absent =
+  comportement identique à avant design3 (rétrocompatible avec tous les designs existants).
+- Taille totale du JSON sérialisé ≤ 16 384 octets (mesuré : un design avec 18 couleurs globales +
+  surcharges complètes sur les 4 écrans reste ≈ 2,5 Ko, largement sous la limite).
 - **Jamais de valeur CSS libre** : toute chaîne arbitraire hors des règles ci-dessus est refusée.
 
 Validation portée par une fonction pure `validateDesign(obj)` (`packages/core/src/design.js`),
 sans dépendance Node, importable aussi bien par le backend que par les deux frontends
-(l'éditeur Hub valide côté client avant envoi, le backend revalide systématiquement).
+(l'éditeur Hub valide côté client avant envoi, le backend revalide systématiquement). La
+résolution `colors` global + `screenOverrides` → couleurs effectives d'un écran est portée par la
+même fonction pure `resolveScreenColors`, réutilisée par le runtime kiosque (application des
+custom properties CSS à chaque écran) et par l'aperçu live de l'éditeur Hub — source unique, pas
+de divergence possible entre ce qu'un client voit dans l'éditeur et ce que la borne rend.
 
 ### Principe : copie snapshot, jamais référence
 
