@@ -1,21 +1,25 @@
 ---
 status: tests-pending
-base_commit: a21b603cae44a6b3eff68590556117d891979e0f
-workspaces: [@kapsule/hub-web, @kapsule/hub-server]
-generated_at: 2026-07-15T00:00:00Z
+base_commit: 32556707ec7fab6ce2f173bb183e513000f3c75e
+workspaces: [@kapsule/core, @kapsule/hub-server, @kapsule/hub-web, @kapsule/borne-web]
+generated_at: 2026-07-16T00:00:00Z
 verdict: COMMIT OK
 ---
 
 # Relais de review → tests
 
 Workspaces à tester :
-- @kapsule/hub-web (raison : `roles.js` + `roles.test.js` — nouvelle fonction `getUserId`)
-- @kapsule/hub-server (raison : `provisioner.js` nouvelle branche `networksOk`/reprovision + refactor route `preview/start` dans `events.js`, couverts par `provisioner.test.js`)
+- @kapsule/core (raison : `packages/core/src/design.js` — `DESIGN_SCREENS`, `validateColorsObject`, `screenOverrides`, `resolveScreenColors`)
+- @kapsule/hub-server (raison : tests de non-régression `designs.test.js` / `eventDesign.test.js` sur la revalidation et le snapshot de `screenOverrides`)
+- @kapsule/hub-web (raison : `DesignEditor.jsx` / `DesignPreview.jsx` modifiés — pas de suite de tests React côté hub-web, mais suite existante à faire tourner)
+- @kapsule/borne-web (raison : `applyDesign(design, screen)` et tests `test/design.test.js`)
+
+Note : borne-server n'est pas touché fonctionnellement mais partage `validateDesign` de core (revalidation `resolveDesign`) — le lancer si l'infra core est considérée touchée.
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- `getUserId` doit renvoyer un `number` (sub JWT) qui matche `owner_id` (number better-sqlite3) — vérifier que les 3 nouveaux tests couvrent bien l'extraction de `sub` numérique (déjà le cas : `sub: 42`).
-- `startPreview` : les 2 nouveaux tests couvrent le cas réseaux sains (pas de reprovision) et le cas réseau disparu (reprovision + rm + networkRm). Vérifier qu'ils passent et que le mock `networksOk` reflète bien la sémantique optionnelle.
-- Le refactor de `POST /preview/start` (idempotence via `startPreview`) ne doit pas casser les tests d'intégration existants de la route (champ `provisioned` désormais dérivé de `wasRunning`).
+- Rétrocompatibilité : un design sans `screenOverrides` doit rendre exactement comme avant (couvert par les tests core + borne-web, à confirmer verts).
+- Barrière anti-injection : `resolveScreenColors` avec une clé hostile en config directe ne doit jamais la propager (test core dédié présent).
+- `GuestPage.jsx` n'a AUCUN test automatisé (pas de suite de composants React borne-web) : le retrait de `applyDesign` dans `loadEvent` au profit du `useEffect([screen, event])` reste à valider par un humain sur la borne réelle (design3.F, case 🧑). Non bloquant côté tests.
 
 ## Corrections demandées
 

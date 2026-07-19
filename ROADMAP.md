@@ -363,3 +363,31 @@ Mêmes règles : un sous-lot backend n'est terminé que **testé** (nominal + ca
 **Terminé quand** : éditer un design met à jour la borne d'essai des événements `preview` qui
 l'utilisent sans re-cliquer « Appliquer » ; un événement `ready`+ garde sa copie figée ; l'éditeur
 prévient de l'usage, met en avant les couleurs au survol, et propose plus de polices.
+
+## Phase design3 — surcharges de couleurs par écran, avec héritage
+
+Voir PROJET.md §9bis (sous-section « Schéma JSON d'un design », clé `screenOverrides`) pour le
+contrat complet. Plan : `.claude/plans/velvet-twirling-cookie.md`.
+
+Décision actée : granularité **par écran** (pas par élément individuel) — chaque écran du parcours
+invité (accueil/prénom/enregistrement/merci) peut surcharger tout ou partie des 18 couleurs, avec
+héritage vers la valeur globale (`colors`) si non surchargée. Résolution portée par une fonction
+pure unique (`resolveScreenColors`, `packages/core/src/design.js`), réutilisée par le runtime
+kiosque ET l'éditeur Hub — pas de logique dupliquée qui pourrait diverger. UI éditeur par onglets
+(Global + un par écran), badge « Hérite (valeur) » ou état détaché avec bouton « Re-hériter ».
+Hors périmètre : granularité par élément individuel, héritage configurable au-delà de
+écran→global, édition de design côté admin Borne.
+
+Mêmes règles : un sous-lot backend n'est terminé que **testé** (nominal + cas d'erreur), relu par
+`kapsule-reviewer` (`/verif-spec`), committé en `phase design3.X: …`.
+
+- [x] design3.A : contrat core (`DESIGN_SCREENS`, validation `screenOverrides`, `resolveScreenColors`), PROJET.md §9bis, tests
+- [x] design3.B : non-régression backend (round-trip API, survie au snapshot d'application à un événement), tests
+- [x] design3.C : runtime borne (`applyDesign(design, screen)` réévalué à chaque écran, `GuestPage.jsx`), tests
+- [x] design3.D : préparation éditeur Hub (aperçu résolu par écran, correction du regroupement `thanks` manquant)
+- [x] design3.E : éditeur Hub — onglets par écran (Global/Accueil/Prénom/Enregistrement/Merci), badges hérité/détaché, bouton re-hériter
+- [ ] 🧑 design3.F : vérif rendu réel borne d'essai + iPad (surcharges par écran, transition sans flash de couleur incorrecte)
+
+**Terminé quand** : un client peut personnaliser une couleur pour un seul écran du parcours invité
+sans affecter les autres écrans, avec un bouton pour revenir à l'héritage de la couleur globale ;
+le runtime borne applique la bonne résolution à chaque changement d'écran.
