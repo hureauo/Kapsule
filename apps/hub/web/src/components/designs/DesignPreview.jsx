@@ -7,7 +7,7 @@
 // runtime kiosque, donc pas de dérive possible sur CES valeurs-là.
 
 import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
-import { DESIGN_COLOR_KEYS, RADIUS_PRESETS, FONT_PRESETS } from '@kapsule/core';
+import { DESIGN_COLOR_KEYS, RADIUS_PRESETS, FONT_PRESETS, resolveScreenColors } from '@kapsule/core';
 
 const WIDTHS = [
   { key: 'mobile', label: 'Mobile', width: 360 },
@@ -15,13 +15,15 @@ const WIDTHS = [
   { key: 'desktop', label: 'Desktop', width: 1280 },
 ];
 
-// Construit les custom properties à partir de la config. Whitelist stricte :
-// on itère sur DESIGN_COLOR_KEYS, jamais sur les clés reçues.
-function cssVarsFor(config) {
+// Construit les custom properties à partir de la config, résolues pour l'écran
+// affiché (design3 : screenOverrides > colors globales > absent). Whitelist
+// stricte déjà portée par resolveScreenColors (core) — source unique partagée
+// avec le runtime kiosque, pas de recalcul divergent ici.
+function cssVarsFor(config, screen) {
   const vars = {};
+  const colors = resolveScreenColors(config, screen);
   for (const key of DESIGN_COLOR_KEYS) {
-    const value = config?.colors?.[key];
-    if (value) vars[`--${key}`] = value;
+    if (colors[key]) vars[`--${key}`] = colors[key];
   }
   const radius = RADIUS_PRESETS[config?.radius] ?? RADIUS_PRESETS.soft;
   vars['--radius'] = radius.radius;
@@ -48,7 +50,7 @@ export default function DesignPreview({ config, hoverTarget = null }) {
   }, [hoverTarget?.screen]);
 
   const target = WIDTHS.find((w) => w.key === widthKey) ?? WIDTHS[1];
-  const vars = cssVarsFor(config);
+  const vars = cssVarsFor(config, screen);
   const pulseKey = hoverTarget?.screen === screen ? hoverTarget.key : null;
 
   // Pose/retire la classe de pulsation sur l'élément marqué data-color-target
@@ -228,12 +230,12 @@ function RecordingScreen() {
 function ThanksScreen({ config }) {
   const layout = config?.layouts?.thanks ?? 'centered';
   return (
-    <div className={`dp-screen dp-center dp-thanks dp-thanks--${layout}`}>
-      {layout === 'cover' && <div className="dp-cover" />}
+    <div className={`dp-screen dp-center dp-thanks dp-thanks--${layout}`} data-color-target="bg">
+      {layout === 'cover' && <div className="dp-cover" data-color-target="surface-alt" />}
       <div className="dp-start__body">
-        <h1 className="dp-title">Merci Camille !</h1>
-        <p className="dp-subtitle">Ton message a bien été enregistré.</p>
-        <button className="dp-btn dp-btn--secondary">Retour à l'accueil</button>
+        <h1 className="dp-title" data-color-target="text">Merci Camille !</h1>
+        <p className="dp-subtitle" data-color-target="text-muted">Ton message a bien été enregistré.</p>
+        <button className="dp-btn dp-btn--secondary" data-color-target="btn-secondary-bg">Retour à l'accueil</button>
       </div>
     </div>
   );

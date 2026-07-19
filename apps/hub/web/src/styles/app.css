@@ -721,6 +721,32 @@ button { cursor: pointer; font: inherit; }
 }
 .designs-color-hex { font-family: monospace; text-transform: lowercase; }
 
+/* Onglets du fieldset Couleurs (design3 : Global + un par écran). Réutilise les
+   classes .btn existantes — pas de nouveau composant bouton. */
+.designs-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+/* Ligne couleur d'un onglet écran : cue + label + (badge hérité OU picker+hex)
+   + bouton d'action (Détacher/Re-hériter) — une 5e colonne pour le bouton
+   d'action, que la ligne Global (4 colonnes, pas de bouton par ligne) n'a pas.
+   grid-column: -1 sur le bouton : qu'il y ait 4 enfants (état hérité) ou 5
+   (état détaché), le bouton reste toujours dans la dernière colonne. */
+.designs-color-row--screen {
+  grid-template-columns: auto 1fr auto auto auto;
+}
+.designs-color-row--screen > button {
+  grid-column: -1;
+}
+.designs-badge--inherit {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .designs-layout-row {
   display: flex;
   flex-direction: column;
