@@ -150,6 +150,17 @@ const S = {
 // QUESTIONS exclu : rec/upload y vivent et ne doivent jamais être interrompus.
 const IDLE_SCREENS = new Set([S.NAME]);
 
+// Correspondance état runtime → écran design (design3, DESIGN_SCREENS de
+// @kapsule/core). Un état absent de cette table (LOADING/ERROR/CLOSED/LOGIN/
+// RESUME/RECAP) retombe sur `undefined` → resolveScreenColors applique les
+// couleurs globales (dégradation silencieuse assumée, pas de crash).
+const DESIGN_SCREEN_BY_STATE = {
+  [S.START]: 'start',
+  [S.NAME]: 'name',
+  [S.QUESTIONS]: 'recording',
+  [S.THANKS]: 'thanks',
+};
+
 export default function GuestPage({ isPreview = false }) {
   const [screen, setScreen] = useState(S.LOADING);
   const [event, setEvent] = useState(null);
@@ -187,10 +198,9 @@ export default function GuestPage({ isPreview = false }) {
       // Applique le thème choisi par l'admin (data-theme sur <html>) — défaut 'cute'.
       document.documentElement.setAttribute('data-theme', evtData.theme ?? 'cute');
 
-      // Puis, s'il existe, le design personnalisé de l'événement : il pose des
-      // custom properties par-dessus le thème (§9bis). `null` retire tout et
-      // rend la main au thème figé.
-      applyDesign(evtData.design ?? null);
+      // Le design personnalisé de l'événement (s'il existe) est appliqué par le
+      // useEffect [screen, event] ci-dessous — il pose des custom properties
+      // par-dessus le thème (§9bis) et se réévalue à chaque écran (design3).
 
       if (evtData.status === 'closed') {
         setScreen(S.CLOSED);
@@ -221,6 +231,15 @@ export default function GuestPage({ isPreview = false }) {
   }, []);
 
   useEffect(() => { loadEvent(); }, [loadEvent]);
+
+  // Réapplique le design à chaque changement d'écran (design3) : une surcharge
+  // par écran ne peut prendre effet que si applyDesign est rappelée avec l'écran
+  // courant — l'appel unique au chargement (dans loadEvent) ne suffit plus.
+  // Idempotent avec l'appel initial (mêmes valeurs si aucune surcharge).
+  useEffect(() => {
+    if (!event) return;
+    applyDesign(event.design ?? null, DESIGN_SCREEN_BY_STATE[screen]);
+  }, [screen, event]);
 
   // ── Polling config en mode preview ────────────────────────────────────────
   // Sur la borne réelle, la config ne change pas en cours d'événement.

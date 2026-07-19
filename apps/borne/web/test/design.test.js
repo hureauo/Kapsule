@@ -91,4 +91,58 @@ describe('applyDesign', () => {
     assert.equal(props.get('--bg'), '#ff0000');
     assert.equal(props.has('--accent'), false, 'la couleur de l\'ancien design doit disparaître');
   });
+
+  // design3 : surcharges de couleurs par écran, avec héritage vers le global.
+  test('sans second argument, comportement identique à avant design3 (rétrocompat)', () => {
+    applyDesign({ colors: { bg: '#101020', accent: '#ff8800' } });
+    assert.equal(props.get('--bg'), '#101020');
+    assert.equal(props.get('--accent'), '#ff8800');
+  });
+
+  test('applique la surcharge de l\'écran demandé', () => {
+    applyDesign({
+      colors: { bg: '#101020', text: '#eeeeee' },
+      screenOverrides: { start: { colors: { text: '#0000ff' } } },
+    }, 'start');
+
+    assert.equal(props.get('--bg'), '#101020'); // hérite (pas surchargé)
+    assert.equal(props.get('--text'), '#0000ff'); // surchargé pour 'start'
+  });
+
+  test('un écran sans surcharge retombe sur les couleurs globales', () => {
+    applyDesign({
+      colors: { bg: '#101020', text: '#eeeeee' },
+      screenOverrides: { start: { colors: { text: '#0000ff' } } },
+    }, 'name'); // 'name' n'a pas de surcharge
+
+    assert.equal(props.get('--text'), '#eeeeee');
+  });
+
+  test('un écran inconnu (hors DESIGN_SCREENS) retombe silencieusement sur le global', () => {
+    applyDesign({
+      colors: { bg: '#101020' },
+      screenOverrides: { start: { colors: { bg: '#0000ff' } } },
+    }, 'unknown_screen');
+
+    assert.equal(props.get('--bg'), '#101020');
+  });
+
+  test('changer d\'écran (deux appels successifs) réapplique la résolution à chaque fois', () => {
+    const design = {
+      colors: { bg: '#101020', primary: '#ffffff' },
+      screenOverrides: {
+        start: { colors: { primary: '#0000ff' } },
+        recording: { colors: { primary: '#ff0000' } },
+      },
+    };
+
+    applyDesign(design, 'start');
+    assert.equal(props.get('--primary'), '#0000ff');
+
+    applyDesign(design, 'recording');
+    assert.equal(props.get('--primary'), '#ff0000');
+
+    applyDesign(design, 'thanks'); // pas de surcharge sur cet écran
+    assert.equal(props.get('--primary'), '#ffffff');
+  });
 });

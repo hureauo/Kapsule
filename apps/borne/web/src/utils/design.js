@@ -1,4 +1,4 @@
-import { DESIGN_COLOR_KEYS, RADIUS_PRESETS, FONT_PRESETS } from '@kapsule/core';
+import { DESIGN_COLOR_KEYS, RADIUS_PRESETS, FONT_PRESETS, resolveScreenColors } from '@kapsule/core';
 
 // Application d'un design au kiosque (§9bis).
 //
@@ -24,8 +24,11 @@ const MANAGED_VARS = [
 /**
  * Applique (ou retire) un design sur <html>.
  * @param {object|null} design — l'objet exposé par GET /api/event, ou null.
+ * @param {string} [screen] — écran design courant (design3, un des DESIGN_SCREENS
+ *   de @kapsule/core). Omis ou inconnu → couleurs globales (comportement d'avant
+ *   design3, appelants existants non affectés par ce paramètre optionnel).
  */
-export function applyDesign(design) {
+export function applyDesign(design, screen) {
   const root = document.documentElement;
 
   for (const name of MANAGED_VARS) {
@@ -34,8 +37,12 @@ export function applyDesign(design) {
 
   if (!design) return; // pas de design → le thème figé (data-theme) reprend la main
 
+  // resolveScreenColors résout déjà "surcharge écran > global > absent" en
+  // n'itérant que sur DESIGN_COLOR_KEYS (même barrière anti-injection que le
+  // reste de ce fichier) — source unique partagée avec l'éditeur Hub.
+  const colors = resolveScreenColors(design, screen);
   for (const key of DESIGN_COLOR_KEYS) {
-    const value = design.colors?.[key];
+    const value = colors[key];
     if (value) root.style.setProperty(`--${key}`, value);
   }
 
