@@ -140,7 +140,7 @@ function Screen({ screen, config, designId }) {
   return <StartScreen config={config} designId={designId} />;
 }
 
-// Image réellement uploadée si un asset existe pour ce slot, sinon un
+// Image réellement uploadée si un fichier existe pour cet écran, sinon un
 // placeholder — même logique que AssetRow (DesignEditor.jsx) : l'aperçu doit
 // refléter ce que la borne affichera réellement, pas un gabarit approximatif.
 function AssetImage({ designId, filename, alt, className, placeholderClassName, placeholderLabel }) {
@@ -151,53 +151,39 @@ function AssetImage({ designId, filename, alt, className, placeholderClassName, 
 }
 
 function StartScreen({ config, designId }) {
-  const layout = config?.layouts?.start ?? 'centered';
-  const logo = config?.assets?.logo ?? null;
-  const background = config?.assets?.background ?? null;
-  // Comme le runtime kiosque (StartScreen.jsx, borne) : un fond téléversé ne
-  // s'affiche que sur la disposition qui le prévoit (cover).
-  const coverUrl = designId && background ? api.designAssetUrl(designId, background) : null;
-  const logoEl = (
-    <AssetImage
-      designId={designId}
-      filename={logo}
-      alt="Logo"
-      className="dp-logo-img"
-      placeholderClassName="dp-logo-placeholder"
-      placeholderLabel="Logo"
-    />
-  );
+  // Une seule image par écran (design4) : mode centered/cover/none.
+  const image = config?.images?.start ?? { mode: 'none', filename: null };
+  const coverUrl = designId && image.mode === 'cover' && image.filename
+    ? api.designAssetUrl(designId, image.filename)
+    : null;
+  const centeredEl = image.mode === 'centered'
+    ? (
+      <AssetImage
+        designId={designId}
+        filename={image.filename}
+        alt=""
+        className="dp-logo-img"
+        placeholderClassName="dp-logo-placeholder"
+        placeholderLabel="Image"
+      />
+    )
+    : null;
 
   return (
-    <div className={`dp-screen dp-start dp-start--${layout}`} data-color-target="bg">
-      {layout === 'split' ? (
-        <>
-          <div className="dp-start__aside">
-            {logoEl}
-          </div>
-          <div className="dp-start__body">
-            <h1 className="dp-title" data-color-target="text">Mariage Léa &amp; Hugo</h1>
-            <p className="dp-subtitle" data-color-target="text-muted">Laissez-nous un message vidéo</p>
-            <button className="dp-btn dp-btn--accent" data-color-target="accent">Commencer</button>
-          </div>
-        </>
-      ) : (
-        <>
-          {layout === 'cover' && (
-            <div
-              className={`dp-cover ${coverUrl ? '' : 'dp-cover--placeholder'}`}
-              data-color-target="surface-alt"
-              style={coverUrl ? { backgroundImage: `url("${coverUrl}")` } : undefined}
-            />
-          )}
-          <div className="dp-start__body">
-            {logoEl}
-            <h1 className="dp-title" data-color-target="text">Mariage Léa &amp; Hugo</h1>
-            <p className="dp-subtitle" data-color-target="text-muted">Laissez-nous un message vidéo</p>
-            <button className="dp-btn dp-btn--accent" data-color-target="accent">Commencer</button>
-          </div>
-        </>
+    <div className={`dp-screen dp-start dp-start--${image.mode}`} data-color-target="bg">
+      {image.mode === 'cover' && (
+        <div
+          className={`dp-cover ${coverUrl ? '' : 'dp-cover--placeholder'}`}
+          data-color-target="surface-alt"
+          style={coverUrl ? { backgroundImage: `url("${coverUrl}")` } : undefined}
+        />
       )}
+      <div className="dp-start__body">
+        {centeredEl}
+        <h1 className="dp-title" data-color-target="text">Mariage Léa &amp; Hugo</h1>
+        <p className="dp-subtitle" data-color-target="text-muted">Laissez-nous un message vidéo</p>
+        <button className="dp-btn dp-btn--accent" data-color-target="accent">Commencer</button>
+      </div>
     </div>
   );
 }
@@ -263,13 +249,26 @@ function RecordingScreen() {
 }
 
 function ThanksScreen({ config, designId }) {
-  const layout = config?.layouts?.thanks ?? 'centered';
-  const background = config?.assets?.background ?? null;
-  const coverUrl = designId && background ? api.designAssetUrl(designId, background) : null;
+  const image = config?.images?.thanks ?? { mode: 'none', filename: null };
+  const coverUrl = designId && image.mode === 'cover' && image.filename
+    ? api.designAssetUrl(designId, image.filename)
+    : null;
+  const centeredEl = image.mode === 'centered'
+    ? (
+      <AssetImage
+        designId={designId}
+        filename={image.filename}
+        alt=""
+        className="dp-logo-img"
+        placeholderClassName="dp-logo-placeholder"
+        placeholderLabel="Image"
+      />
+    )
+    : null;
 
   return (
-    <div className={`dp-screen dp-center dp-thanks dp-thanks--${layout}`} data-color-target="bg">
-      {layout === 'cover' && (
+    <div className={`dp-screen dp-center dp-thanks dp-thanks--${image.mode}`} data-color-target="bg">
+      {image.mode === 'cover' && (
         <div
           className={`dp-cover ${coverUrl ? '' : 'dp-cover--placeholder'}`}
           data-color-target="surface-alt"
@@ -277,6 +276,7 @@ function ThanksScreen({ config, designId }) {
         />
       )}
       <div className="dp-start__body">
+        {centeredEl}
         <h1 className="dp-title" data-color-target="text">Merci Camille !</h1>
         <p className="dp-subtitle" data-color-target="text-muted">Ton message a bien été enregistré.</p>
         <button className="dp-btn dp-btn--secondary" data-color-target="btn-secondary-bg">Retour à l'accueil</button>

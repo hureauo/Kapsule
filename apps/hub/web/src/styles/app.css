@@ -747,13 +747,18 @@ button { cursor: pointer; font: inherit; }
   white-space: nowrap;
 }
 
-.designs-layout-row {
+/* Une ligne par écran (design4) : label + 3 radios de mode + zone d'upload
+   conditionnelle (AssetRow, visible seulement si mode ≠ 'none'). */
+.designs-image-row {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
 }
-.designs-layout-row__label { font-size: 14px; font-weight: 500; }
-.designs-layout-row__options { display: flex; gap: 14px; flex-wrap: wrap; }
+.designs-image-row:first-of-type { border-top: none; padding-top: 0; }
+.designs-image-row__label { font-size: 14px; font-weight: 500; }
+.designs-image-row__modes { display: flex; gap: 14px; flex-wrap: wrap; }
 .designs-radio { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 
 /* ── Aperçu live : maquettes statiques du kiosque ─────────────────────────── */
@@ -985,13 +990,12 @@ button { cursor: pointer; font: inherit; }
   object-fit: contain;
 }
 
-/* Variantes d'accueil : centered (pile), cover (image de fond), split (2 col.) */
+/* Modes d'image de l'écran d'accueil (design4) : centered (image au milieu),
+   cover (fond plein écran), none (pas d'image) — plus de layout 'split'. */
 .dp-start { display: flex; }
 .dp-start--centered,
-.dp-start--cover { align-items: center; justify-content: center; }
-.dp-start--split { align-items: center; gap: 32px; }
-.dp-start--split .dp-start__aside { flex: 0 0 auto; }
-.dp-start--split .dp-start__body { flex: 1; text-align: left; align-items: flex-start; }
+.dp-start--cover,
+.dp-start--none { align-items: center; justify-content: center; }
 
 .dp-start__body {
   display: flex;
@@ -1019,14 +1023,14 @@ button { cursor: pointer; font: inherit; }
 .dp-thanks--cover .dp-start__body,
 .dp-start--cover .dp-start__body { z-index: 1; }
 
-/* Images d'un design (§9bis) */
+/* Images d'un design (§9bis, design4 : une seule image par écran, plus de
+   label de slot — l'écran est déjà nommé au niveau de la ligne parente). */
 .designs-asset-row {
   display: grid;
-  grid-template-columns: 120px 64px 1fr;
+  grid-template-columns: 64px 1fr;
   align-items: center;
   gap: 12px;
 }
-.designs-asset-row__label { font-size: 14px; }
 .designs-asset-row__preview {
   width: 64px;
   height: 48px;

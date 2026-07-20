@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS, DESIGN_LAYOUTS, DESIGN_ASSET_SLOTS,
-  DESIGN_SCREENS, validateDesign, resolveScreenColors,
+  DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS,
+  DESIGN_SCREENS, DESIGN_IMAGE_SCREENS, DESIGN_IMAGE_MODES,
+  validateDesign, resolveScreenColors,
 } from '@kapsule/core';
 import { api } from '../../api/client.js';
 import DesignPreview from './DesignPreview.jsx';
@@ -112,10 +113,16 @@ const FONT_LABELS = {
   slab: 'Slab serif',
   elegant: 'Élégante',
 };
-const LAYOUT_LABELS = {
-  centered: 'Centré',
-  cover: 'Image plein écran',
-  split: 'Deux colonnes',
+// Labels des 3 états d'image par écran (design4 : une seule image, plus de
+// distinction logo/fond ni de layout 'split').
+const IMAGE_MODE_LABELS = {
+  centered: 'Centrée',
+  cover: 'Plein écran',
+  none: 'Pas d\'image',
+};
+const IMAGE_SCREEN_LABELS = {
+  start: 'Écran d\'accueil',
+  thanks: 'Écran de remerciement',
 };
 
 // <input type="color"> ne connaît pas le canal alpha : on ne lui montre que les
@@ -174,7 +181,25 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
   }
 
   const setColor = (key, value) => update({ colors: { ...config.colors, [key]: value } });
-  const setLayout = (screen, value) => update({ layouts: { ...config.layouts, [screen]: value } });
+
+  // Change le mode d'affichage de l'image d'un écran (design4). Passer à 'none'
+  // retire aussi le fichier (cohérence mode/filename imposée par validateDesign :
+  // 'none' ⇒ filename doit être null) — et le supprime réellement côté serveur
+  // via deleteDesignAsset, pas seulement dans ce state local.
+  async function setImageMode(screen, mode) {
+    const current = config.images?.[screen] ?? { mode: 'none', filename: null };
+    if (mode === 'none') {
+      if (current.filename) {
+        try { await api.deleteDesignAsset(design.id, screen); } catch (err) { onError?.(err.message); return; }
+      }
+      update({ images: { ...config.images, [screen]: { mode: 'none', filename: null } } });
+      return;
+    }
+    // Passer à 'centered'/'cover' sans fichier existant : le mode est mémorisé
+    // localement (validateDesign le rejettera tant qu'aucun fichier n'est
+    // uploadé — bouton Enregistrer désactivé via `invalid`, cf. AssetRow).
+    update({ images: { ...config.images, [screen]: { ...current, mode } } });
+  }
 
   // Surcharge/re-héritage d'une couleur pour UN écran (design3). Même fonction
   // update() que le reste : revalidation immédiate côté client (validateDesign).
@@ -492,46 +517,41 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
 
         <fieldset className="designs-fieldset" disabled={readOnly}>
           <legend className="designs-fieldset__legend">Images</legend>
-          {DESIGN_ASSET_SLOTS.map((slot) => (
-            <AssetRow
-              key={slot}
-              slot={slot}
-              designId={design.id}
-              filename={config.assets?.[slot] ?? null}
-              readOnly={readOnly}
-              onChanged={onSaved}
-              onError={onError}
-            />
-          ))}
           <p className="text--muted designs-hint">
-            PNG, JPEG ou WebP, 2 Mo maximum. Le fond n'est visible que sur les dispositions
-            « Image plein écran ».
+            Une image par écran, PNG/JPEG/WebP 2 Mo maximum.
           </p>
-        </fieldset>
-
-        <fieldset className="designs-fieldset" disabled={readOnly}>
-          <legend className="designs-fieldset__legend">Dispositions</legend>
-          {Object.entries(DESIGN_LAYOUTS).map(([screen, options]) => (
-            <div className="designs-layout-row" key={screen}>
-              <span className="designs-layout-row__label">
-                {screen === 'start' ? 'Écran d\'accueil' : 'Écran de remerciement'}
-              </span>
-              <div className="designs-layout-row__options">
-                {options.map((opt) => (
-                  <label key={opt} className="designs-radio">
-                    <input
-                      type="radio"
-                      name={`layout-${screen}`}
-                      value={opt}
-                      checked={(config.layouts?.[screen] ?? 'centered') === opt}
-                      onChange={() => setLayout(screen, opt)}
-                    />
-                    {LAYOUT_LABELS[opt]}
-                  </label>
-                ))}
+          {DESIGN_IMAGE_SCREENS.map((screen) => {
+            const entry = config.images?.[screen] ?? { mode: 'none', filename: null };
+            return (
+              <div className="designs-image-row" key={screen}>
+                <span className="designs-image-row__label">{IMAGE_SCREEN_LABELS[screen]}</span>
+                <div className="designs-image-row__modes">
+                  {DESIGN_IMAGE_MODES.map((mode) => (
+                    <label key={mode} className="designs-radio">
+                      <input
+                        type="radio"
+                        name={`image-mode-${screen}`}
+                        value={mode}
+                        checked={entry.mode === mode}
+                        onChange={() => setImageMode(screen, mode)}
+                      />
+                      {IMAGE_MODE_LABELS[mode]}
+                    </label>
+                  ))}
+                </div>
+                {entry.mode !== 'none' && (
+                  <AssetRow
+                    screen={screen}
+                    designId={design.id}
+                    filename={entry.filename}
+                    readOnly={readOnly}
+                    onChanged={onSaved}
+                    onError={onError}
+                  />
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </fieldset>
       </div>
 
@@ -542,11 +562,12 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
   );
 }
 
-const SLOT_LABELS = { logo: 'Logo', background: 'Image de fond' };
-
-// Upload d'une image. L'upload est immédiat (il crée sa propre version côté
-// serveur) — contrairement aux tokens, il n'attend pas le bouton « Enregistrer ».
-function AssetRow({ slot, designId, filename, readOnly, onChanged, onError }) {
+// Upload d'une image pour un écran. L'upload est immédiat (il crée sa propre
+// version côté serveur) — contrairement aux tokens, il n'attend pas le bouton
+// « Enregistrer ». Le retrait se fait via la radio « Pas d'image » (design4,
+// setImageMode) qui appelle deleteDesignAsset — pas de bouton dédié ici, pour
+// ne pas avoir deux façons de faire la même chose.
+function AssetRow({ screen, designId, filename, readOnly, onChanged, onError }) {
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
 
@@ -555,7 +576,7 @@ function AssetRow({ slot, designId, filename, readOnly, onChanged, onError }) {
     if (!file) return;
     setBusy(true);
     try {
-      await api.uploadDesignAsset(designId, slot, file);
+      await api.uploadDesignAsset(designId, screen, file);
       await onChanged?.();
     } catch (err) {
       onError?.(err.message);
@@ -565,30 +586,16 @@ function AssetRow({ slot, designId, filename, readOnly, onChanged, onError }) {
     }
   }
 
-  async function handleRemove() {
-    setBusy(true);
-    try {
-      await api.deleteDesignAsset(designId, slot);
-      await onChanged?.();
-    } catch (err) {
-      onError?.(err.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="designs-asset-row">
-      <span className="designs-asset-row__label">{SLOT_LABELS[slot]}</span>
-
       {filename ? (
         <img
           className="designs-asset-row__preview"
           src={api.designAssetUrl(designId, filename)}
-          alt={SLOT_LABELS[slot]}
+          alt=""
         />
       ) : (
-        <span className="designs-asset-row__empty">Aucune image</span>
+        <span className="designs-asset-row__empty">Aucune image — choisissez un fichier</span>
       )}
 
       {!readOnly && (
@@ -601,11 +608,6 @@ function AssetRow({ slot, designId, filename, readOnly, onChanged, onError }) {
             disabled={busy}
             className="designs-asset-row__input"
           />
-          {filename && (
-            <button className="btn btn--sm btn--ghost" onClick={handleRemove} disabled={busy}>
-              Retirer
-            </button>
-          )}
         </div>
       )}
     </div>

@@ -94,12 +94,13 @@ export const api = {
   promoteDesign: (id) => apiFetch(`/designs/${id}/promote`, { method: 'POST' }),
   demoteDesign: (id) => apiFetch(`/designs/${id}/demote`, { method: 'POST' }),
   // Assets : multipart, donc pas de Content-Type JSON (apiFetch laisse passer FormData).
-  uploadDesignAsset: (id, slot, file) => {
+  // Une seule image par écran (design4) — screen vaut 'start' ou 'thanks'.
+  uploadDesignAsset: (id, screen, file) => {
     const form = new FormData();
     form.append('file', file);
-    return apiFetch(`/designs/${id}/assets?slot=${slot}`, { method: 'POST', body: form });
+    return apiFetch(`/designs/${id}/assets?screen=${screen}`, { method: 'POST', body: form });
   },
-  deleteDesignAsset: (id, slot) => apiFetch(`/designs/${id}/assets/${slot}`, { method: 'DELETE' }),
+  deleteDesignAsset: (id, screen) => apiFetch(`/designs/${id}/assets/${screen}`, { method: 'DELETE' }),
   designAssetUrl: (id, filename) => `/api/designs/${id}/assets/${filename}?token=${getToken()}`,
 
   listDesignVersions: (id) => apiFetch(`/designs/${id}/versions`),
