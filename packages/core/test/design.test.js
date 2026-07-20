@@ -2,7 +2,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS, DESIGN_LAYOUTS, DESIGN_SCREENS,
+  DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS, DESIGN_SCREENS,
+  DESIGN_IMAGE_SCREENS, DESIGN_IMAGE_MODES,
   DESIGN_MAX_JSON, RADIUS_PRESETS, FONT_PRESETS, validateDesign, resolveScreenColors,
 } from '../src/design.js';
 
@@ -12,8 +13,10 @@ const base = () => ({
   colors: { bg: '#FFF8EE', accent: '#F27405' },
   radius: 'soft',
   font: 'sans',
-  layouts: { start: 'centered', thanks: 'centered' },
-  assets: { logo: null, background: null },
+  images: {
+    start: { mode: 'none', filename: null },
+    thanks: { mode: 'none', filename: null },
+  },
 });
 
 describe('constantes design', () => {
@@ -30,9 +33,9 @@ describe('constantes design', () => {
   test('les enums sont fermées', () => {
     assert.deepEqual(DESIGN_RADIUS, ['sharp', 'soft', 'round']);
     assert.deepEqual(DESIGN_FONTS, ['sans', 'serif', 'rounded', 'mono', 'humanist', 'grotesk', 'slab', 'elegant']);
-    assert.deepEqual(DESIGN_LAYOUTS.start, ['centered', 'cover', 'split']);
-    assert.deepEqual(DESIGN_LAYOUTS.thanks, ['centered', 'cover']);
     assert.deepEqual(DESIGN_SCREENS, ['start', 'name', 'recording', 'thanks']);
+    assert.deepEqual(DESIGN_IMAGE_SCREENS, ['start', 'thanks']);
+    assert.deepEqual(DESIGN_IMAGE_MODES, ['centered', 'cover', 'none']);
   });
 
   test('chaque valeur d\'enum a son preset CSS (aperçu Hub et kiosque partagent la source)', () => {
@@ -69,13 +72,26 @@ describe('validateDesign — cas valides', () => {
     assert.deepEqual(validateDesign({ version: 1 }), { ok: true });
   });
 
-  test('assets null (pas d\'image)', () => {
-    assert.deepEqual(validateDesign({ ...base(), assets: { logo: null } }), { ok: true });
+  test('images absentes reste valide (rétrocompatibilité)', () => {
+    const { images, ...withoutImages } = base();
+    assert.deepEqual(validateDesign(withoutImages), { ok: true });
   });
 
-  test('nom de fichier asset valide', () => {
-    const logo = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.png';
-    assert.deepEqual(validateDesign({ ...base(), assets: { logo } }), { ok: true });
+  test('images.<screen> mode "none" avec filename null', () => {
+    const design = { ...base(), images: { start: { mode: 'none', filename: null } } };
+    assert.deepEqual(validateDesign(design), { ok: true });
+  });
+
+  test('images.<screen> mode "centered"/"cover" avec un nom de fichier valide', () => {
+    const filename = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.png';
+    assert.deepEqual(
+      validateDesign({ ...base(), images: { start: { mode: 'centered', filename } } }),
+      { ok: true },
+    );
+    assert.deepEqual(
+      validateDesign({ ...base(), images: { thanks: { mode: 'cover', filename } } }),
+      { ok: true },
+    );
   });
 
   test('screenOverrides absent reste valide (rétrocompatibilité design2 et antérieurs)', () => {
@@ -144,20 +160,38 @@ describe('validateDesign — cas invalides', () => {
     invalid({ ...base(), font: 'comic' }, 'font inconnue');
   });
 
-  test('layout hors enum', () => {
-    invalid({ ...base(), layouts: { start: 'diagonal' } }, 'start inconnu');
-    // 'split' n'existe que pour start, pas pour thanks
-    invalid({ ...base(), layouts: { thanks: 'split' } }, 'thanks split');
-    invalid({ ...base(), layouts: { unknown_screen: 'centered' } }, 'écran inconnu');
+  test('images : écran inconnu → invalide', () => {
+    invalid({ ...base(), images: { unknown_screen: { mode: 'none', filename: null } } }, 'écran inconnu');
   });
 
-  test('asset : SVG et chemins refusés', () => {
+  test('images : mode hors enum → invalide', () => {
+    invalid({ ...base(), images: { start: { mode: 'split', filename: null } } }, 'mode split retiré (design4)');
+    invalid({ ...base(), images: { start: { mode: 'diagonal', filename: null } } }, 'mode inconnu');
+  });
+
+  test('images : incohérence mode/filename → invalide', () => {
+    const filename = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.png';
+    invalid({ ...base(), images: { start: { mode: 'none', filename } } }, 'filename présent alors que mode=none');
+    invalid({ ...base(), images: { start: { mode: 'cover', filename: null } } }, 'filename manquant alors que mode=cover');
+    invalid({ ...base(), images: { start: { mode: 'centered' } } }, 'filename absent alors que mode=centered');
+  });
+
+  test('images : clé inconnue à l\'intérieur d\'un écran → invalide', () => {
+    invalid({ ...base(), images: { start: { mode: 'none', filename: null, extra: true } } }, 'clé extra');
+  });
+
+  test('images : SVG et chemins refusés', () => {
     const uuid = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b';
-    invalid({ ...base(), assets: { logo: `${uuid}.svg` } }, 'svg');
-    invalid({ ...base(), assets: { logo: '../../etc/passwd' } }, 'path traversal');
-    invalid({ ...base(), assets: { logo: `dir/${uuid}.png` } }, 'chemin');
-    invalid({ ...base(), assets: { logo: 'logo.png' } }, 'pas un uuid');
-    invalid({ ...base(), assets: { evil: `${uuid}.png` } }, 'slot inconnu');
+    invalid({ ...base(), images: { start: { mode: 'centered', filename: `${uuid}.svg` } } }, 'svg');
+    invalid({ ...base(), images: { start: { mode: 'centered', filename: '../../etc/passwd' } } }, 'path traversal');
+    invalid({ ...base(), images: { start: { mode: 'centered', filename: `dir/${uuid}.png` } } }, 'chemin');
+    invalid({ ...base(), images: { start: { mode: 'centered', filename: 'logo.png' } } }, 'pas un uuid');
+  });
+
+  test('images : forme incorrecte → invalide', () => {
+    invalid({ ...base(), images: 'not-an-object' }, 'images non-objet');
+    invalid({ ...base(), images: { start: 'not-an-object' } }, 'images.start non-objet');
+    invalid({ ...base(), images: [] }, 'images array');
   });
 
   test('clé racine inconnue → invalide (whitelist du 1er niveau)', () => {
@@ -208,7 +242,7 @@ describe('validateDesign — cas invalides', () => {
     // La garde de taille s'applique avant la validation du contenu : un design dont
     // toutes les clés sont légitimes mais dont une valeur est démesurée est rejeté
     // sur la taille (message dédié), pas seulement sur la forme de la valeur.
-    const huge = { ...base(), assets: { logo: 'x'.repeat(DESIGN_MAX_JSON) } };
+    const huge = { ...base(), images: { start: { mode: 'centered', filename: 'x'.repeat(DESIGN_MAX_JSON) } } };
     const r = validateDesign(huge);
     assert.equal(r.ok, false);
     assert.match(r.error, /octets/);

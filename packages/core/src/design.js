@@ -22,22 +22,25 @@ export const DESIGN_COLOR_KEYS = [
 
 export const DESIGN_RADIUS = ['sharp', 'soft', 'round'];
 export const DESIGN_FONTS = ['sans', 'serif', 'rounded', 'mono', 'humanist', 'grotesk', 'slab', 'elegant'];
-export const DESIGN_LAYOUTS = {
-  start: ['centered', 'cover', 'split'],
-  thanks: ['centered', 'cover'],
-};
 
 // Les 4 écrans du parcours invité pouvant recevoir une surcharge de couleurs
-// (design3). Même vocabulaire que DESIGN_LAYOUTS ; correspond aux états
-// S.START/S.NAME/S.QUESTIONS/S.THANKS de GuestPage.jsx (borne) — QUESTIONS ↔
-// 'recording' est la seule correspondance non littérale, câblée côté runtime.
+// (design3). Correspond aux états S.START/S.NAME/S.QUESTIONS/S.THANKS de
+// GuestPage.jsx (borne) — QUESTIONS ↔ 'recording' est la seule correspondance
+// non littérale, câblée côté runtime.
 export const DESIGN_SCREENS = ['start', 'name', 'recording', 'thanks'];
 
-export const DESIGN_ASSET_SLOTS = ['logo', 'background'];
+// design4 : une seule image par écran (accueil/remerciement), 3 états exacts.
+// Remplace l'ancien couple assets{logo,background} + layouts{centered,cover,split} —
+// un seul système au lieu de deux à coordonner. 'split' (logo à gauche, texte à
+// droite) est retiré : il n'avait de sens que séparé du texte, ce qui n'existe
+// plus avec une image unique par écran.
+export const DESIGN_IMAGE_SCREENS = ['start', 'thanks'];
+export const DESIGN_IMAGE_MODES = ['centered', 'cover', 'none'];
+
 // Les SEULES clés admises à la racine d'un design. Une clé inconnue ici serait
 // stockée verbatim puis recopiée dans event_meta.design et servie au kiosque :
 // c'est le premier niveau de la barrière, pas un détail cosmétique.
-export const DESIGN_KEYS = ['version', 'colors', 'radius', 'font', 'layouts', 'assets', 'screenOverrides'];
+export const DESIGN_KEYS = ['version', 'colors', 'radius', 'font', 'images', 'screenOverrides'];
 export const DESIGN_VERSION = 1;
 export const DESIGN_MAX_JSON = 16384;
 
@@ -149,22 +152,44 @@ export function validateDesign(obj) {
     return fail(`font doit valoir ${DESIGN_FONTS.join(', ')}.`);
   }
 
-  // ── layouts ───────────────────────────────────────────────────────────────
-  if (obj.layouts !== undefined) {
-    const layouts = obj.layouts;
-    if (!layouts || typeof layouts !== 'object' || Array.isArray(layouts)) {
-      return fail('layouts doit être un objet.');
+  // ── images ────────────────────────────────────────────────────────────────
+  // Une seule image par écran (design4), 3 états exacts : { mode, filename }.
+  // Même pattern que screenOverrides/colors : whitelist des écrans reçus contre
+  // DESIGN_IMAGE_SCREENS, puis whitelist stricte des 2 clés à l'intérieur —
+  // jamais itéré sur les clés reçues pour les copier (barrière anti-injection).
+  if (obj.images !== undefined) {
+    const images = obj.images;
+    if (!images || typeof images !== 'object' || Array.isArray(images)) {
+      return fail('images doit être un objet.');
     }
-    for (const key of Object.keys(layouts)) {
-      if (!Object.hasOwn(DESIGN_LAYOUTS, key)) {
-        return fail(`Écran de layout inconnu : ${key}.`);
+    for (const key of Object.keys(images)) {
+      if (!DESIGN_IMAGE_SCREENS.includes(key)) {
+        return fail(`Écran d'image inconnu : ${key}.`);
       }
     }
-    for (const [screen, allowed] of Object.entries(DESIGN_LAYOUTS)) {
-      const value = layouts[screen];
-      if (value === undefined) continue;
-      if (!allowed.includes(value)) {
-        return fail(`layouts.${screen} doit valoir ${allowed.join(', ')}.`);
+    for (const screen of DESIGN_IMAGE_SCREENS) {
+      const entry = images[screen];
+      if (entry === undefined) continue;
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return fail(`images.${screen} doit être un objet.`);
+      }
+      for (const key of Object.keys(entry)) {
+        if (key !== 'mode' && key !== 'filename') {
+          return fail(`Clé d'image inconnue dans images.${screen} : ${key}.`);
+        }
+      }
+      if (!DESIGN_IMAGE_MODES.includes(entry.mode)) {
+        return fail(`images.${screen}.mode doit valoir ${DESIGN_IMAGE_MODES.join(', ')}.`);
+      }
+      // Cohérence mode/filename : 'none' n'a jamais de fichier ; tout autre
+      // mode EXIGE un fichier valide — empêche l'état incohérent "plein écran
+      // sans image" qui laisserait le kiosque sans rien à afficher.
+      if (entry.mode === 'none') {
+        if (entry.filename !== null && entry.filename !== undefined) {
+          return fail(`images.${screen}.filename doit être null quand mode vaut 'none'.`);
+        }
+      } else if (typeof entry.filename !== 'string' || !ASSET_FILENAME_RE.test(entry.filename)) {
+        return fail(`images.${screen}.filename doit être un nom de fichier <uuid>.png|jpg|webp.`);
       }
     }
   }
@@ -198,26 +223,6 @@ export function validateDesign(obj) {
       if (entry.colors !== undefined) {
         const error = validateColorsObject(entry.colors, `screenOverrides.${screen}.colors`);
         if (error) return fail(error);
-      }
-    }
-  }
-
-  // ── assets ────────────────────────────────────────────────────────────────
-  if (obj.assets !== undefined) {
-    const assets = obj.assets;
-    if (!assets || typeof assets !== 'object' || Array.isArray(assets)) {
-      return fail('assets doit être un objet.');
-    }
-    for (const key of Object.keys(assets)) {
-      if (!DESIGN_ASSET_SLOTS.includes(key)) {
-        return fail(`Slot d'asset inconnu : ${key}.`);
-      }
-    }
-    for (const slot of DESIGN_ASSET_SLOTS) {
-      const value = assets[slot];
-      if (value === undefined || value === null) continue; // null = pas d'image
-      if (typeof value !== 'string' || !ASSET_FILENAME_RE.test(value)) {
-        return fail(`assets.${slot} doit être un nom de fichier <uuid>.png|jpg|webp.`);
       }
     }
   }
