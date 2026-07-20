@@ -456,7 +456,7 @@ export function makeDesignsRouter(dataDir) {
       const mode = previousEntry && previousEntry.mode !== 'none' ? previousEntry.mode : 'centered';
       const next_ = {
         ...config,
-        images: { ...config.images, [screen]: { mode, filename: req.file.filename } },
+        images: { ...config.images, [screen]: { ...previousEntry, mode, filename: req.file.filename } },
       };
 
       const check = validateDesign(next_);

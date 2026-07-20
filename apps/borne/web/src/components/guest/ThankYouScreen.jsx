@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { imageWidthStyle } from '../../utils/design.js';
 
 const AUTO_RETURN_S = 15;
 
@@ -20,7 +21,7 @@ export default function ThankYouScreen({ onRestart, thanksText, design }) {
     ? { backgroundImage: `url("${image.filename}")` }
     : undefined;
   const imageEl = image.mode === 'centered' && image.filename
-    ? <img className="screen__image" src={image.filename} alt="" />
+    ? <img className="screen__image" src={image.filename} alt="" style={imageWidthStyle(image)} />
     : null;
 
   return (

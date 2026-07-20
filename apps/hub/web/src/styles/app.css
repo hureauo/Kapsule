@@ -761,6 +761,17 @@ button { cursor: pointer; font: inherit; }
 .designs-image-row__modes { display: flex; gap: 14px; flex-wrap: wrap; }
 .designs-radio { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 
+/* Slider de largeur (design5, mode 'centered' uniquement). */
+.designs-image-row__width {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.designs-image-row__width input[type="range"] { flex: 1; max-width: 220px; }
+.designs-image-row__width-value { min-width: 3em; text-align: right; font-variant-numeric: tabular-nums; }
+
 /* ── Aperçu live : maquettes statiques du kiosque ─────────────────────────── */
 
 .designs-preview { display: flex; flex-direction: column; gap: 10px; }

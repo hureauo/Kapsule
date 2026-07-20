@@ -143,11 +143,20 @@ function Screen({ screen, config, designId }) {
 // Image réellement uploadée si un fichier existe pour cet écran, sinon un
 // placeholder — même logique que AssetRow (DesignEditor.jsx) : l'aperçu doit
 // refléter ce que la borne affichera réellement, pas un gabarit approximatif.
-function AssetImage({ designId, filename, alt, className, placeholderClassName, placeholderLabel }) {
+function AssetImage({ designId, filename, alt, className, placeholderClassName, placeholderLabel, style }) {
   if (designId && filename) {
-    return <img className={className} src={api.designAssetUrl(designId, filename)} alt={alt} />;
+    return <img className={className} src={api.designAssetUrl(designId, filename)} alt={alt} style={style} />;
   }
   return <div className={placeholderClassName}>{placeholderLabel}</div>;
+}
+
+// Style inline pour l'image en mode 'centered' (design5) : même logique que
+// imageWidthStyle (runtime borne) mais dupliquée ici volontairement — l'aperçu
+// Hub est mis à l'échelle par transform:scale(), pourcentage plus fidèle que
+// des px absolus, mais reste un composant web indépendant du bundle borne.
+function centeredImageStyle(image) {
+  if (image?.mode !== 'centered' || !Number.isInteger(image?.widthPercent)) return undefined;
+  return { width: `${image.widthPercent}%`, maxWidth: `${image.widthPercent}%`, maxHeight: 'none' };
 }
 
 function StartScreen({ config, designId }) {
@@ -165,6 +174,7 @@ function StartScreen({ config, designId }) {
         className="dp-logo-img"
         placeholderClassName="dp-logo-placeholder"
         placeholderLabel="Image"
+        style={centeredImageStyle(image)}
       />
     )
     : null;
@@ -262,6 +272,7 @@ function ThanksScreen({ config, designId }) {
         className="dp-logo-img"
         placeholderClassName="dp-logo-placeholder"
         placeholderLabel="Image"
+        style={centeredImageStyle(image)}
       />
     )
     : null;

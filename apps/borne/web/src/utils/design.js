@@ -55,3 +55,15 @@ export function applyDesign(design, screen) {
   const font = FONT_PRESETS[design.font];
   if (font) root.style.setProperty('--font-body', font);
 }
+
+/**
+ * Style inline pour l'image d'un écran en mode 'centered' (design5).
+ * widthPercent absent → undefined : le CSS par défaut (max-height:120px)
+ * s'applique inchangé. widthPercent défini → largeur prioritaire (option A) :
+ * le plafond de hauteur est retiré, l'image grandit selon son ratio naturel.
+ * @param {{mode?: string, widthPercent?: number}} image
+ */
+export function imageWidthStyle(image) {
+  if (image?.mode !== 'centered' || !Number.isInteger(image?.widthPercent)) return undefined;
+  return { width: `${image.widthPercent}%`, maxWidth: `${image.widthPercent}%`, maxHeight: 'none' };
+}

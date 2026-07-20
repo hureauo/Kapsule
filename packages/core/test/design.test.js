@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS, DESIGN_SCREENS,
-  DESIGN_IMAGE_SCREENS, DESIGN_IMAGE_MODES,
+  DESIGN_IMAGE_SCREENS, DESIGN_IMAGE_MODES, DESIGN_IMAGE_WIDTH_MIN, DESIGN_IMAGE_WIDTH_MAX,
   DESIGN_MAX_JSON, RADIUS_PRESETS, FONT_PRESETS, validateDesign, resolveScreenColors,
 } from '../src/design.js';
 
@@ -36,6 +36,8 @@ describe('constantes design', () => {
     assert.deepEqual(DESIGN_SCREENS, ['start', 'name', 'recording', 'thanks']);
     assert.deepEqual(DESIGN_IMAGE_SCREENS, ['start', 'thanks']);
     assert.deepEqual(DESIGN_IMAGE_MODES, ['centered', 'cover', 'none']);
+    assert.equal(DESIGN_IMAGE_WIDTH_MIN, 10);
+    assert.equal(DESIGN_IMAGE_WIDTH_MAX, 100);
   });
 
   test('chaque valeur d\'enum a son preset CSS (aperçu Hub et kiosque partagent la source)', () => {
@@ -90,6 +92,22 @@ describe('validateDesign — cas valides', () => {
     );
     assert.deepEqual(
       validateDesign({ ...base(), images: { thanks: { mode: 'cover', filename } } }),
+      { ok: true },
+    );
+  });
+
+  test('images.<screen> widthPercent valide en mode centered (bornes incluses)', () => {
+    const filename = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.png';
+    assert.deepEqual(
+      validateDesign({ ...base(), images: { start: { mode: 'centered', filename, widthPercent: 50 } } }),
+      { ok: true },
+    );
+    assert.deepEqual(
+      validateDesign({ ...base(), images: { start: { mode: 'centered', filename, widthPercent: DESIGN_IMAGE_WIDTH_MIN } } }),
+      { ok: true },
+    );
+    assert.deepEqual(
+      validateDesign({ ...base(), images: { start: { mode: 'centered', filename, widthPercent: DESIGN_IMAGE_WIDTH_MAX } } }),
       { ok: true },
     );
   });
@@ -192,6 +210,20 @@ describe('validateDesign — cas invalides', () => {
     invalid({ ...base(), images: 'not-an-object' }, 'images non-objet');
     invalid({ ...base(), images: { start: 'not-an-object' } }, 'images.start non-objet');
     invalid({ ...base(), images: [] }, 'images array');
+  });
+
+  test('images : widthPercent hors mode centered → invalide', () => {
+    const filename = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.png';
+    invalid({ ...base(), images: { start: { mode: 'cover', filename, widthPercent: 50 } } }, 'widthPercent en mode cover');
+    invalid({ ...base(), images: { start: { mode: 'none', filename: null, widthPercent: 50 } } }, 'widthPercent en mode none');
+  });
+
+  test('images : widthPercent hors bornes ou de mauvais type → invalide', () => {
+    const filename = '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.png';
+    invalid({ ...base(), images: { start: { mode: 'centered', filename, widthPercent: DESIGN_IMAGE_WIDTH_MIN - 1 } } }, 'sous la borne min');
+    invalid({ ...base(), images: { start: { mode: 'centered', filename, widthPercent: DESIGN_IMAGE_WIDTH_MAX + 1 } } }, 'au-dessus de la borne max');
+    invalid({ ...base(), images: { start: { mode: 'centered', filename, widthPercent: 50.5 } } }, 'non-entier');
+    invalid({ ...base(), images: { start: { mode: 'centered', filename, widthPercent: '50' } } }, 'string');
   });
 
   test('clé racine inconnue → invalide (whitelist du 1er niveau)', () => {

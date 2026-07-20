@@ -49,9 +49,11 @@ function resolveVideoSettings(db) {
  * respecte plus le contrat : dans tous ces cas le kiosque doit se comporter
  * exactement comme avant (thèmes figés), jamais planter.
  *
- * Une seule image par écran (design4) : { mode, filename } où filename devient
- * une URL servie par GET /api/event/design/:filename (le front consomme
- * directement image.filename comme src/backgroundImage, jamais le nom brut).
+ * Une seule image par écran (design4) : { mode, filename, widthPercent? } où
+ * filename devient une URL servie par GET /api/event/design/:filename (le
+ * front consomme directement image.filename comme src/backgroundImage,
+ * jamais le nom brut). widthPercent (design5) n'est propagé que s'il est un
+ * entier valide (mode 'centered' uniquement, cf. validateDesign).
  */
 function resolveDesign(raw) {
   if (!raw) return null;
@@ -72,6 +74,7 @@ function resolveDesign(raw) {
     images[screen] = {
       mode: entry.mode,
       filename: entry.filename ? `/api/event/design/${entry.filename}` : null,
+      ...(Number.isInteger(entry.widthPercent) ? { widthPercent: entry.widthPercent } : {}),
     };
   }
 

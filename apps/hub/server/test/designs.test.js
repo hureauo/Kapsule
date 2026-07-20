@@ -326,6 +326,40 @@ describe('PUT /api/designs/:id', () => {
     assert.equal(res.status, 400);
   });
 
+  it('persiste widthPercent en mode centered (round-trip)', async () => {
+    const design = await createDesign(tokenBob, 'Avec widthPercent');
+    const uploaded = await request.post(`/api/designs/${design.id}/assets?screen=start`)
+      .set(auth(tokenBob))
+      .attach('file', PNG_1x1, { filename: 'x.png', contentType: 'image/png' });
+
+    const res = await request.put(`/api/designs/${design.id}`).set(auth(tokenBob)).send({
+      config: {
+        ...design.config,
+        images: { start: { mode: 'centered', filename: uploaded.body.filename, widthPercent: 42 } },
+      },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.config.images.start.widthPercent, 42);
+
+    const reread = await request.get(`/api/designs/${design.id}`).set(auth(tokenBob));
+    assert.equal(reread.body.config.images.start.widthPercent, 42);
+  });
+
+  it('refuse widthPercent avec mode cover (400)', async () => {
+    const design = await createDesign(tokenBob, 'widthPercent en cover, invalide');
+    const uploaded = await request.post(`/api/designs/${design.id}/assets?screen=start`)
+      .set(auth(tokenBob))
+      .attach('file', PNG_1x1, { filename: 'x.png', contentType: 'image/png' });
+
+    const res = await request.put(`/api/designs/${design.id}`).set(auth(tokenBob)).send({
+      config: {
+        ...design.config,
+        images: { start: { mode: 'cover', filename: uploaded.body.filename, widthPercent: 42 } },
+      },
+    });
+    assert.equal(res.status, 400);
+  });
+
   it('403 sur le design d\'un autre client', async () => {
     const secret = await createDesign(tokenCarol, 'Privé Carol PUT');
     const res = await request.put(`/api/designs/${secret.id}`).set(auth(tokenBob)).send({ name: 'pirate' });
@@ -578,6 +612,27 @@ describe('POST /api/designs/:id/assets', () => {
     assert.equal(second.body.mode, 'cover');
     assert.ok(!existsSync(join(dir, 'designs', design.id, first.body.filename)), 'ancien fichier supprimé');
     assert.ok(existsSync(join(dir, 'designs', design.id, second.body.filename)));
+  });
+
+  it('conserve widthPercent lors d\'un remplacement de fichier (régression : oubli de spread previousEntry)', async () => {
+    const design = await createDesign(tokenBob, 'Remplacement en centered avec widthPercent');
+
+    const first = await request.post(`/api/designs/${design.id}/assets?screen=start`)
+      .set(auth(tokenBob))
+      .attach('file', PNG_1x1, { filename: 'a.png', contentType: 'image/png' });
+    await request.put(`/api/designs/${design.id}`).set(auth(tokenBob)).send({
+      config: { ...(await request.get(`/api/designs/${design.id}`).set(auth(tokenBob))).body.config,
+        images: { start: { mode: 'centered', filename: first.body.filename, widthPercent: 42 } } },
+    });
+
+    const second = await request.post(`/api/designs/${design.id}/assets?screen=start`)
+      .set(auth(tokenBob))
+      .attach('file', PNG_1x1, { filename: 'b.png', contentType: 'image/png' });
+
+    assert.equal(second.status, 201);
+    const after = await request.get(`/api/designs/${design.id}`).set(auth(tokenBob));
+    assert.equal(after.body.config.images.start.widthPercent, 42);
+    assert.equal(after.body.config.images.start.filename, second.body.filename);
   });
 
   it('refuse un SVG (invariant : jamais de vecteur, risque XSS)', async () => {

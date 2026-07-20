@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   DESIGN_COLOR_KEYS, DESIGN_RADIUS, DESIGN_FONTS,
   DESIGN_SCREENS, DESIGN_IMAGE_SCREENS, DESIGN_IMAGE_MODES,
+  DESIGN_IMAGE_WIDTH_MIN, DESIGN_IMAGE_WIDTH_MAX,
   validateDesign, resolveScreenColors,
 } from '@kapsule/core';
 import { api } from '../../api/client.js';
@@ -217,6 +218,13 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
     // localement (validateDesign le rejettera tant qu'aucun fichier n'est
     // uploadé — bouton Enregistrer désactivé via `invalid`, cf. AssetRow).
     update({ images: { ...config.images, [screen]: { ...current, mode } } });
+  }
+
+  // Largeur de l'image en mode 'centered' (design5). N'a de sens que dans ce
+  // mode (validateDesign le rejette sinon) — le slider n'est affiché que là.
+  function setImageWidth(screen, widthPercent) {
+    const current = config.images?.[screen] ?? { mode: 'none', filename: null };
+    update({ images: { ...config.images, [screen]: { ...current, widthPercent } } });
   }
 
   // Surcharge/re-héritage d'une couleur pour UN écran (design3). Même fonction
@@ -566,6 +574,20 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
                     onChanged={onSaved}
                     onError={onError}
                   />
+                )}
+                {entry.mode === 'centered' && (
+                  <label className="designs-image-row__width">
+                    Largeur de l'image
+                    <input
+                      type="range"
+                      min={DESIGN_IMAGE_WIDTH_MIN}
+                      max={DESIGN_IMAGE_WIDTH_MAX}
+                      value={entry.widthPercent ?? 60}
+                      onChange={(e) => setImageWidth(screen, Number(e.target.value))}
+                      disabled={readOnly}
+                    />
+                    <span className="designs-image-row__width-value">{entry.widthPercent ?? 60}%</span>
+                  </label>
                 )}
               </div>
             );

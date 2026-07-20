@@ -417,3 +417,24 @@ Mêmes règles : un sous-lot backend n'est terminé que **testé** (nominal + ca
 **Terminé quand** : un client choisit pour l'écran d'accueil et l'écran de remerciement, chacun
 indépendamment, si une image est centrée, en plein écran, ou absente — sans distinction logo/fond
 ni disposition 2 colonnes.
+
+## Phase design5 — slider de largeur pour l'image en mode 'centered'
+
+Voir PROJET.md §9bis (clé `images.<screen>.widthPercent`) pour le contrat complet. Plan :
+`.claude/plans/velvet-twirling-cookie.md`.
+
+Décision actée : pourcentage entier borné (10-100%), nom de champ `widthPercent`, autorisé
+uniquement en mode `centered` (`cover` occupe déjà tout l'écran). Effet CSS « largeur prioritaire » :
+dès que réglé, le plafond `max-height` par défaut est retiré, l'image grandit selon son ratio
+naturel à la largeur choisie.
+
+- [x] design5.A : contrat core (`DESIGN_IMAGE_WIDTH_MIN/MAX`, validation bornée de `widthPercent`), tests
+- [x] design5.B : backend Hub (bugfix upload : spread `previousEntry` pour ne pas écraser `widthPercent` au ré-upload), tests
+- [x] design5.C : runtime borne (`StartScreen.jsx`/`ThankYouScreen.jsx`, `resolveDesign` transmet `widthPercent`)
+- [x] design5.D : aperçu live éditeur (`DesignPreview.jsx`, prop `style` sur `AssetImage`)
+- [x] design5.E : éditeur Hub (`DesignEditor.jsx`, `<input type="range">` visible seulement en mode centered)
+- [ ] 🧑 design5.F : vérif rendu réel borne d'essai + iPad (slider en direct dans l'aperçu, taille appliquée sur la borne)
+
+**Terminé quand** : un client réglant le slider de largeur en mode Centrée voit l'aperçu Hub
+refléter le changement en direct, et la borne (réelle ou d'essai) affiche l'image à la taille
+choisie.

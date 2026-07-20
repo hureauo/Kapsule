@@ -37,6 +37,12 @@ export const DESIGN_SCREENS = ['start', 'name', 'recording', 'thanks'];
 export const DESIGN_IMAGE_SCREENS = ['start', 'thanks'];
 export const DESIGN_IMAGE_MODES = ['centered', 'cover', 'none'];
 
+// design5 : largeur de l'image en mode 'centered' (pourcentage entier borné).
+// Bornes exportées pour que l'éditeur Hub règle son <input type="range"> sur
+// la MÊME source que la validation — jamais dupliquées.
+export const DESIGN_IMAGE_WIDTH_MIN = 10;
+export const DESIGN_IMAGE_WIDTH_MAX = 100;
+
 // Les SEULES clés admises à la racine d'un design. Une clé inconnue ici serait
 // stockée verbatim puis recopiée dans event_meta.design et servie au kiosque :
 // c'est le premier niveau de la barrière, pas un détail cosmétique.
@@ -153,10 +159,11 @@ export function validateDesign(obj) {
   }
 
   // ── images ────────────────────────────────────────────────────────────────
-  // Une seule image par écran (design4), 3 états exacts : { mode, filename }.
-  // Même pattern que screenOverrides/colors : whitelist des écrans reçus contre
-  // DESIGN_IMAGE_SCREENS, puis whitelist stricte des 2 clés à l'intérieur —
-  // jamais itéré sur les clés reçues pour les copier (barrière anti-injection).
+  // Une seule image par écran (design4), 3 états exacts : { mode, filename,
+  // widthPercent? }. Même pattern que screenOverrides/colors : whitelist des
+  // écrans reçus contre DESIGN_IMAGE_SCREENS, puis whitelist stricte des clés
+  // à l'intérieur — jamais itéré sur les clés reçues pour les copier (barrière
+  // anti-injection).
   if (obj.images !== undefined) {
     const images = obj.images;
     if (!images || typeof images !== 'object' || Array.isArray(images)) {
@@ -174,7 +181,7 @@ export function validateDesign(obj) {
         return fail(`images.${screen} doit être un objet.`);
       }
       for (const key of Object.keys(entry)) {
-        if (key !== 'mode' && key !== 'filename') {
+        if (key !== 'mode' && key !== 'filename' && key !== 'widthPercent') {
           return fail(`Clé d'image inconnue dans images.${screen} : ${key}.`);
         }
       }
@@ -190,6 +197,24 @@ export function validateDesign(obj) {
         }
       } else if (typeof entry.filename !== 'string' || !ASSET_FILENAME_RE.test(entry.filename)) {
         return fail(`images.${screen}.filename doit être un nom de fichier <uuid>.png|jpg|webp.`);
+      }
+      // widthPercent (design5) : premier champ numérique du contrat. Reste
+      // sûr au même titre qu'une enum — borné, entier strict, jamais
+      // interprété comme du CSS libre (consommé uniquement comme `<n>%` d'un
+      // width/max-width, jamais concaténé dans url()/expression()). N'a de
+      // sens qu'en mode 'centered' : 'cover' occupe déjà tout l'écran, 'none'
+      // n'a pas d'image.
+      if (entry.widthPercent !== undefined) {
+        if (entry.mode !== 'centered') {
+          return fail(`images.${screen}.widthPercent n'est permis qu'en mode 'centered'.`);
+        }
+        if (
+          !Number.isInteger(entry.widthPercent)
+          || entry.widthPercent < DESIGN_IMAGE_WIDTH_MIN
+          || entry.widthPercent > DESIGN_IMAGE_WIDTH_MAX
+        ) {
+          return fail(`images.${screen}.widthPercent doit être un entier entre ${DESIGN_IMAGE_WIDTH_MIN} et ${DESIGN_IMAGE_WIDTH_MAX}.`);
+        }
       }
     }
   }

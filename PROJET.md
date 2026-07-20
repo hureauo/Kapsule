@@ -648,7 +648,7 @@ designs et peuvent promouvoir un design en **template** public partagé.
   "font": "sans",
   "images": {
     "start": { "mode": "cover", "filename": "3f2a….png" },
-    "thanks": { "mode": "none", "filename": null }
+    "thanks": { "mode": "centered", "filename": "9c1e….png", "widthPercent": 60 }
   },
   "screenOverrides": {
     "start": { "colors": { "text": "#0000ff" } },
@@ -668,14 +668,23 @@ designs et peuvent promouvoir un design en **template** public partagé.
 - `font` : enum `['sans', 'serif', 'rounded', 'mono']` (stacks système, voir runtime kiosque).
 - `images` (design4) : objet dont **chaque clé appartient à `DESIGN_IMAGE_SCREENS`**
   (`['start', 'thanks']` — une seule image par écran, pas de distinction logo/fond). Chaque entrée
-  `images.<screen>` n'admet que 2 clés : `mode` (enum `['centered', 'cover', 'none']`) et
-  `filename`. Règle de cohérence stricte : `mode === 'none'` ⇒ `filename` doit être `null` ;
-  tout autre mode ⇒ `filename` **obligatoire**, matchant `/^[0-9a-f-]{36}\.(png|jpg|webp)$/`
-  (UUID + extension — jamais de chemin, jamais de SVG). Écran absent → aucune image sur cet
-  écran (comportement identique à avant l'introduction des designs personnalisables). Remplace
-  l'ancien couple `assets{logo,background}` + `layouts{centered,cover,split}` : un seul système
-  au lieu de deux à coordonner, et le layout `split` (logo à gauche, texte à droite) est retiré
-  — il n'avait de sens que séparé du texte, ce qui n'existe plus avec une image unique par écran.
+  `images.<screen>` n'admet que 3 clés : `mode` (enum `['centered', 'cover', 'none']`), `filename`
+  et `widthPercent` (design5, optionnelle). Règle de cohérence stricte : `mode === 'none'` ⇒
+  `filename` doit être `null` ; tout autre mode ⇒ `filename` **obligatoire**, matchant
+  `/^[0-9a-f-]{36}\.(png|jpg|webp)$/` (UUID + extension — jamais de chemin, jamais de SVG). Écran
+  absent → aucune image sur cet écran (comportement identique à avant l'introduction des designs
+  personnalisables). Remplace l'ancien couple `assets{logo,background}` + `layouts{centered,cover,
+  split}` : un seul système au lieu de deux à coordonner, et le layout `split` (logo à gauche,
+  texte à droite) est retiré — il n'avait de sens que séparé du texte, ce qui n'existe plus avec
+  une image unique par écran.
+  - `widthPercent` (design5) : entier borné dans `[DESIGN_IMAGE_WIDTH_MIN, DESIGN_IMAGE_WIDTH_MAX]`
+    = `[10, 100]`, autorisé **uniquement** si `mode === 'centered'` (rejeté sinon — `cover` occupe
+    déjà tout l'écran, `none` n'a pas d'image). Absent → rendu inchangé (CSS par défaut,
+    `max-height` plafonné). Présent → largeur prioritaire : le plafond de hauteur est retiré,
+    l'image grandit selon son ratio naturel à la largeur demandée (`width`/`max-width: <n>%`).
+    Premier champ numérique du contrat, aussi sûr que les enums : borné, entier strict, jamais
+    interprété comme du CSS libre (consommé uniquement comme `<n>%` d'une largeur, jamais
+    concaténé dans `url()`/`expression()`).
 - `screenOverrides` (design3) : objet dont **chaque clé appartient à `DESIGN_SCREENS`**
   (`['start', 'name', 'recording', 'thanks']` — les 4 écrans du parcours invité). Chaque entrée
   `screenOverrides.<screen>` n'admet que la clé `colors`, validée avec **exactement les mêmes
@@ -908,7 +917,7 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 25. **Transitions d'état `preview`** : un token `is_preview=1` ne peut puller que si le statut Hub est `preview`. Un token réel (`is_preview=0`) ne peut puller que si le statut est `ready` ou `loaded`. `requireBox` doit vérifier cette cohérence et retourner 403 si le type de token ne correspond pas au statut attendu.
 26. **Design appliqué = snapshot copié** (§9bis) : `PUT /api/events/:id/design` copie la config JSON et les fichiers assets du design vers `event_meta.design` et `events/<id>/design/` au moment de l'application. La copie est **autonome** : le rendu d'un événement ne dépend jamais, à la lecture (bundle, kiosque), du design source. Une *trace de provenance* (`event_meta.design_source_id` + table registre `event_design_refs`) est conservée, mais ce n'est **pas** une référence vivante — elle sert uniquement à rafraîchir la copie des événements **en statut `preview`** quand le design source est édité (borne d'essai, §9bis « Rafraîchissement de la borne d'essai »). Un événement de tout autre statut (`ready`+) n'est **jamais** modifié par une édition ou une suppression du design source.
 27. **Assets de design vérifiés par checksum au pull** (§9bis) : le bundle expose `design_assets: [{filename, size, checksum}]` ; la Borne calcule le sha256 de chaque fichier téléchargé et compare — **un mismatch est un échec de pull explicite**, jamais un fichier silencieusement corrompu.
-28. **Jamais de SVG ni de valeur CSS libre dans un design** (§9bis) : `validateDesign()` n'accepte que des couleurs hex strictes, des enums fermées (`radius`, `font`, `images.<screen>.mode`) et des noms de fichiers `images.<screen>.filename` au format UUID+extension raster (`png`/`jpg`/`webp`) — toute autre valeur est un design invalide, y compris `url(...)`, `expression(...)` ou tout SVG (vecteur = risque XSS via balises `<script>`/`on*` embarquées).
+28. **Jamais de SVG ni de valeur CSS libre dans un design** (§9bis) : `validateDesign()` n'accepte que des couleurs hex strictes, des enums fermées (`radius`, `font`, `images.<screen>.mode`), des noms de fichiers `images.<screen>.filename` au format UUID+extension raster (`png`/`jpg`/`webp`), et un unique champ numérique borné `images.<screen>.widthPercent` (entier `[10,100]`, design5, autorisé seulement en mode `centered`, consommé uniquement comme `<n>%` d'une largeur — jamais concaténé dans `url()`/`expression()`) — toute autre valeur est un design invalide, y compris `url(...)`, `expression(...)` ou tout SVG (vecteur = risque XSS via balises `<script>`/`on*` embarquées).
 
 ---
 

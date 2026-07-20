@@ -1,5 +1,6 @@
 import React from 'react';
 import { VIDEO_QUALITY, VIDEO_ORIENTATIONS, DEFAULT_VIDEO_ORIENTATION } from '@kapsule/core';
+import { imageWidthStyle } from '../../utils/design.js';
 
 // welcome_title / welcome_subtitle viennent de GET /event (déjà résolus avec
 // leurs fallbacks dynamiques par le serveur — voir design/parcours-invite.md §11).
@@ -32,7 +33,7 @@ export default function StartScreen({ event, onStart, onVideoSettingsChange }) {
     ? <p className="start__tagline">{event.welcome_subtitle}</p>
     : null;
   const imageEl = image.mode === 'centered' && image.filename
-    ? <img className="screen__image" src={image.filename} alt="" />
+    ? <img className="screen__image" src={image.filename} alt="" style={imageWidthStyle(image)} />
     : null;
 
   const body = (

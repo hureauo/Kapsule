@@ -602,6 +602,26 @@ describe('GET /api/event — design', () => {
     } finally { teardown(dir); }
   });
 
+  test('expose widthPercent quand réglé en mode centered (design5)', async () => {
+    const { dir, app } = await setup();
+    try {
+      const id = makeEvent(dir, 'ev-design-width');
+      setActiveEvent(id);
+      applyDesign(dir, id, {
+        ...DESIGN,
+        images: {
+          start: { mode: 'centered', filename: LOGO, widthPercent: 42 },
+          thanks: { mode: 'none', filename: null },
+        },
+      });
+
+      const res = await request(app).get('/api/event');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.design.images.start.widthPercent, 42);
+      assert.equal(res.body.design.images.thanks.widthPercent, undefined);
+    } finally { teardown(dir); }
+  });
+
   test('design null si aucun design appliqué (comportement d\'avant : thèmes)', async () => {
     const { dir, app } = await setup();
     try {
