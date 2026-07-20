@@ -1397,10 +1397,10 @@ input, textarea, [contenteditable] {
 }
 .qsheet__item--future .qsheet__index { background: var(--text-muted); }
 
-/* ── Variantes de disposition des designs (§9bis) ─────────────────────────────
-   Sans design, aucune de ces classes n'est posée autrement qu'en 'centered',
-   dont le rendu est celui d'avant l'introduction des designs. Mobile-first,
-   tout passe par les tokens.                                                  */
+/* ── Image du design par écran (§9bis, design4) ────────────────────────────────
+   Sans design ou sans image configurée, mode 'none' : rendu identique à celui
+   d'avant l'introduction des designs. Une seule image par écran (accueil et
+   remerciement), 3 états : centered/cover/none — plus de layout 'split'.       */
 
 .start__body,
 .thanks__body {
@@ -1409,19 +1409,20 @@ input, textarea, [contenteditable] {
   align-items: center;
   gap: 16px;
   text-align: center;
-  /* Au-dessus de l'image de fond des variantes 'cover'. */
+  /* Au-dessus de l'image de fond du mode 'cover'. */
   position: relative;
   z-index: 1;
 }
 
-/* Logo : hauteur bornée pour ne pas écraser le titre sur un petit écran. */
-.start__logo {
+/* Image centrée : hauteur bornée pour ne pas écraser le titre sur un petit
+   écran. Partagée par les écrans accueil et remerciement. */
+.screen__image {
   max-height: 120px;
   max-width: 80%;
   object-fit: contain;
 }
 
-/* Variante 'cover' : l'image occupe tout l'écran, le contenu se superpose.
+/* Mode 'cover' : l'image occupe tout l'écran, le contenu se superpose.
    Un voile assombri/éclairci n'est pas posé (le client choisit ses couleurs) —
    la lisibilité relève du design, pas du code. */
 .start--cover,
@@ -1429,32 +1430,4 @@ input, textarea, [contenteditable] {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-}
-
-/* Variante 'split' : logo à gauche, textes à droite. Sur mobile, on repasse en
-   pile verticale — deux colonnes sur 360 px seraient illisibles. */
-.start--split {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-}
-.start--split .start__aside {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.start--split .start__logo { max-height: 140px; }
-
-@media (min-width: 700px) {
-  .start--split {
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    gap: 48px;
-  }
-  .start--split .start__body {
-    align-items: flex-start;
-    text-align: left;
-  }
-  .start--split .start__logo { max-height: 220px; }
 }

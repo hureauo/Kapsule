@@ -403,7 +403,7 @@ describe('pull — assets du design', () => {
   const designWithLogo = {
     version: 1,
     colors: { bg: '#ffffff' },
-    assets: { logo: LOGO, background: null },
+    images: { start: { mode: 'centered', filename: LOGO }, thanks: { mode: 'none', filename: null } },
   };
 
   it('télécharge les images et vérifie leur checksum', async () => {
@@ -420,7 +420,7 @@ describe('pull — assets du design', () => {
     const edb = new Database(join(dir, 'events', 'hub-ev-1', 'db.sqlite'));
     const raw = edb.prepare("SELECT value FROM event_meta WHERE key='design'").get()?.value;
     edb.close();
-    assert.equal(JSON.parse(raw).assets.logo, LOGO);
+    assert.equal(JSON.parse(raw).images.start.filename, LOGO);
   });
 
   it('un checksum invalide fait ÉCHOUER le pull et ne laisse aucun fichier', async () => {

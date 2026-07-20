@@ -12,17 +12,21 @@ export default function ThankYouScreen({ onRestart, thanksText, design }) {
     return () => clearTimeout(t);
   }, [remaining, onRestart]);
 
-  // Variante de disposition (§9bis). Sans design : 'centered' — rendu identique
-  // à celui d'avant l'introduction des designs.
-  const layout = design?.layouts?.thanks ?? 'centered';
-  const background = design?.assets?.background ?? null;
-  const coverStyle = layout === 'cover' && background
-    ? { backgroundImage: `url("${background}")` }
+  // Image du design (§9bis, design4 : une seule image par écran, 3 états). Sans
+  // design ou sans image configurée : mode 'none' — rendu identique à celui
+  // d'avant l'introduction des designs.
+  const image = design?.images?.thanks ?? { mode: 'none', filename: null };
+  const coverStyle = image.mode === 'cover' && image.filename
+    ? { backgroundImage: `url("${image.filename}")` }
     : undefined;
+  const imageEl = image.mode === 'centered' && image.filename
+    ? <img className="screen__image" src={image.filename} alt="" />
+    : null;
 
   return (
-    <div className={`screen screen--center thanks--${layout}`} style={coverStyle}>
+    <div className={`screen screen--center thanks--${image.mode}`} style={coverStyle}>
       <div className="thanks__body">
+        {imageEl}
         <div className="done__icon" aria-hidden="true">🎬</div>
         <h2 className="screen__title">Merci !</h2>
         <p className="text--muted">

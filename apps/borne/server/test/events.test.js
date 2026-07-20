@@ -578,8 +578,10 @@ describe('GET /api/event — design', () => {
     colors: { bg: '#101020', accent: '#ff8800' },
     radius: 'round',
     font: 'serif',
-    layouts: { start: 'split', thanks: 'cover' },
-    assets: { logo: LOGO, background: null },
+    images: {
+      start: { mode: 'cover', filename: LOGO },
+      thanks: { mode: 'none', filename: null },
+    },
   };
 
   test('expose le design, avec les images sous forme d\'URL', async () => {
@@ -593,9 +595,10 @@ describe('GET /api/event — design', () => {
       assert.equal(res.status, 200);
       assert.equal(res.body.design.colors.bg, '#101020');
       assert.equal(res.body.design.radius, 'round');
-      assert.equal(res.body.design.layouts.start, 'split');
-      assert.equal(res.body.design.assets.logo, `/api/event/design/${LOGO}`);
-      assert.equal(res.body.design.assets.background, null);
+      assert.equal(res.body.design.images.start.mode, 'cover');
+      assert.equal(res.body.design.images.start.filename, `/api/event/design/${LOGO}`);
+      assert.equal(res.body.design.images.thanks.mode, 'none');
+      assert.equal(res.body.design.images.thanks.filename, null);
     } finally { teardown(dir); }
   });
 
@@ -655,7 +658,7 @@ describe('GET /api/event/design/:filename', () => {
 
     const db = createEventDb(join(ctx.dir, 'events', id, 'db.sqlite'));
     db.prepare("INSERT OR REPLACE INTO event_meta (key,value) VALUES ('design', ?)").run(JSON.stringify({
-      version: 1, assets: { logo: LOGO, background: null },
+      version: 1, images: { start: { mode: 'centered', filename: LOGO }, thanks: { mode: 'none', filename: null } },
     }));
     db.close();
 

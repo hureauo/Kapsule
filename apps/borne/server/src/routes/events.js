@@ -5,7 +5,7 @@ import rateLimit from 'express-rate-limit';
 import {
   DEFAULTS, LIMITS, THEMES, TEXT_FIELDS, TEXT_FIELD_MAX,
   QUALITY_KEYS, VIDEO_ORIENTATIONS, DEFAULT_VIDEO_QUALITY, DEFAULT_VIDEO_ORIENTATION, resolvePreset,
-  DESIGN_ASSET_SLOTS, validateDesign, isValidAssetFilename,
+  DESIGN_IMAGE_SCREENS, validateDesign, isValidAssetFilename,
 } from '@kapsule/core';
 import {
   getActiveEvent, listEvents, setActiveEvent, updateEventStatus,
@@ -49,7 +49,9 @@ function resolveVideoSettings(db) {
  * respecte plus le contrat : dans tous ces cas le kiosque doit se comporter
  * exactement comme avant (thèmes figés), jamais planter.
  *
- * Les noms de fichiers deviennent des URLs servies par GET /api/event/design/:filename.
+ * Une seule image par écran (design4) : { mode, filename } où filename devient
+ * une URL servie par GET /api/event/design/:filename (le front consomme
+ * directement image.filename comme src/backgroundImage, jamais le nom brut).
  */
 function resolveDesign(raw) {
   if (!raw) return null;
@@ -64,18 +66,25 @@ function resolveDesign(raw) {
   const check = validateDesign(design);
   if (!check.ok) return null;
 
-  const assets = {};
-  for (const slot of DESIGN_ASSET_SLOTS) {
-    const filename = design.assets?.[slot] ?? null;
-    assets[slot] = filename ? `/api/event/design/${filename}` : null;
+  const images = {};
+  for (const screen of DESIGN_IMAGE_SCREENS) {
+    const entry = design.images?.[screen] ?? { mode: 'none', filename: null };
+    images[screen] = {
+      mode: entry.mode,
+      filename: entry.filename ? `/api/event/design/${entry.filename}` : null,
+    };
   }
 
   return {
     colors: design.colors ?? {},
     radius: design.radius ?? null,
     font: design.font ?? null,
-    layouts: design.layouts ?? {},
-    assets,
+    images,
+    // Corrige un bug préexistant (design3) : screenOverrides n'était jamais
+    // transmis au kiosque — resolveScreenColors (core) ne pouvait donc jamais
+    // trouver de surcharge côté borne réelle, alors que l'éditeur Hub et les
+    // tests fonctionnaient (ils passent l'objet design complet directement).
+    screenOverrides: design.screenOverrides ?? {},
   };
 }
 
@@ -302,8 +311,8 @@ export function makeEventsRouter(dataDir, cfg) {
       if (!design) return res.status(404).json({ error: 'Aucun design' });
 
       // resolveDesign a transformé les noms en URLs : on remonte au nom de fichier.
-      const known = DESIGN_ASSET_SLOTS
-        .map((slot) => design.assets?.[slot])
+      const known = DESIGN_IMAGE_SCREENS
+        .map((screen) => design.images?.[screen]?.filename)
         .filter(Boolean)
         .map((url) => url.slice(url.lastIndexOf('/') + 1));
 

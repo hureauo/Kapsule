@@ -11,17 +11,16 @@ export default function StartScreen({ event, onStart, onVideoSettingsChange }) {
   // Les dimensions affichées dépendent de l'orientation courante.
   const presets = VIDEO_QUALITY[currentOrientation] ?? VIDEO_QUALITY[DEFAULT_VIDEO_ORIENTATION];
 
-  // Variante de disposition du design (§9bis). Sans design : 'centered', qui rend
-  // exactement comme avant l'introduction des designs.
+  // Image du design (§9bis, design4 : une seule image par écran, 3 états). Sans
+  // design ou sans image configurée : mode 'none', rend exactement comme avant
+  // l'introduction des designs.
   const design = event?.design ?? null;
-  const layout = design?.layouts?.start ?? 'centered';
-  const logo = design?.assets?.logo ?? null;
-  const background = design?.assets?.background ?? null;
+  const image = design?.images?.start ?? { mode: 'none', filename: null };
 
-  // L'image de fond n'est posée que sur la variante qui la prévoit : un fond
-  // téléversé ne doit pas s'inviter sur une disposition qui ne l'attend pas.
-  const coverStyle = layout === 'cover' && background
-    ? { backgroundImage: `url("${background}")` }
+  // L'image de fond n'est posée qu'en mode 'cover' : un fond ne doit pas
+  // s'inviter quand le mode choisi est 'centered' ou 'none'.
+  const coverStyle = image.mode === 'cover' && image.filename
+    ? { backgroundImage: `url("${image.filename}")` }
     : undefined;
 
   const title = (
@@ -32,15 +31,13 @@ export default function StartScreen({ event, onStart, onVideoSettingsChange }) {
   const tagline = event?.welcome_subtitle
     ? <p className="start__tagline">{event.welcome_subtitle}</p>
     : null;
-  const logoImg = logo
-    ? <img className="start__logo" src={logo} alt="" />
+  const imageEl = image.mode === 'centered' && image.filename
+    ? <img className="screen__image" src={image.filename} alt="" />
     : null;
 
-  // Le contenu est identique quelle que soit la variante — seule la disposition
-  // change (le CSS place .start__body et .start__aside).
   const body = (
     <div className="start__body">
-      {layout !== 'split' && logoImg}
+      {imageEl}
       {title}
       {tagline}
 
@@ -85,8 +82,7 @@ export default function StartScreen({ event, onStart, onVideoSettingsChange }) {
   );
 
   return (
-    <div className={`screen screen--center start--${layout}`} style={coverStyle}>
-      {layout === 'split' && <div className="start__aside">{logoImg}</div>}
+    <div className={`screen screen--center start--${image.mode}`} style={coverStyle}>
       {body}
     </div>
   );
