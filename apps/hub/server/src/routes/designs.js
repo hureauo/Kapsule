@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { rmSync, existsSync, mkdirSync, cpSync } from 'node:fs';
 import multer from 'multer';
 
-import { validateDesign, DESIGN_ASSET_SLOTS } from '@kapsule/core';
+import { validateDesign, DESIGN_IMAGE_SCREENS } from '@kapsule/core';
 import { requireUser } from '../middleware/auth.js';
 import {
   getDb,
@@ -430,26 +430,34 @@ export function makeDesignsRouter(dataDir) {
     next();
   }
 
-  // ── POST /api/designs/:id/assets?slot=logo|background ─────────────────────
+  // ── POST /api/designs/:id/assets?screen=start|thanks ──────────────────────
+  // Une seule image par écran (design4) : l'upload change le fichier ET fixe le
+  // mode. Si le design n'a pas déjà un mode ≠ 'none' pour cet écran, on choisit
+  // 'centered' par défaut (le client peut ensuite basculer sur 'cover' via PUT).
   router.post('/:id/assets', requireUser, loadWritableDesign, uploadAsset.single('file'), (req, res, next) => {
     try {
       const db = getDb();
-      const { slot } = req.query;
+      const { screen } = req.query;
       const design = req.design;
 
       const cleanup = () => { if (req.file) rmSync(req.file.path, { force: true }); };
 
-      if (!DESIGN_ASSET_SLOTS.includes(slot)) {
+      if (!DESIGN_IMAGE_SCREENS.includes(screen)) {
         cleanup(); // le fichier est déjà écrit : ne pas le laisser orphelin
-        return res.status(400).json({ error: `slot doit valoir ${DESIGN_ASSET_SLOTS.join(' ou ')}.` });
+        return res.status(400).json({ error: `screen doit valoir ${DESIGN_IMAGE_SCREENS.join(' ou ')}.` });
       }
       if (!req.file) {
         return res.status(400).json({ error: 'Aucun fichier reçu (champ « file »).' });
       }
 
       const config = JSON.parse(design.config_json);
-      const previous = config.assets?.[slot] ?? null;
-      const next_ = { ...config, assets: { ...config.assets, [slot]: req.file.filename } };
+      const previousEntry = config.images?.[screen] ?? null;
+      const previousFilename = previousEntry?.filename ?? null;
+      const mode = previousEntry && previousEntry.mode !== 'none' ? previousEntry.mode : 'centered';
+      const next_ = {
+        ...config,
+        images: { ...config.images, [screen]: { mode, filename: req.file.filename } },
+      };
 
       const check = validateDesign(next_);
       if (!check.ok) {
@@ -461,37 +469,42 @@ export function makeDesignsRouter(dataDir) {
       updateDesign(db, design.id, { config_json });
       insertDesignVersion(db, { design_id: design.id, snapshot: config_json, author: authorEmail(db, req.user) });
 
-      // L'ancien fichier du slot n'est plus référencé : on le supprime APRÈS
-      // l'écriture en base (même logique que le remplacement de vidéo, §11.9).
-      if (previous && previous !== req.file.filename) {
-        rmSync(join(designDir(dataDir, design.id), previous), { force: true });
+      // L'ancien fichier de cet écran n'est plus référencé : on le supprime
+      // APRÈS l'écriture en base (même logique que le remplacement de vidéo, §11.9).
+      if (previousFilename && previousFilename !== req.file.filename) {
+        rmSync(join(designDir(dataDir, design.id), previousFilename), { force: true });
       }
 
       refreshPreviewEvents(db, dataDir, design.id);
 
-      res.status(201).json({ filename: req.file.filename });
+      res.status(201).json({ filename: req.file.filename, mode });
     } catch (err) {
       if (req.file) rmSync(req.file.path, { force: true });
       next(err);
     }
   });
 
-  // ── DELETE /api/designs/:id/assets/:slot ──────────────────────────────────
-  router.delete('/:id/assets/:slot', requireUser, loadWritableDesign, (req, res, next) => {
+  // ── DELETE /api/designs/:id/assets/:screen ────────────────────────────────
+  // Retire l'image ET remet le mode à 'none' (cohérence mode/filename imposée
+  // par validateDesign — on ne peut pas laisser un mode 'cover' sans fichier).
+  router.delete('/:id/assets/:screen', requireUser, loadWritableDesign, (req, res, next) => {
     try {
       const db = getDb();
-      const { slot } = req.params;
+      const { screen } = req.params;
       const design = req.design;
 
-      if (!DESIGN_ASSET_SLOTS.includes(slot)) {
-        return res.status(400).json({ error: `slot doit valoir ${DESIGN_ASSET_SLOTS.join(' ou ')}.` });
+      if (!DESIGN_IMAGE_SCREENS.includes(screen)) {
+        return res.status(400).json({ error: `screen doit valoir ${DESIGN_IMAGE_SCREENS.join(' ou ')}.` });
       }
 
       const config = JSON.parse(design.config_json);
-      const filename = config.assets?.[slot] ?? null;
-      if (!filename) return res.status(404).json({ error: 'Aucune image sur ce slot.' });
+      const filename = config.images?.[screen]?.filename ?? null;
+      if (!filename) return res.status(404).json({ error: 'Aucune image sur cet écran.' });
 
-      const config_json = JSON.stringify({ ...config, assets: { ...config.assets, [slot]: null } });
+      const config_json = JSON.stringify({
+        ...config,
+        images: { ...config.images, [screen]: { mode: 'none', filename: null } },
+      });
       updateDesign(db, design.id, { config_json });
       insertDesignVersion(db, { design_id: design.id, snapshot: config_json, author: authorEmail(db, req.user) });
 
@@ -513,8 +526,8 @@ export function makeDesignsRouter(dataDir) {
       if (!canRead(design, req.user)) return res.status(403).json({ error: 'Accès interdit' });
 
       const config = JSON.parse(design.config_json);
-      const known = DESIGN_ASSET_SLOTS
-        .map((slot) => config.assets?.[slot])
+      const known = DESIGN_IMAGE_SCREENS
+        .map((screen) => config.images?.[screen]?.filename)
         .filter(Boolean);
 
       if (!known.includes(req.params.filename)) {

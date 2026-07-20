@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import {
-  THEMES, QUALITY_KEYS, VIDEO_ORIENTATIONS, DESIGN_ASSET_SLOTS, validateDesign,
+  THEMES, QUALITY_KEYS, VIDEO_ORIENTATIONS, DESIGN_IMAGE_SCREENS, validateDesign,
 } from '@kapsule/core';
 import {
   getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog, upsertEventUser,
@@ -57,12 +57,12 @@ export function materializeEventDesign(dataDir, eventId, design) {
   // design déjà appliqué, que event_meta référence encore.
   const srcDir = join(dataDir, 'designs', design.id);
   const toCopy = [];
-  for (const slot of DESIGN_ASSET_SLOTS) {
-    const filename = config.assets?.[slot];
+  for (const screen of DESIGN_IMAGE_SCREENS) {
+    const filename = config.images?.[screen]?.filename;
     if (!filename) continue;
     const src = join(srcDir, filename);
     if (!existsSync(src)) {
-      return { ok: false, status: 409, error: `Image manquante pour le design : ${slot}` };
+      return { ok: false, status: 409, error: `Image manquante pour le design : ${screen}` };
     }
     toCopy.push({ src, filename });
   }
@@ -145,7 +145,7 @@ export function restoreEventDesign(dataDir, eventId, edb, snapshot) {
 
   // Purge les images du dossier qui ne sont plus référencées par le design restauré.
   const referenced = new Set(
-    DESIGN_ASSET_SLOTS.map((slot) => design.assets?.[slot]).filter(Boolean),
+    DESIGN_IMAGE_SCREENS.map((screen) => design.images?.[screen]?.filename).filter(Boolean),
   );
   if (existsSync(destDir)) {
     for (const filename of readdirSync(destDir)) {

@@ -52,12 +52,13 @@ async function createEvent(name = 'Événement design') {
   return res.body.id;
 }
 
-// Design appartenant à alice, avec un logo téléversé.
-async function createDesignWithLogo(name = 'Design avec logo') {
+// Design appartenant à alice, avec une image téléversée sur l'écran d'accueil
+// (mode 'centered' par défaut à l'upload — design4, une seule image par écran).
+async function createDesignWithImage(name = 'Design avec image', screen = 'start') {
   const design = (await request.post('/api/designs').set(auth(tokenAlice)).send({ name })).body;
-  const up = await request.post(`/api/designs/${design.id}/assets?slot=logo`)
+  const up = await request.post(`/api/designs/${design.id}/assets?screen=${screen}`)
     .set(auth(tokenAlice))
-    .attach('file', PNG_1x1, { filename: 'logo.png', contentType: 'image/png' });
+    .attach('file', PNG_1x1, { filename: 'image.png', contentType: 'image/png' });
   assert.equal(up.status, 201);
   return { id: design.id, filename: up.body.filename };
 }
@@ -70,7 +71,7 @@ const readMeta = (eventId, key) =>
 describe('PUT /api/events/:eventId/design', () => {
   it('copie la config ET les fichiers dans l\'événement (snapshot)', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
 
     const res = await request.put(`/api/events/${eventId}/design`)
       .set(auth(tokenAlice))
@@ -81,7 +82,7 @@ describe('PUT /api/events/:eventId/design', () => {
     // La config est écrite dans event_meta, sérialisée.
     const meta = JSON.parse(readMeta(eventId, 'design'));
     assert.equal(meta.version, 1);
-    assert.equal(meta.assets.logo, design.filename);
+    assert.equal(meta.images.start.filename, design.filename);
 
     // Le fichier est COPIÉ dans le dossier de l'événement.
     assert.ok(existsSync(join(dir, 'events', eventId, 'design', design.filename)));
@@ -89,7 +90,7 @@ describe('PUT /api/events/:eventId/design', () => {
 
   it('screenOverrides survit intact dans la copie snapshot (design3)', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
     const screenOverrides = {
       start: { colors: { text: '#0000ff' } },
       recording: { colors: { primary: '#ff0000' } },
@@ -106,7 +107,7 @@ describe('PUT /api/events/:eventId/design', () => {
 
   it('snapshot, pas référence : modifier le design source n\'affecte pas un événement non-preview (§11.26)', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
 
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
     updateEvent(getDb(), eventId, { status: 'ready' }); // hors preview : ne doit JAMAIS être rafraîchi (design2, §9bis)
@@ -125,7 +126,7 @@ describe('PUT /api/events/:eventId/design', () => {
 
   it('supprimer le design source ne casse pas l\'événement', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
 
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
     await request.delete(`/api/designs/${design.id}`).set(auth(tokenAlice));
@@ -137,8 +138,8 @@ describe('PUT /api/events/:eventId/design', () => {
 
   it('remplacer le design vide les anciens fichiers', async () => {
     const eventId = await createEvent();
-    const first = await createDesignWithLogo('Premier');
-    const second = await createDesignWithLogo('Second');
+    const first = await createDesignWithImage('Premier');
+    const second = await createDesignWithImage('Second');
 
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: first.id });
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: second.id });
@@ -149,7 +150,7 @@ describe('PUT /api/events/:eventId/design', () => {
 
   it('409 si l\'événement est gelé', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
     updateEvent(getDb(), eventId, { status: 'ready' }); // contenu gelé
 
     const res = await request.put(`/api/events/${eventId}/design`)
@@ -161,21 +162,26 @@ describe('PUT /api/events/:eventId/design', () => {
 
   it('un design source aux images manquantes → 409 SANS détruire le design déjà appliqué', async () => {
     const eventId = await createEvent();
-    const applied = await createDesignWithLogo('Design correct');
+    const applied = await createDesignWithImage('Design correct');
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: applied.id });
 
     // Un design dont la config référence une image, mais dont le fichier n'existe pas.
     const broken = (await request.post('/api/designs').set(auth(tokenAlice)).send({ name: 'Design cassé' })).body;
     const full = (await request.get(`/api/designs/${broken.id}`).set(auth(tokenAlice))).body;
     await request.put(`/api/designs/${broken.id}`).set(auth(tokenAlice))
-      .send({ config: { ...full.config, assets: { logo: '00000000-0000-4000-8000-000000000000.png', background: null } } });
+      .send({
+        config: {
+          ...full.config,
+          images: { start: { mode: 'centered', filename: '00000000-0000-4000-8000-000000000000.png' } },
+        },
+      });
 
     const res = await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: broken.id });
     assert.equal(res.status, 409);
 
     // Le design précédemment appliqué (config + fichier) doit être intact.
     const meta = JSON.parse(readMeta(eventId, 'design'));
-    assert.equal(meta.assets.logo, applied.filename);
+    assert.equal(meta.images.start.filename, applied.filename);
     assert.ok(existsSync(join(dir, 'events', eventId, 'design', applied.filename)));
   });
 
@@ -193,7 +199,7 @@ describe('PUT /api/events/:eventId/design', () => {
 
   it('403 si l\'utilisateur n\'est pas membre de l\'événement', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
 
     const res = await request.put(`/api/events/${eventId}/design`)
       .set(auth(tokenBob))
@@ -208,7 +214,7 @@ describe('PUT /api/events/:eventId/design', () => {
 describe('DELETE /api/events/:eventId/design', () => {
   it('retire la clé et vide le dossier (retour aux thèmes)', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
 
     const res = await request.delete(`/api/events/${eventId}/design`).set(auth(tokenAlice));
@@ -239,7 +245,7 @@ describe('restauration de version et design', () => {
     const noDesignVersion = versionsBefore[0].id;
 
     // Applique un design (nouvelle version capturée).
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
     assert.ok(readMeta(eventId, 'design'), 'le design est appliqué');
 
@@ -254,7 +260,7 @@ describe('restauration de version et design', () => {
 
   it('restaurer une version AVEC design le réapplique', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
     const withDesign = (await request.get(`/api/events/${eventId}/versions`).set(auth(tokenAlice))).body[0].id;
 
@@ -267,7 +273,7 @@ describe('restauration de version et design', () => {
     assert.equal(res.status, 200);
 
     const meta = JSON.parse(readMeta(eventId, 'design'));
-    assert.equal(meta.assets.logo, design.filename);
+    assert.equal(meta.images.start.filename, design.filename);
     // Le fichier est toujours là (le retrait n'a fait que vider… il faut donc que
     // le restore le retrouve : ici il a été supprimé par le DELETE, on accepte la
     // config dégradée sans image — cf. limite documentée).
@@ -279,7 +285,7 @@ describe('restauration de version et design', () => {
 describe('sens unique Hub → Borne', () => {
   it('un push-config de la borne ne peut ni écraser ni effacer event_meta.design', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
     const applied = readMeta(eventId, 'design');
 
@@ -312,7 +318,7 @@ describe('sens unique Hub → Borne', () => {
 describe('PUT /api/events/:eventId/design — provenance', () => {
   it('écrit design_source_id et la ref registre event_design_refs', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
 
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
 
@@ -323,7 +329,7 @@ describe('PUT /api/events/:eventId/design — provenance', () => {
 
   it('DELETE design event retire design_source_id et la ref', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
 
     const res = await request.delete(`/api/events/${eventId}/design`).set(auth(tokenAlice));
@@ -337,7 +343,7 @@ describe('PUT /api/events/:eventId/design — provenance', () => {
   it('supprimer l\'événement purge la ref (ON DELETE CASCADE)', async () => {
     const eventName = 'Événement design à purger';
     const eventId = await createEvent(eventName);
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
 
     const del = await request.delete(`/api/events/${eventId}`).set(auth(tokenAlice)).send({ confirm: eventName });
@@ -352,7 +358,7 @@ describe('PUT /api/designs/:id — rafraîchissement de la borne d\'essai (desig
   it('éditer le design rafraîchit un événement preview mais PAS un événement ready — §11.26', async () => {
     const previewEventId = await createEvent('Preview vivant');
     const readyEventId = await createEvent('Ready figé');
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
 
     await request.put(`/api/events/${previewEventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
     await request.put(`/api/events/${readyEventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
@@ -378,7 +384,7 @@ describe('PUT /api/designs/:id — rafraîchissement de la borne d\'essai (desig
 
   it('un événement preview détaché (design supprimé) n\'est plus rafraîchi', async () => {
     const eventId = await createEvent();
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
 
     await request.delete(`/api/designs/${design.id}`).set(auth(tokenAlice));
@@ -393,7 +399,7 @@ describe('PUT /api/designs/:id — rafraîchissement de la borne d\'essai (desig
 describe('design_source_id reste Hub-only (bundle de pull)', () => {
   it('le bundle GET /api/sync/events/:id/bundle n\'expose jamais design_source_id', async () => {
     const eventId = await createEvent('Preview bundle');
-    const design = await createDesignWithLogo();
+    const design = await createDesignWithImage();
     await request.put(`/api/events/${eventId}/design`).set(auth(tokenAlice)).send({ design_id: design.id });
     assert.ok(readMeta(eventId, 'design_source_id'), 'précondition : la trace de provenance existe côté Hub');
 

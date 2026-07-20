@@ -750,8 +750,10 @@ const TEMPLATE_DEFAULTS = {
   version: 1,
   radius: 'soft',
   font: 'sans',
-  layouts: { start: 'centered', thanks: 'centered' },
-  assets: { logo: null, background: null },
+  images: {
+    start: { mode: 'none', filename: null },
+    thanks: { mode: 'none', filename: null },
+  },
 };
 
 const DESIGN_TEMPLATES = [
@@ -796,7 +798,7 @@ const DESIGN_TEMPLATES = [
 // casserait la création par défaut au premier renommage.
 export function defaultDesignConfig() {
   const cutealism = DESIGN_TEMPLATES.find((t) => t.name === 'Cutealism');
-  // Clone profond : un spread superficiel partagerait `layouts`/`assets` entre les
+  // Clone profond : un spread superficiel partagerait `images` entre les
   // appels — un appelant qui muterait la config renvoyée corromprait le défaut.
   return structuredClone({ ...TEMPLATE_DEFAULTS, colors: cutealism.colors });
 }

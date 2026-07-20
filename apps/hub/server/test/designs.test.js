@@ -77,7 +77,10 @@ describe('seed des templates', () => {
     assert.equal(cute.config.colors.accent, '#F27405');
     assert.equal(Object.keys(cute.config.colors).length, 18);
     assert.equal(cute.config.radius, 'soft');
-    assert.deepEqual(cute.config.assets, { logo: null, background: null });
+    assert.deepEqual(cute.config.images, {
+      start: { mode: 'none', filename: null },
+      thanks: { mode: 'none', filename: null },
+    });
   });
 });
 
@@ -176,13 +179,13 @@ describe('POST /api/designs', () => {
       { label: 'clé couleur inconnue', config: { version: 1, colors: { 'evil-key': '#ffffff' } } },
       { label: 'hex malformé', config: { version: 1, colors: { bg: '#fff' } } },
       { label: 'valeur CSS libre', config: { version: 1, colors: { bg: 'url(https://evil.test/x)' } } },
-      { label: 'layout hors enum', config: { version: 1, layouts: { start: 'diagonal' } } },
+      { label: 'mode hors enum', config: { version: 1, images: { start: { mode: 'split', filename: null } } } },
       { label: 'radius hors enum', config: { version: 1, radius: 'enorme' } },
-      { label: 'asset SVG', config: { version: 1, assets: { logo: '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.svg' } } },
+      { label: 'image SVG', config: { version: 1, images: { start: { mode: 'centered', filename: '3f2a1b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b.svg' } } } },
       { label: 'version absente', config: { colors: { bg: '#ffffff' } } },
       { label: 'clé racine inconnue', config: { version: 1, style: 'position:fixed' } },
       { label: 'custom property injectée', config: { version: 1, '--evil': 'url(x)' } },
-      { label: 'JSON > 16 Ko', config: { version: 1, assets: { logo: 'x'.repeat(17000) } } },
+      { label: 'JSON > 16 Ko', config: { version: 1, images: { start: { mode: 'centered', filename: 'x'.repeat(17000) } } } },
     ];
     for (const { label, config } of cases) {
       const res = await request.post('/api/designs').set(auth(tokenBob)).send({ name: label, config });
@@ -533,39 +536,46 @@ const PNG_1x1 = Buffer.from(
 );
 
 describe('POST /api/designs/:id/assets', () => {
-  it('téléverse un PNG, référence le fichier dans la config et versionne', async () => {
-    const design = await createDesign(tokenBob, 'Avec logo');
+  it('téléverse un PNG, référence le fichier dans la config (mode centered par défaut) et versionne', async () => {
+    const design = await createDesign(tokenBob, 'Avec image');
 
-    const res = await request.post(`/api/designs/${design.id}/assets?slot=logo`)
+    const res = await request.post(`/api/designs/${design.id}/assets?screen=start`)
       .set(auth(tokenBob))
       .attach('file', PNG_1x1, { filename: 'logo.png', contentType: 'image/png' });
 
     assert.equal(res.status, 201);
     assert.match(res.body.filename, /^[0-9a-f-]{36}\.png$/);
+    assert.equal(res.body.mode, 'centered');
 
     // Le fichier est écrit sous le nom généré, pas sous celui du client.
     assert.ok(existsSync(join(dir, 'designs', design.id, res.body.filename)));
 
     // La config référence l'image, et l'upload a créé une version.
     const after = await request.get(`/api/designs/${design.id}`).set(auth(tokenBob));
-    assert.equal(after.body.config.assets.logo, res.body.filename);
+    assert.equal(after.body.config.images.start.filename, res.body.filename);
+    assert.equal(after.body.config.images.start.mode, 'centered');
 
     const versions = await request.get(`/api/designs/${design.id}/versions`).set(auth(tokenBob));
     assert.equal(versions.body.length, 2); // création + upload
   });
 
-  it('remplace l\'image d\'un slot et supprime l\'ancien fichier', async () => {
-    const design = await createDesign(tokenBob, 'Remplacement de logo');
+  it('conserve le mode déjà choisi (cover) lors d\'un remplacement de fichier', async () => {
+    const design = await createDesign(tokenBob, 'Remplacement en cover');
 
-    const first = await request.post(`/api/designs/${design.id}/assets?slot=logo`)
+    const first = await request.post(`/api/designs/${design.id}/assets?screen=start`)
       .set(auth(tokenBob))
       .attach('file', PNG_1x1, { filename: 'a.png', contentType: 'image/png' });
+    await request.put(`/api/designs/${design.id}`).set(auth(tokenBob)).send({
+      config: { ...(await request.get(`/api/designs/${design.id}`).set(auth(tokenBob))).body.config,
+        images: { start: { mode: 'cover', filename: first.body.filename } } },
+    });
 
-    const second = await request.post(`/api/designs/${design.id}/assets?slot=logo`)
+    const second = await request.post(`/api/designs/${design.id}/assets?screen=start`)
       .set(auth(tokenBob))
       .attach('file', PNG_1x1, { filename: 'b.png', contentType: 'image/png' });
 
     assert.equal(second.status, 201);
+    assert.equal(second.body.mode, 'cover');
     assert.ok(!existsSync(join(dir, 'designs', design.id, first.body.filename)), 'ancien fichier supprimé');
     assert.ok(existsSync(join(dir, 'designs', design.id, second.body.filename)));
   });
@@ -574,7 +584,7 @@ describe('POST /api/designs/:id/assets', () => {
     const design = await createDesign(tokenBob, 'SVG refusé');
     const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
 
-    const res = await request.post(`/api/designs/${design.id}/assets?slot=logo`)
+    const res = await request.post(`/api/designs/${design.id}/assets?screen=start`)
       .set(auth(tokenBob))
       .attach('file', svg, { filename: 'evil.svg', contentType: 'image/svg+xml' });
 
@@ -585,24 +595,24 @@ describe('POST /api/designs/:id/assets', () => {
     const design = await createDesign(tokenBob, 'Trop gros');
     const big = Buffer.alloc(2 * 1024 * 1024 + 1024, 0);
 
-    const res = await request.post(`/api/designs/${design.id}/assets?slot=logo`)
+    const res = await request.post(`/api/designs/${design.id}/assets?screen=start`)
       .set(auth(tokenBob))
       .attach('file', big, { filename: 'big.png', contentType: 'image/png' });
 
     assert.equal(res.status, 413);
   });
 
-  it('refuse un slot inconnu et ne laisse pas le fichier orphelin', async () => {
-    const design = await createDesign(tokenBob, 'Slot invalide');
+  it('refuse un écran inconnu et ne laisse pas le fichier orphelin', async () => {
+    const design = await createDesign(tokenBob, 'Écran invalide');
 
-    const res = await request.post(`/api/designs/${design.id}/assets?slot=evil`)
+    const res = await request.post(`/api/designs/${design.id}/assets?screen=evil`)
       .set(auth(tokenBob))
       .attach('file', PNG_1x1, { filename: 'x.png', contentType: 'image/png' });
 
     assert.equal(res.status, 400);
 
-    // Le fichier a été écrit par multer avant la validation du slot : il doit
-    // avoir été nettoyé.
+    // Le fichier a été écrit par multer avant la validation de l'écran : il
+    // doit avoir été nettoyé.
     const dirPath = join(dir, 'designs', design.id);
     const files = existsSync(dirPath) ? readdirSync(dirPath) : [];
     assert.equal(files.length, 0, 'aucun fichier orphelin ne doit rester');
@@ -610,7 +620,7 @@ describe('POST /api/designs/:id/assets', () => {
 
   it('403 sur le design d\'un autre client', async () => {
     const secret = await createDesign(tokenCarol, 'Assets privés');
-    const res = await request.post(`/api/designs/${secret.id}/assets?slot=logo`)
+    const res = await request.post(`/api/designs/${secret.id}/assets?screen=start`)
       .set(auth(tokenBob))
       .attach('file', PNG_1x1, { filename: 'x.png', contentType: 'image/png' });
 
@@ -618,26 +628,26 @@ describe('POST /api/designs/:id/assets', () => {
   });
 });
 
-describe('DELETE /api/designs/:id/assets/:slot', () => {
-  it('retire l\'image du slot et supprime le fichier', async () => {
-    const design = await createDesign(tokenBob, 'Retrait de logo');
-    const up = await request.post(`/api/designs/${design.id}/assets?slot=logo`)
+describe('DELETE /api/designs/:id/assets/:screen', () => {
+  it('retire l\'image de l\'écran, remet mode="none" et supprime le fichier', async () => {
+    const design = await createDesign(tokenBob, 'Retrait d\'image');
+    const up = await request.post(`/api/designs/${design.id}/assets?screen=start`)
       .set(auth(tokenBob))
       .attach('file', PNG_1x1, { filename: 'x.png', contentType: 'image/png' });
 
-    const res = await request.delete(`/api/designs/${design.id}/assets/logo`).set(auth(tokenBob));
+    const res = await request.delete(`/api/designs/${design.id}/assets/start`).set(auth(tokenBob));
     assert.equal(res.status, 200);
 
     assert.ok(!existsSync(join(dir, 'designs', design.id, up.body.filename)));
 
     const after = await request.get(`/api/designs/${design.id}`).set(auth(tokenBob));
-    assert.equal(after.body.config.assets.logo, null);
+    assert.deepEqual(after.body.config.images.start, { mode: 'none', filename: null });
   });
 
-  it('404 si le slot est vide, 400 si le slot est inconnu', async () => {
+  it('404 si l\'écran n\'a pas d\'image, 400 si l\'écran est inconnu', async () => {
     const design = await createDesign(tokenBob, 'Retraits invalides');
 
-    const empty = await request.delete(`/api/designs/${design.id}/assets/logo`).set(auth(tokenBob));
+    const empty = await request.delete(`/api/designs/${design.id}/assets/start`).set(auth(tokenBob));
     assert.equal(empty.status, 404);
 
     const bad = await request.delete(`/api/designs/${design.id}/assets/evil`).set(auth(tokenBob));
@@ -648,7 +658,7 @@ describe('DELETE /api/designs/:id/assets/:slot', () => {
 describe('GET /api/designs/:id/assets/:filename', () => {
   it('sert une image référencée par la config', async () => {
     const design = await createDesign(tokenBob, 'Service d\'image');
-    const up = await request.post(`/api/designs/${design.id}/assets?slot=logo`)
+    const up = await request.post(`/api/designs/${design.id}/assets?screen=start`)
       .set(auth(tokenBob))
       .attach('file', PNG_1x1, { filename: 'x.png', contentType: 'image/png' });
 
@@ -659,7 +669,7 @@ describe('GET /api/designs/:id/assets/:filename', () => {
 
   it('404 sur un fichier non référencé, et sur une traversée de chemin', async () => {
     const design = await createDesign(tokenBob, 'Traversée');
-    await request.post(`/api/designs/${design.id}/assets?slot=logo`)
+    await request.post(`/api/designs/${design.id}/assets?screen=start`)
       .set(auth(tokenBob))
       .attach('file', PNG_1x1, { filename: 'x.png', contentType: 'image/png' });
 
@@ -676,7 +686,7 @@ describe('GET /api/designs/:id/assets/:filename', () => {
 
   it('403 sur le design d\'un autre client', async () => {
     const secret = await createDesign(tokenCarol, 'Image privée');
-    const up = await request.post(`/api/designs/${secret.id}/assets?slot=logo`)
+    const up = await request.post(`/api/designs/${secret.id}/assets?screen=start`)
       .set(auth(tokenCarol))
       .attach('file', PNG_1x1, { filename: 'x.png', contentType: 'image/png' });
 
