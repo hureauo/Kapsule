@@ -31,6 +31,15 @@ const COLOR_LABELS = {
   'btn-secondary-hover': 'Bouton secondaire — survol',
 };
 
+// primary-soft et accent-tint restent dans le contrat (DESIGN_COLOR_KEYS,
+// packages/core) mais ne sont consommées par AUCUNE règle CSS du kiosque réel
+// (apps/borne/web/src/styles/app.css) — les masquer évite de faire croire au
+// client qu'elles ont un effet visible. Si un futur usage borne les consomme,
+// il suffira de retirer ces deux clés d'ici (contrat/validation inchangés,
+// rien à migrer côté designs déjà enregistrés).
+const HIDDEN_COLOR_KEYS = ['primary-soft', 'accent-tint'];
+const VISIBLE_COLOR_KEYS = DESIGN_COLOR_KEYS.filter((k) => !HIDDEN_COLOR_KEYS.includes(k));
+
 // Couplage maquette (design2.D) : quel écran de DesignPreview afficher et quel
 // élément faire pulser au survol d'une ligne de couleur. Documenté ici car
 // DesignPreview (data-color-target) et cette table doivent rester synchrones —
@@ -44,12 +53,10 @@ const COLOR_TARGET = {
   'text-muted': { screen: 'start', key: 'text-muted' },
   'text-error': { screen: 'recording', key: 'text-error' },
   primary: { screen: 'recording', key: 'primary' },
-  'primary-soft': { screen: 'recording', key: 'primary' },
-  'primary-tint': { screen: 'recording', key: 'primary' },
+  'primary-tint': { screen: 'recording', key: 'primary-tint' },
   accent: { screen: 'start', key: 'accent' },
   'accent-hover': { screen: 'name', key: 'accent-hover' },
-  'accent-soft': { screen: 'start', key: 'accent' },
-  'accent-tint': { screen: 'start', key: 'accent' },
+  'accent-soft': { screen: 'recording', key: 'accent-soft' },
   'input-bg': { screen: 'name', key: 'input-bg' },
   'input-border': { screen: 'name', key: 'input-border' },
   'input-border-focus': { screen: 'name', key: 'input-border' },
@@ -86,7 +93,7 @@ const SCREEN_ORDER = ['start', 'name', 'recording', 'thanks'];
 
 function groupColorsByScreen() {
   const groups = new Map(SCREEN_ORDER.map((s) => [s, []]));
-  for (const key of DESIGN_COLOR_KEYS) {
+  for (const key of VISIBLE_COLOR_KEYS) {
     const screen = COLOR_TARGET[key]?.screen ?? 'start';
     if (!groups.has(screen)) groups.set(screen, []);
     groups.get(screen).push(key);
@@ -378,7 +385,7 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
                 Couleurs de l'écran « {SCREEN_LABELS[activeScreenTab]} ». Une couleur non
                 détachée hérite de sa valeur globale.
               </p>
-              {DESIGN_COLOR_KEYS.map((key) => {
+              {VISIBLE_COLOR_KEYS.map((key) => {
                 const overrideValue = config.screenOverrides?.[activeScreenTab]?.colors?.[key];
                 const isOverridden = overrideValue !== undefined;
                 const resolvedValue = resolvedScreenColors?.[key];
@@ -529,7 +536,7 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
       </div>
 
       <div className="designs-editor__preview">
-        <DesignPreview config={config} hoverTarget={hoverTarget} />
+        <DesignPreview config={config} hoverTarget={hoverTarget} designId={design.id} />
       </div>
     </div>
   );

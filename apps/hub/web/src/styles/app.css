@@ -801,7 +801,12 @@ button { cursor: pointer; font: inherit; }
 }
 .dp-pulse {
   outline: 3px solid transparent;
-  outline-offset: 2px;
+  /* Offset NÉGATIF (vers l'intérieur) : un offset positif dessine le contour à
+     l'extérieur de la boîte, qui se fait couper par l'overflow:hidden du cadre
+     d'aperçu quand la cible occupe tout l'écran (ex. bg/surface sur .dp-screen,
+     qui fait width/height 100%) — invisible dans ce cas précis, alors que sur
+     les petits éléments (boutons, titres) ça pulsait déjà correctement. */
+  outline-offset: -3px;
   border-radius: var(--radius, 4px);
   animation: dp-pulse 1s ease-in-out infinite;
 }
@@ -946,6 +951,21 @@ button { cursor: pointer; font: inherit; }
   font-size: 14px;
 }
 
+/* Badge numéro (reprend .recap__index/.qsheet__index de la borne) : seul
+   élément de la maquette qui utilise réellement accent-soft. */
+.dp-badge {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .dp-logo-placeholder {
   display: flex;
   align-items: center;
@@ -956,6 +976,13 @@ button { cursor: pointer; font: inherit; }
   border-radius: var(--radius, 16px);
   color: var(--text-muted);
   font-size: 13px;
+}
+
+/* Vrai logo uploadé (remplace .dp-logo-placeholder dès qu'un asset existe). */
+.dp-logo-img {
+  max-height: 80px;
+  max-width: 160px;
+  object-fit: contain;
 }
 
 /* Variantes d'accueil : centered (pile), cover (image de fond), split (2 col.) */
@@ -976,13 +1003,19 @@ button { cursor: pointer; font: inherit; }
   z-index: 1;
 }
 
-/* Fond « image » : sans asset (design.E), on montre un aplat représentatif. */
+/* Fond « image » : avec un asset, DesignPreview pose backgroundImage en
+   inline — background-size/position couvrent le cadre comme le fera la borne
+   réelle, SANS opacité réduite (le vrai kiosque n'assombrit jamais l'image,
+   apps/borne/web/src/styles/app.css .start--cover/.thanks--cover). Sans
+   asset, .dp-cover--placeholder montre un aplat représentatif atténué. */
 .dp-cover {
   position: absolute;
   inset: 0;
-  background: var(--surface-alt);
-  opacity: .9;
+  background-color: var(--surface-alt);
+  background-size: cover;
+  background-position: center;
 }
+.dp-cover--placeholder { opacity: .9; }
 .dp-thanks--cover .dp-start__body,
 .dp-start--cover .dp-start__body { z-index: 1; }
 

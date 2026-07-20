@@ -1,25 +1,19 @@
 ---
 status: tests-pending
-base_commit: 32556707ec7fab6ce2f173bb183e513000f3c75e
-workspaces: [@kapsule/core, @kapsule/hub-server, @kapsule/hub-web, @kapsule/borne-web]
-generated_at: 2026-07-16T00:00:00Z
+base_commit: 3461ef4504f47ebc33bc5fda552835b3a551c6a6
+workspaces: [@kapsule/hub-web]
+generated_at: 2026-07-20T00:00:00Z
 verdict: COMMIT OK
 ---
 
 # Relais de review → tests
 
 Workspaces à tester :
-- @kapsule/core (raison : `packages/core/src/design.js` — `DESIGN_SCREENS`, `validateColorsObject`, `screenOverrides`, `resolveScreenColors`)
-- @kapsule/hub-server (raison : tests de non-régression `designs.test.js` / `eventDesign.test.js` sur la revalidation et le snapshot de `screenOverrides`)
-- @kapsule/hub-web (raison : `DesignEditor.jsx` / `DesignPreview.jsx` modifiés — pas de suite de tests React côté hub-web, mais suite existante à faire tourner)
-- @kapsule/borne-web (raison : `applyDesign(design, screen)` et tests `test/design.test.js`)
-
-Note : borne-server n'est pas touché fonctionnellement mais partage `validateDesign` de core (revalidation `resolveDesign`) — le lancer si l'infra core est considérée touchée.
+- @kapsule/hub-web (raison : DesignEditor.jsx, DesignPreview.jsx et styles/app.css modifiés — aperçu live de l'éditeur de designs)
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- Rétrocompatibilité : un design sans `screenOverrides` doit rendre exactement comme avant (couvert par les tests core + borne-web, à confirmer verts).
-- Barrière anti-injection : `resolveScreenColors` avec une clé hostile en config directe ne doit jamais la propager (test core dédié présent).
-- `GuestPage.jsx` n'a AUCUN test automatisé (pas de suite de composants React borne-web) : le retrait de `applyDesign` dans `loadEvent` au profit du `useEffect([screen, event])` reste à valider par un humain sur la borne réelle (design3.F, case 🧑). Non bloquant côté tests.
+- Aucune suite de tests de composants React n'existe pour DesignEditor.jsx / DesignPreview.jsx : le diff n'a PAS de couverture automatisée dédiée. Les 29 tests hub-web existants + `vite build` (déjà passés par l'utilisateur) ne valident que l'absence de régression de compilation/logique adjacente, pas le comportement des nouveaux composants (AssetImage, coverUrl, masquage VISIBLE_COLOR_KEYS).
+- Vérification manuelle recommandée (front visuel, hors périmètre tests auto) : affichage réel logo/fond uploadés dans l'aperçu, highlight `.dp-pulse` (offset -3px) visible sur petits ET grands éléments, survie des clés masquées primary-soft/accent-tint après un save.
 
 ## Corrections demandées
 

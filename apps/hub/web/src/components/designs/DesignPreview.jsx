@@ -8,6 +8,7 @@
 
 import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
 import { DESIGN_COLOR_KEYS, RADIUS_PRESETS, FONT_PRESETS, resolveScreenColors } from '@kapsule/core';
+import { api } from '../../api/client.js';
 
 const WIDTHS = [
   { key: 'mobile', label: 'Mobile', width: 360 },
@@ -36,7 +37,7 @@ function cssVarsFor(config, screen) {
 // Posé au CLIC sur une ligne couleur (plus fiable qu'un hover : reste affiché
 // le temps de regarder l'aperçu). Bascule l'aperçu sur l'écran concerné et
 // fait pulser l'élément marqué data-color-target={key} (animation CSS .dp-pulse).
-export default function DesignPreview({ config, hoverTarget = null }) {
+export default function DesignPreview({ config, hoverTarget = null, designId = null }) {
   const [widthKey, setWidthKey] = useState('ipad');
   const [screen, setScreen] = useState('start');
   const viewportRef = useRef(null);
@@ -124,7 +125,7 @@ export default function DesignPreview({ config, hoverTarget = null }) {
           style={{ width: target.width, transform: `scale(${scale})` }}
         >
           <div className="design-preview" style={vars} ref={previewRef}>
-            <Screen screen={screen} config={config} />
+            <Screen screen={screen} config={config} designId={designId} />
           </div>
         </div>
       </div>
@@ -132,22 +133,47 @@ export default function DesignPreview({ config, hoverTarget = null }) {
   );
 }
 
-function Screen({ screen, config }) {
+function Screen({ screen, config, designId }) {
   if (screen === 'name') return <NameScreen />;
   if (screen === 'recording') return <RecordingScreen />;
-  if (screen === 'thanks') return <ThanksScreen config={config} />;
-  return <StartScreen config={config} />;
+  if (screen === 'thanks') return <ThanksScreen config={config} designId={designId} />;
+  return <StartScreen config={config} designId={designId} />;
 }
 
-function StartScreen({ config }) {
+// Image réellement uploadée si un asset existe pour ce slot, sinon un
+// placeholder — même logique que AssetRow (DesignEditor.jsx) : l'aperçu doit
+// refléter ce que la borne affichera réellement, pas un gabarit approximatif.
+function AssetImage({ designId, filename, alt, className, placeholderClassName, placeholderLabel }) {
+  if (designId && filename) {
+    return <img className={className} src={api.designAssetUrl(designId, filename)} alt={alt} />;
+  }
+  return <div className={placeholderClassName}>{placeholderLabel}</div>;
+}
+
+function StartScreen({ config, designId }) {
   const layout = config?.layouts?.start ?? 'centered';
+  const logo = config?.assets?.logo ?? null;
+  const background = config?.assets?.background ?? null;
+  // Comme le runtime kiosque (StartScreen.jsx, borne) : un fond téléversé ne
+  // s'affiche que sur la disposition qui le prévoit (cover).
+  const coverUrl = designId && background ? api.designAssetUrl(designId, background) : null;
+  const logoEl = (
+    <AssetImage
+      designId={designId}
+      filename={logo}
+      alt="Logo"
+      className="dp-logo-img"
+      placeholderClassName="dp-logo-placeholder"
+      placeholderLabel="Logo"
+    />
+  );
 
   return (
     <div className={`dp-screen dp-start dp-start--${layout}`} data-color-target="bg">
       {layout === 'split' ? (
         <>
           <div className="dp-start__aside">
-            <div className="dp-logo-placeholder">Logo</div>
+            {logoEl}
           </div>
           <div className="dp-start__body">
             <h1 className="dp-title" data-color-target="text">Mariage Léa &amp; Hugo</h1>
@@ -157,9 +183,15 @@ function StartScreen({ config }) {
         </>
       ) : (
         <>
-          {layout === 'cover' && <div className="dp-cover" data-color-target="surface-alt" />}
+          {layout === 'cover' && (
+            <div
+              className={`dp-cover ${coverUrl ? '' : 'dp-cover--placeholder'}`}
+              data-color-target="surface-alt"
+              style={coverUrl ? { backgroundImage: `url("${coverUrl}")` } : undefined}
+            />
+          )}
           <div className="dp-start__body">
-            <div className="dp-logo-placeholder">Logo</div>
+            {logoEl}
             <h1 className="dp-title" data-color-target="text">Mariage Léa &amp; Hugo</h1>
             <p className="dp-subtitle" data-color-target="text-muted">Laissez-nous un message vidéo</p>
             <button className="dp-btn dp-btn--accent" data-color-target="accent">Commencer</button>
@@ -200,11 +232,14 @@ function RecordingScreen() {
           <span className="dp-timer">0:12</span>
         </div>
         <button className="dp-btn dp-btn--accent" data-color-target="primary">■ Stop</button>
+        {/* Badge numéro — reproduit .recap__index/.qsheet__index (borne) :
+            fond accent-soft par défaut, unique élément qui l'utilise réellement. */}
+        <span className="dp-badge" data-color-target="accent-soft">2</span>
       </div>
       {/* Bandeau bas — reproduit QuestionNav.jsx (borne) : barre de remplissage
           + dots + « Question X / N ». Répond aux mêmes tokens que le kiosque réel. */}
       <div className="dp-nav" data-color-target="surface">
-        <div className="dp-nav__progress">
+        <div className="dp-nav__progress" data-color-target="primary-tint">
           <div className="dp-nav__progress-fill" data-color-target="primary" style={{ width: '40%' }} />
         </div>
         <div className="dp-nav__row">
@@ -227,11 +262,20 @@ function RecordingScreen() {
   );
 }
 
-function ThanksScreen({ config }) {
+function ThanksScreen({ config, designId }) {
   const layout = config?.layouts?.thanks ?? 'centered';
+  const background = config?.assets?.background ?? null;
+  const coverUrl = designId && background ? api.designAssetUrl(designId, background) : null;
+
   return (
     <div className={`dp-screen dp-center dp-thanks dp-thanks--${layout}`} data-color-target="bg">
-      {layout === 'cover' && <div className="dp-cover" data-color-target="surface-alt" />}
+      {layout === 'cover' && (
+        <div
+          className={`dp-cover ${coverUrl ? '' : 'dp-cover--placeholder'}`}
+          data-color-target="surface-alt"
+          style={coverUrl ? { backgroundImage: `url("${coverUrl}")` } : undefined}
+        />
+      )}
       <div className="dp-start__body">
         <h1 className="dp-title" data-color-target="text">Merci Camille !</h1>
         <p className="dp-subtitle" data-color-target="text-muted">Ton message a bien été enregistré.</p>
