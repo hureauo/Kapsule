@@ -140,6 +140,24 @@ const STATUS_LABELS = {
   waiting: 'en attente',
 };
 
+// Reformule le message technique de validateDesign quand la SEULE cause
+// d'invalidité est un écran passé en mode centered/cover sans fichier encore
+// uploadé — état transitoire normal juste après avoir cliqué une radio
+// (design4), pas une vraie erreur de saisie. On détecte le cas sur `config`
+// directement (pas en parsant le texte du message, plus robuste aux
+// changements de formulation côté core) ; sinon on laisse le message backend
+// tel quel (cas réellement inattendu, autant garder le détail).
+function friendlyInvalidMessage(config, backendError) {
+  const missing = DESIGN_IMAGE_SCREENS.find((screen) => {
+    const entry = config.images?.[screen];
+    return entry && entry.mode !== 'none' && !entry.filename;
+  });
+  if (missing) {
+    return `Choisissez une image pour « ${IMAGE_SCREEN_LABELS[missing]} » pour activer ce mode.`;
+  }
+  return backendError;
+}
+
 export default function DesignEditor({ design, readOnly, onSaved, onError, onDuplicate }) {
   const [config, setConfig] = useState(design.config);
   const [saving, setSaving] = useState(false);
@@ -177,7 +195,7 @@ export default function DesignEditor({ design, readOnly, onSaved, onError, onDup
     // Retour immédiat : on valide côté client avec la MÊME fonction que le
     // backend (core), donc aucun écart de règle possible.
     const check = validateDesign(next);
-    setInvalid(check.ok ? '' : check.error);
+    setInvalid(check.ok ? '' : friendlyInvalidMessage(next, check.error));
   }
 
   const setColor = (key, value) => update({ colors: { ...config.colors, [key]: value } });
