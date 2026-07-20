@@ -391,3 +391,29 @@ Mêmes règles : un sous-lot backend n'est terminé que **testé** (nominal + ca
 **Terminé quand** : un client peut personnaliser une couleur pour un seul écran du parcours invité
 sans affecter les autres écrans, avec un bouton pour revenir à l'héritage de la couleur globale ;
 le runtime borne applique la bonne résolution à chaque changement d'écran.
+
+## Phase design4 — une seule image par écran (centrée / plein écran / aucune)
+
+Voir PROJET.md §9bis (sous-section « Schéma JSON d'un design », clé `images`) pour le contrat
+complet. Plan : `.claude/plans/velvet-twirling-cookie.md`.
+
+Décision actée : fusion des anciens `assets{logo,background}` + `layouts{centered,cover,split}`
+en une seule clé `images` par écran (accueil/remerciement), avec exactement 3 états explicites :
+`centered` (image au milieu), `cover` (plein écran), `none` (aucune image). Le layout `split`
+(logo à gauche, texte à droite) est **retiré** — il n'avait de sens que séparé du texte, qui
+n'existe plus avec une image unique par écran. Aucune donnée de production à migrer (dev/test
+uniquement) : changement de contrat direct, sans migration versionnée. Hors périmètre : granularité
+par élément, layout 2 colonnes, upload multi-images par écran.
+
+Mêmes règles : un sous-lot backend n'est terminé que **testé** (nominal + cas d'erreur), relu par
+`kapsule-reviewer` (`/verif-spec`), committé en `phase design4.X: …`.
+
+- [x] design4.A : contrat core (`DESIGN_IMAGE_SCREENS`, `DESIGN_IMAGE_MODES`, validation `images`), PROJET.md §9bis, tests
+- [x] design4.B : backend Hub (routes assets `?screen=`, `materializeEventDesign`/`restoreEventDesign`, seed), tests
+- [x] design4.C : runtime borne (`StartScreen.jsx`/`ThankYouScreen.jsx` lisent `images.<screen>`, retrait du layout `split`)
+- [x] design4.D : éditeur Hub (fieldset unique par écran : 3 radios + upload conditionnel, `DesignPreview.jsx` miroir)
+- [ ] 🧑 design4.E : vérif rendu réel borne d'essai + iPad (3 états sur accueil et remerciement, aucune trace de `split`)
+
+**Terminé quand** : un client choisit pour l'écran d'accueil et l'écran de remerciement, chacun
+indépendamment, si une image est centrée, en plein écran, ou absente — sans distinction logo/fond
+ni disposition 2 colonnes.

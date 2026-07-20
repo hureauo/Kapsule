@@ -212,7 +212,7 @@ kapsule/
 │           │   ├── components/VideoGallery.jsx
 │           │   ├── components/SyncStatus.jsx
 │           │   ├── components/designs/
-│           │   │   ├── DesignEditor.jsx      # formulaire tokens (couleurs/rayon/police/layouts)
+│           │   │   ├── DesignEditor.jsx      # formulaire tokens (couleurs/rayon/police/images)
 │           │   │   ├── DesignPreview.jsx     # maquettes statiques, bascule mobile/iPad/desktop
 │           │   │   └── VersionHistory.jsx    # historique + restauration
 │           │   └── styles/app.css
@@ -254,7 +254,7 @@ DATA_DIR/
 │       └── design/               # assets du design appliqué à CET événement (§9bis) — copie
 │                                  # snapshot, pas de lien vers designs/<designId>/
 ├── designs/                      # Hub uniquement — bibliothèque de designs (§9bis)
-│   └── <design-id>/              # design-id = uuid v4 ; fichiers assets (logo/fond) du design
+│   └── <design-id>/              # design-id = uuid v4 ; images du design (une par écran, §9bis)
 └── previews/
     └── <slug>/                   # Hub uniquement — données de la borne d'essai (bind-mount dans le container)
         └── events/<event-id>/    # même structure que ci-dessus ; PII invité isolée ici (vidéos de test)
@@ -646,8 +646,10 @@ designs et peuvent promouvoir un design en **template** public partagé.
   },
   "radius": "soft",
   "font": "sans",
-  "layouts": { "start": "centered", "thanks": "centered" },
-  "assets": { "logo": "3f2a….png", "background": null },
+  "images": {
+    "start": { "mode": "cover", "filename": "3f2a….png" },
+    "thanks": { "mode": "none", "filename": null }
+  },
   "screenOverrides": {
     "start": { "colors": { "text": "#0000ff" } },
     "recording": { "colors": { "primary": "#ff0000", "text-error": "#aa0000" } }
@@ -664,10 +666,16 @@ designs et peuvent promouvoir un design en **template** public partagé.
   caractères). Clés manquantes autorisées (fallback thème). **Clé inconnue → design invalide.**
 - `radius` : enum `['sharp', 'soft', 'round']`.
 - `font` : enum `['sans', 'serif', 'rounded', 'mono']` (stacks système, voir runtime kiosque).
-- `layouts.start` : enum `['centered', 'cover', 'split']` ; `layouts.thanks` : enum
-  `['centered', 'cover']`. Pas de variante en v1 pour les autres écrans.
-- `assets.logo` / `assets.background` : `null` ou nom de fichier matchant
-  `/^[0-9a-f-]{36}\.(png|jpg|webp)$/` (UUID + extension — jamais de chemin, jamais de SVG).
+- `images` (design4) : objet dont **chaque clé appartient à `DESIGN_IMAGE_SCREENS`**
+  (`['start', 'thanks']` — une seule image par écran, pas de distinction logo/fond). Chaque entrée
+  `images.<screen>` n'admet que 2 clés : `mode` (enum `['centered', 'cover', 'none']`) et
+  `filename`. Règle de cohérence stricte : `mode === 'none'` ⇒ `filename` doit être `null` ;
+  tout autre mode ⇒ `filename` **obligatoire**, matchant `/^[0-9a-f-]{36}\.(png|jpg|webp)$/`
+  (UUID + extension — jamais de chemin, jamais de SVG). Écran absent → aucune image sur cet
+  écran (comportement identique à avant l'introduction des designs personnalisables). Remplace
+  l'ancien couple `assets{logo,background}` + `layouts{centered,cover,split}` : un seul système
+  au lieu de deux à coordonner, et le layout `split` (logo à gauche, texte à droite) est retiré
+  — il n'avait de sens que séparé du texte, ce qui n'existe plus avec une image unique par écran.
 - `screenOverrides` (design3) : objet dont **chaque clé appartient à `DESIGN_SCREENS`**
   (`['start', 'name', 'recording', 'thanks']` — les 4 écrans du parcours invité). Chaque entrée
   `screenOverrides.<screen>` n'admet que la clé `colors`, validée avec **exactement les mêmes
@@ -767,8 +775,10 @@ avec la philosophie du manifest de push (§11.12).
 - **Hub, bibliothèque de designs** (`apps/hub/server/src/routes/designs.js`, monté sur
   `/api/designs`, `requireUser`) : CRUD (`GET/POST/PUT/DELETE /api/designs[/:id]`),
   `POST /api/designs/:id/duplicate`, `POST /api/designs/:id/promote` (superuser), historique
-  (`GET /api/designs/:id/versions[/:vid]`, `POST /api/designs/:id/restore`), assets
-  (`POST/DELETE /api/designs/:id/assets[/:slot]`, `GET /api/designs/:id/assets/:filename`).
+  (`GET /api/designs/:id/versions[/:vid]`, `POST /api/designs/:id/restore`), assets — une image
+  par écran (design4) : `POST /api/designs/:id/assets?screen=start|thanks` (upload, fixe
+  `mode: 'centered'` par défaut sauf mode déjà ≠ `none`), `DELETE /api/designs/:id/assets/:screen`
+  (retire l'image, remet `mode: 'none'`), `GET /api/designs/:id/assets/:filename`.
 - **Hub, application à un événement** (`apps/hub/server/src/routes/events.js`) :
   `PUT /api/events/:eventId/design` `{design_id}` (409 si statut gelé, copie snapshot),
   `DELETE /api/events/:eventId/design` (retour aux thèmes figés).
@@ -898,7 +908,7 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 25. **Transitions d'état `preview`** : un token `is_preview=1` ne peut puller que si le statut Hub est `preview`. Un token réel (`is_preview=0`) ne peut puller que si le statut est `ready` ou `loaded`. `requireBox` doit vérifier cette cohérence et retourner 403 si le type de token ne correspond pas au statut attendu.
 26. **Design appliqué = snapshot copié** (§9bis) : `PUT /api/events/:id/design` copie la config JSON et les fichiers assets du design vers `event_meta.design` et `events/<id>/design/` au moment de l'application. La copie est **autonome** : le rendu d'un événement ne dépend jamais, à la lecture (bundle, kiosque), du design source. Une *trace de provenance* (`event_meta.design_source_id` + table registre `event_design_refs`) est conservée, mais ce n'est **pas** une référence vivante — elle sert uniquement à rafraîchir la copie des événements **en statut `preview`** quand le design source est édité (borne d'essai, §9bis « Rafraîchissement de la borne d'essai »). Un événement de tout autre statut (`ready`+) n'est **jamais** modifié par une édition ou une suppression du design source.
 27. **Assets de design vérifiés par checksum au pull** (§9bis) : le bundle expose `design_assets: [{filename, size, checksum}]` ; la Borne calcule le sha256 de chaque fichier téléchargé et compare — **un mismatch est un échec de pull explicite**, jamais un fichier silencieusement corrompu.
-28. **Jamais de SVG ni de valeur CSS libre dans un design** (§9bis) : `validateDesign()` n'accepte que des couleurs hex strictes, des enums fermées (`radius`, `font`, `layouts`) et des noms de fichiers `assets` au format UUID+extension raster (`png`/`jpg`/`webp`) — toute autre valeur est un design invalide, y compris `url(...)`, `expression(...)` ou tout SVG (vecteur = risque XSS via balises `<script>`/`on*` embarquées).
+28. **Jamais de SVG ni de valeur CSS libre dans un design** (§9bis) : `validateDesign()` n'accepte que des couleurs hex strictes, des enums fermées (`radius`, `font`, `images.<screen>.mode`) et des noms de fichiers `images.<screen>.filename` au format UUID+extension raster (`png`/`jpg`/`webp`) — toute autre valeur est un design invalide, y compris `url(...)`, `expression(...)` ou tout SVG (vecteur = risque XSS via balises `<script>`/`on*` embarquées).
 
 ---
 
