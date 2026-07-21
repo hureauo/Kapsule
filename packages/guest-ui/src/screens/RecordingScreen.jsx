@@ -297,7 +297,7 @@ export default function RecordingScreen({
         <h2 className="rec__question">{question.text}</h2>
         <div className="rec__preview-wrap">
           {showcase ? (
-            <div className="rec__camera-preview rec__camera-preview--placeholder">🎬</div>
+            <div className="rec__blob-video rec__camera-preview--placeholder">🎬</div>
           ) : (
             /* playsInline obligatoire pour Safari — invariant §11.5 */
             <video

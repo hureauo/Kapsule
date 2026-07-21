@@ -394,11 +394,15 @@
   transform: scaleX(-1); /* miroir — naturel pour l'invité */
 }
 
-/* Cadre caméra factice — mode showcase (designUI.E), aperçu sans matériel. */
+/* Cadre caméra factice — mode showcase (designUI.E), aperçu sans matériel.
+   min-height assure une vraie présence visuelle même combiné à .rec__blob-video
+   (état PREVIEW), qui n'a par défaut qu'une hauteur `auto` — sans contenu vidéo
+   réel pour la déterminer, le cadre s'écraserait sur la hauteur de l'emoji. */
 .kapsule-guest .rec__camera-preview--placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-height: 220px;
   color: #fff;
   opacity: 0.55;
   font-size: 3rem;
