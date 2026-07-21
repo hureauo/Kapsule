@@ -516,7 +516,8 @@ la branche `!IDLE_SCREENS.has(screen)` de l'effet (ligne ~137).
 ### Pattern compte-à-rebours dupliqué entre `IdleModal` et `ThankYouScreen`
 
 **Fichiers :** [GuestPage.jsx:50-65](apps/borne/web/src/pages/GuestPage.jsx#L50),
-[ThankYouScreen.jsx:9-13](apps/borne/web/src/components/guest/ThankYouScreen.jsx#L9)
+[ThankYouScreen.jsx:8-15](packages/guest-ui/src/screens/ThankYouScreen.jsx#L8)
+(déplacé depuis `apps/borne/web/src/components/guest/` par le chantier designUI)
 
 **Observation :** les deux composants implémentent le même pattern `setTimeout/remaining--` inline.
 Candidat à un hook `useCountdown(seconds, onExpire)` si le motif réapparaît une troisième fois.
@@ -652,7 +653,8 @@ sans changement de comportement.
 
 ### `guestVideoUrl` sans cache-buster sur la `<video>` en état `ANSWERED`
 
-**Fichier :** [RecordingScreen.jsx:135](apps/borne/web/src/components/guest/RecordingScreen.jsx#L135)
+**Fichier :** [RecordingScreen.jsx:169](packages/guest-ui/src/screens/RecordingScreen.jsx#L169)
+(déplacé depuis `apps/borne/web/src/components/guest/` par le chantier designUI)
 
 **Observation :** l'URL `guestVideoUrl(sessionId, question.id)` est stable (pas de
 query param aléatoire). Si un invité refait une réponse pour la même question
