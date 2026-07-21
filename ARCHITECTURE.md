@@ -26,13 +26,14 @@ puis réécrire la section. Coût ponctuel, pas récurrent (≠ l'ancien `kapsul
 
 Monorepo npm workspaces (`packages/*`, `apps/*/server`, `apps/*/web`). Node ≥ 20, ESM, pas de TypeScript.
 
-Deux applications + un package partagé :
+Deux applications + deux packages partagés :
 
 | Composant | Rôle | Tourne sur |
 |-----------|------|-----------|
 | **Borne** (`apps/borne`) | Kiosque d'enregistrement vidéo, 100 % offline pendant l'événement | Raspberry Pi / iPad Safari |
 | **Hub** (`apps/hub`) | Interface client (web), reçoit/traite/archive les vidéos | VPS |
-| **Core** (`packages/core`) | Constantes, validation, schéma de la BD événement, checksum — partagés | importé par les deux |
+| **Core** (`packages/core`) | Constantes, validation, schéma de la BD événement, checksum — partagés, **sans React** | importé par les deux serveurs + web |
+| **Guest-UI** (`packages/guest-ui`) | Écrans React du parcours invité, partagés entre le kiosque borne et l'aperçu live de l'éditeur Hub (dépendances réseau/caméra injectées par props). **Squelette depuis designUI.A** (contenu réel à partir de designUI.C). | importé par les deux `web` |
 
 Chaque app = un **serveur Express** (`server/`) + un **frontend** (`web/`, React + Vite, servi par Nginx en prod).
 

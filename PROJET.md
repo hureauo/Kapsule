@@ -93,16 +93,21 @@ kapsule/
 ├── Makefile                          # raccourcis VPS : vps-build/up/down, hub-reset (voir §10)
 ├── PROJET.md                         # ce document
 ├── packages/
-│   └── core/                         # @kapsule/core — tout ce qui est partagé
-│       ├── package.json
-│       └── src/
-│           ├── index.js              # ré-exporte tout
-│           ├── constants.js          # EVENT_STATUS, JOB_TYPES, LIMITS (500 MB, durées…)
-│           ├── eventDbSchema.js      # SQL de la BD "événement" + createEventDb(filePath)
-│           ├── validate.js           # validateQuestion(), validateGuestName(), assertStatus()
-│           ├── checksum.js           # sha256File(path) → Promise<hex> (stream, pas de readFile)
-│           └── design.js             # DESIGN_COLOR_KEYS/RADIUS/FONTS/LAYOUTS, validateDesign()
-│                                      # (fonction pure, §9bis) — partagé Hub + Borne
+│   ├── core/                         # @kapsule/core — tout ce qui est partagé, sans React
+│   │   ├── package.json
+│   │   └── src/
+│   │       ├── index.js              # ré-exporte tout
+│   │       ├── constants.js          # EVENT_STATUS, JOB_TYPES, LIMITS (500 MB, durées…)
+│   │       ├── eventDbSchema.js      # SQL de la BD "événement" + createEventDb(filePath)
+│   │       ├── validate.js           # validateQuestion(), validateGuestName(), assertStatus()
+│   │       ├── checksum.js           # sha256File(path) → Promise<hex> (stream, pas de readFile)
+│   │       └── design.js             # DESIGN_COLOR_KEYS/RADIUS/FONTS/LAYOUTS, validateDesign()
+│   │                                  # (fonction pure, §9bis) — partagé Hub + Borne
+│   └── guest-ui/                     # @kapsule/guest-ui — écrans React du parcours invité
+│       ├── package.json              # (chantier designUI) partagés Borne (kiosque réel) et
+│       └── src/                      # aperçu live Hub — react/react-dom en peerDependency ;
+│           ├── index.js              # dépendances réseau/caméra injectées par props, jamais
+│           └── guest.css             # importées en dur (mêmes composants prod + aperçu)
 ├── apps/
 │   ├── borne/
 │   │   ├── server/

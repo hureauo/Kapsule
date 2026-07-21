@@ -5,11 +5,13 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 COPY packages/core/package.json ./packages/core/
+COPY packages/guest-ui/package.json ./packages/guest-ui/
 COPY apps/hub/web/package.json ./apps/hub/web/
 
 RUN npm ci
 
 COPY packages/core/src ./packages/core/src
+COPY packages/guest-ui/src ./packages/guest-ui/src
 COPY apps/hub/web ./apps/hub/web
 
 WORKDIR /app/apps/hub/web
