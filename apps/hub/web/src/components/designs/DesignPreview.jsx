@@ -1,13 +1,19 @@
-// Maquettes de démonstration — risque de dérive assumé, la borne d'essai reste la validation finale.
+// Aperçu live de l'éditeur — monte les VRAIS écrans du parcours invité
+// (@kapsule/guest-ui, chantier designUI), pas une réimplémentation. Un seul
+// rendu à maintenir : ce composant ne fait qu'orchestrer (largeur, écran
+// affiché, pulsation couleur) et fournir un contenu de démonstration, jamais
+// dupliquer le JSX/CSS du kiosque.
 //
-// Ces écrans IMITENT le kiosque (mêmes tokens, mêmes formes) mais ne partagent
-// aucun code avec la borne : le but est de donner un retour immédiat au client
-// pendant qu'il règle ses couleurs, pas de garantir un rendu au pixel près.
-// Les presets (rayons, polices) viennent de @kapsule/core — même source que le
-// runtime kiosque, donc pas de dérive possible sur CES valeurs-là.
+// Pas d'iframe (la CSP edge bloque X-Frame-Options/frame-ancestors) : les
+// composants sont montés directement dans l'arbre React du Hub, à l'intérieur
+// d'un wrapper .kapsule-guest qui scope leur CSS partagé et reçoit le design
+// en cours d'édition en custom properties INLINE (jamais posées sur
+// document.documentElement — aucune pollution du reste du Hub).
 
 import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
-import { DESIGN_COLOR_KEYS, RADIUS_PRESETS, FONT_PRESETS, resolveScreenColors } from '@kapsule/core';
+import {
+  StartScreen, NameInput, RecordingScreen, ThankYouScreen, designToVars,
+} from '@kapsule/guest-ui';
 import { api } from '../../api/client.js';
 
 const WIDTHS = [
@@ -16,27 +22,29 @@ const WIDTHS = [
   { key: 'desktop', label: 'Desktop', width: 1280 },
 ];
 
-// Construit les custom properties à partir de la config, résolues pour l'écran
-// affiché (design3 : screenOverrides > colors globales > absent). Whitelist
-// stricte déjà portée par resolveScreenColors (core) — source unique partagée
-// avec le runtime kiosque, pas de recalcul divergent ici.
-function cssVarsFor(config, screen) {
-  const vars = {};
-  const colors = resolveScreenColors(config, screen);
-  for (const key of DESIGN_COLOR_KEYS) {
-    if (colors[key]) vars[`--${key}`] = colors[key];
-  }
-  const radius = RADIUS_PRESETS[config?.radius] ?? RADIUS_PRESETS.soft;
-  vars['--radius'] = radius.radius;
-  vars['--radius-pill'] = radius.pill;
-  vars['--font-body'] = FONT_PRESETS[config?.font] ?? FONT_PRESETS.sans;
-  return vars;
-}
+// Contenu de démonstration — mêmes textes que l'ancienne maquette .dp-*, pour
+// ne pas changer l'expérience de calibrage du client entre deux versions.
+const DEMO_EVENT = {
+  name: 'Kapsule',
+  welcome_title: 'Mariage Léa & Hugo',
+  welcome_subtitle: 'Laissez-nous un message vidéo',
+  name_prompt: 'Comment tu t\'appelles ?',
+  consent_text: 'J\'accepte que mes vidéos soient enregistrées et transmises à l\'organisateur.',
+};
+const DEMO_QUESTION = { text: 'Quel est ton meilleur souvenir avec eux ?', max_duration: 60, countdown: 3 };
 
-// hoverTarget vient de COLOR_TARGET (DesignEditor, design2.D) : { screen, key }.
-// Posé au CLIC sur une ligne couleur (plus fiable qu'un hover : reste affiché
-// le temps de regarder l'aperçu). Bascule l'aperçu sur l'écran concerné et
-// fait pulser l'élément marqué data-color-target={key} (animation CSS .dp-pulse).
+const noop = () => {};
+
+// Le formulaire NameInput a un vrai handleSubmit qui appelle createSession —
+// en aperçu on ne veut aucun appel réseau ; createSession résout un id
+// factice, jamais utilisé (onSession est no-op, personne n'écoute la suite).
+async function fakeCreateSession() { return { id: 'preview' }; }
+
+// hoverTarget vient de COLOR_TARGET (DesignEditor) : { screen, key }. Posé au
+// CLIC sur une ligne couleur. Bascule l'aperçu sur l'écran concerné et fait
+// pulser l'élément marqué data-color-target={key} (animation CSS .dp-pulse,
+// seule survivance de l'ancienne maquette — c'est un outil d'éditeur, pas du
+// rendu d'écran).
 export default function DesignPreview({ config, hoverTarget = null, designId = null }) {
   const [widthKey, setWidthKey] = useState('ipad');
   const [screen, setScreen] = useState('start');
@@ -44,18 +52,14 @@ export default function DesignPreview({ config, hoverTarget = null, designId = n
   const previewRef = useRef(null);
   const [scale, setScale] = useState(1);
 
-  // Chaque clic bascule l'écran automatiquement ; changer de ligne cliquée
-  // vers un autre écran re-bascule, mais rien ne revient en arrière tout seul.
   useEffect(() => {
     if (hoverTarget?.screen) setScreen(hoverTarget.screen);
   }, [hoverTarget?.screen]);
 
   const target = WIDTHS.find((w) => w.key === widthKey) ?? WIDTHS[1];
-  const vars = cssVarsFor(config, screen);
+  const vars = designToVars(config, screen);
   const pulseKey = hoverTarget?.screen === screen ? hoverTarget.key : null;
 
-  // Pose/retire la classe de pulsation sur l'élément marqué data-color-target
-  // dans LA MAQUETTE COURANTE (pas de re-render de chaque écran juste pour ça).
   useEffect(() => {
     const root = previewRef.current;
     if (!root) return undefined;
@@ -83,6 +87,9 @@ export default function DesignPreview({ config, hoverTarget = null, designId = n
   // un grand vide subsisterait sous l'aperçu réduit. 3/4 = aspect-ratio 4/3
   // du .design-preview (voir app.css).
   const scaledHeight = Math.round(target.width * (3 / 4) * scale);
+
+  const resolveAssetUrl = designId ? (filename) => api.designAssetUrl(designId, filename) : (f) => f;
+  const demoEvent = { ...DEMO_EVENT, design: config };
 
   return (
     <div className="designs-preview">
@@ -124,8 +131,12 @@ export default function DesignPreview({ config, hoverTarget = null, designId = n
           className="designs-preview__scaler"
           style={{ width: target.width, transform: `scale(${scale})` }}
         >
-          <div className="design-preview" style={vars} ref={previewRef}>
-            <Screen screen={screen} config={config} designId={designId} />
+          <div className="kapsule-guest design-preview" style={vars} ref={previewRef}>
+            <Screen
+              screen={screen}
+              event={demoEvent}
+              resolveAssetUrl={resolveAssetUrl}
+            />
           </div>
         </div>
       </div>
@@ -133,165 +144,44 @@ export default function DesignPreview({ config, hoverTarget = null, designId = n
   );
 }
 
-function Screen({ screen, config, designId }) {
-  if (screen === 'name') return <NameScreen />;
-  if (screen === 'recording') return <RecordingScreen />;
-  if (screen === 'thanks') return <ThanksScreen config={config} designId={designId} />;
-  return <StartScreen config={config} designId={designId} />;
-}
-
-// Image réellement uploadée si un fichier existe pour cet écran, sinon un
-// placeholder — même logique que AssetRow (DesignEditor.jsx) : l'aperçu doit
-// refléter ce que la borne affichera réellement, pas un gabarit approximatif.
-function AssetImage({ designId, filename, alt, className, placeholderClassName, placeholderLabel, style }) {
-  if (designId && filename) {
-    return <img className={className} src={api.designAssetUrl(designId, filename)} alt={alt} style={style} />;
+function Screen({ screen, event, resolveAssetUrl }) {
+  if (screen === 'name') {
+    return (
+      <NameInput
+        event={event}
+        onSession={noop}
+        onBack={noop}
+        onClosed={noop}
+        createSession={fakeCreateSession}
+      />
+    );
   }
-  return <div className={placeholderClassName}>{placeholderLabel}</div>;
-}
-
-// Style inline pour l'image en mode 'centered' (design5) : même logique que
-// imageWidthStyle (runtime borne) mais dupliquée ici volontairement — l'aperçu
-// Hub est mis à l'échelle par transform:scale(), pourcentage plus fidèle que
-// des px absolus, mais reste un composant web indépendant du bundle borne.
-function centeredImageStyle(image) {
-  if (image?.mode !== 'centered' || !Number.isInteger(image?.widthPercent)) return undefined;
-  return { width: `${image.widthPercent}%`, maxWidth: `${image.widthPercent}%`, maxHeight: 'none' };
-}
-
-function StartScreen({ config, designId }) {
-  // Une seule image par écran (design4) : mode centered/cover/none.
-  const image = config?.images?.start ?? { mode: 'none', filename: null };
-  const coverUrl = designId && image.mode === 'cover' && image.filename
-    ? api.designAssetUrl(designId, image.filename)
-    : null;
-  const centeredEl = image.mode === 'centered'
-    ? (
-      <AssetImage
-        designId={designId}
-        filename={image.filename}
-        alt=""
-        className="dp-logo-img"
-        placeholderClassName="dp-logo-placeholder"
-        placeholderLabel="Image"
-        style={centeredImageStyle(image)}
+  if (screen === 'recording') {
+    return (
+      <RecordingScreen
+        question={DEMO_QUESTION}
+        sessionId="preview"
+        onNext={noop}
+        onLockChange={noop}
+        showcase
       />
-    )
-    : null;
-
-  return (
-    <div className={`dp-screen dp-start dp-start--${image.mode}`} data-color-target="bg">
-      {image.mode === 'cover' && (
-        <div
-          className={`dp-cover ${coverUrl ? '' : 'dp-cover--placeholder'}`}
-          data-color-target="surface-alt"
-          style={coverUrl ? { backgroundImage: `url("${coverUrl}")` } : undefined}
-        />
-      )}
-      <div className="dp-start__body">
-        {centeredEl}
-        <h1 className="dp-title" data-color-target="text">Mariage Léa &amp; Hugo</h1>
-        <p className="dp-subtitle" data-color-target="text-muted">Laissez-nous un message vidéo</p>
-        <button className="dp-btn dp-btn--accent" data-color-target="accent">Commencer</button>
-      </div>
-    </div>
-  );
-}
-
-function NameScreen() {
-  return (
-    <div className="dp-screen dp-center" data-color-target="surface">
-      <h2 className="dp-title">Comment tu t'appelles ?</h2>
-      <input className="dp-input" defaultValue="Camille" readOnly data-color-target="input-bg" />
-      <div className="dp-consent">
-        <span className="dp-checkbox" data-color-target="input-border" />
-        <span className="dp-consent__text">
-          J'accepte que mes vidéos soient enregistrées et transmises à l'organisateur.
-        </span>
-      </div>
-      <div className="dp-actions">
-        <button className="dp-btn dp-btn--secondary" data-color-target="btn-secondary-bg">Retour</button>
-        <button className="dp-btn dp-btn--accent" data-color-target="accent-hover">Continuer</button>
-      </div>
-    </div>
-  );
-}
-
-function RecordingScreen() {
-  return (
-    <div className="dp-screen dp-screen--column">
-      <div className="dp-center dp-center--grow">
-        <p className="dp-muted">Question 2 sur 5</p>
-        <h2 className="dp-title dp-title--sm">Quel est ton meilleur souvenir avec eux ?</h2>
-        <div className="dp-video" data-color-target="surface-alt">
-          <span className="dp-rec" data-color-target="text-error">● REC</span>
-          <span className="dp-timer">0:12</span>
-        </div>
-        <button className="dp-btn dp-btn--accent" data-color-target="primary">■ Stop</button>
-        {/* Badge numéro — reproduit .recap__index/.qsheet__index (borne) :
-            fond accent-soft par défaut, unique élément qui l'utilise réellement. */}
-        <span className="dp-badge" data-color-target="accent-soft">2</span>
-      </div>
-      {/* Bandeau bas — reproduit QuestionNav.jsx (borne) : barre de remplissage
-          + dots + « Question X / N ». Répond aux mêmes tokens que le kiosque réel. */}
-      <div className="dp-nav" data-color-target="surface">
-        <div className="dp-nav__progress" data-color-target="primary-tint">
-          <div className="dp-nav__progress-fill" data-color-target="primary" style={{ width: '40%' }} />
-        </div>
-        <div className="dp-nav__row">
-          <div className="dp-nav__dots">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <span
-                key={i}
-                className={[
-                  'dp-nav__dot',
-                  i === 1 ? 'dp-nav__dot--current' : '',
-                  i === 0 ? 'dp-nav__dot--answered' : '',
-                ].filter(Boolean).join(' ')}
-              />
-            ))}
-          </div>
-          <span className="dp-nav__label">Question 2 / 5</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ThanksScreen({ config, designId }) {
-  const image = config?.images?.thanks ?? { mode: 'none', filename: null };
-  const coverUrl = designId && image.mode === 'cover' && image.filename
-    ? api.designAssetUrl(designId, image.filename)
-    : null;
-  const centeredEl = image.mode === 'centered'
-    ? (
-      <AssetImage
-        designId={designId}
-        filename={image.filename}
-        alt=""
-        className="dp-logo-img"
-        placeholderClassName="dp-logo-placeholder"
-        placeholderLabel="Image"
-        style={centeredImageStyle(image)}
+    );
+  }
+  if (screen === 'thanks') {
+    return (
+      <ThankYouScreen
+        onRestart={noop}
+        thanksText={null}
+        design={event.design}
+        resolveAssetUrl={resolveAssetUrl}
       />
-    )
-    : null;
-
+    );
+  }
   return (
-    <div className={`dp-screen dp-center dp-thanks dp-thanks--${image.mode}`} data-color-target="bg">
-      {image.mode === 'cover' && (
-        <div
-          className={`dp-cover ${coverUrl ? '' : 'dp-cover--placeholder'}`}
-          data-color-target="surface-alt"
-          style={coverUrl ? { backgroundImage: `url("${coverUrl}")` } : undefined}
-        />
-      )}
-      <div className="dp-start__body">
-        {centeredEl}
-        <h1 className="dp-title" data-color-target="text">Merci Camille !</h1>
-        <p className="dp-subtitle" data-color-target="text-muted">Ton message a bien été enregistré.</p>
-        <button className="dp-btn dp-btn--secondary" data-color-target="btn-secondary-bg">Retour à l'accueil</button>
-      </div>
-    </div>
+    <StartScreen
+      event={event}
+      onStart={noop}
+      resolveAssetUrl={resolveAssetUrl}
+    />
   );
 }

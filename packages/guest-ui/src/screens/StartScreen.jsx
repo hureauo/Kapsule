@@ -32,12 +32,12 @@ export default function StartScreen({ event, onStart, onVideoSettingsChange, res
     : undefined;
 
   const title = (
-    <h1 className="start__title">
+    <h1 className="start__title" data-color-target="text">
       {event?.welcome_title || event?.name || 'Kapsule'}
     </h1>
   );
   const tagline = event?.welcome_subtitle
-    ? <p className="start__tagline">{event.welcome_subtitle}</p>
+    ? <p className="start__tagline" data-color-target="text-muted">{event.welcome_subtitle}</p>
     : null;
   const imageEl = image.mode === 'centered' && imageUrl
     ? <img className="screen__image" src={imageUrl} alt="" style={imageWidthStyle(image)} />
@@ -83,14 +83,14 @@ export default function StartScreen({ event, onStart, onVideoSettingsChange, res
         </div>
       )}
 
-      <button className="btn btn--primary btn--large" onClick={onStart}>
+      <button className="btn btn--primary btn--large" data-color-target="accent" onClick={onStart}>
         Commencer
       </button>
     </div>
   );
 
   return (
-    <div className={`screen screen--center start--${image.mode}`} style={coverStyle}>
+    <div className={`screen screen--center start--${image.mode}`} data-color-target="bg" style={coverStyle}>
       {body}
     </div>
   );

@@ -41,7 +41,7 @@ export default function NameInput({ event, onSession, onBack, onClosed, createSe
   }
 
   return (
-    <div className="screen screen--name">
+    <div className="screen screen--name" data-color-target="surface">
       <h2 className="screen__title">{namePrompt}</h2>
 
       <form className="name-form" onSubmit={handleSubmit}>
@@ -54,6 +54,7 @@ export default function NameInput({ event, onSession, onBack, onClosed, createSe
           placeholder="Votre prénom"
           maxLength={LIMITS.GUEST_NAME_MAX}
           disabled={loading}
+          data-color-target="input-bg"
         />
 
         {/* Bloc consentement RGPD — texte scrollable + bouton détail + case à cocher tactile */}
@@ -80,6 +81,7 @@ export default function NameInput({ event, onSession, onBack, onClosed, createSe
               checked={consented}
               onChange={(e) => { setConsented(e.target.checked); setError(''); }}
               disabled={loading}
+              data-color-target="input-border"
             />
             <span className="consent-block__caption">J'accepte</span>
           </label>
@@ -92,6 +94,7 @@ export default function NameInput({ event, onSession, onBack, onClosed, createSe
           className="btn btn--primary btn--large"
           type="submit"
           disabled={!consented || loading}
+          data-color-target="accent-hover"
         >
           {loading ? 'Connexion…' : 'Continuer'}
         </button>

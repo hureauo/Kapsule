@@ -27,7 +27,7 @@ export default function ThankYouScreen({ onRestart, thanksText, design, resolveA
     : null;
 
   return (
-    <div className={`screen screen--center thanks--${image.mode}`} style={coverStyle}>
+    <div className={`screen screen--center thanks--${image.mode}`} data-color-target="bg" style={coverStyle}>
       <div className="thanks__body">
         {imageEl}
         <div className="done__icon" aria-hidden="true">🎬</div>
@@ -36,7 +36,7 @@ export default function ThankYouScreen({ onRestart, thanksText, design, resolveA
           {thanksText || 'Votre témoignage a bien été enregistré.'}
         </p>
         <p className="text--muted">Retour automatique dans {remaining} s…</p>
-        <button className="btn btn--secondary btn--large" onClick={onRestart}>
+        <button className="btn btn--secondary btn--large" data-color-target="btn-secondary-bg" onClick={onRestart}>
           Terminer maintenant
         </button>
       </div>

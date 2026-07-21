@@ -241,7 +241,7 @@ export default function RecordingScreen({
     return (
       <div className="screen screen--recording">
         <h2 className="rec__question">{question.text}</h2>
-        <div className="rec__live-indicator" aria-live="polite">
+        <div className="rec__live-indicator" data-color-target="text-error" aria-live="polite">
           <span className="rec__dot rec__dot--blink" aria-hidden="true" /> REC
           &nbsp;&nbsp;{formatDuration(recorder.duration)}
           {resText && <>&nbsp;&nbsp;<span style={{ fontSize: '11px', opacity: 0.85, fontFamily: 'monospace' }}>{resText}</span></>}
