@@ -23,11 +23,16 @@ function retryDelay(attempt) { return Math.min(2000 * Math.pow(2, attempt - 1), 
 // Navigation en arrière possible uniquement depuis le récap (RecapScreen.onGo).
 //
 // showcase (designUI) : mode vitrine pour l'aperçu Hub — AUCUN accès caméra
-// (requestPermission jamais appelé), rend un cadre caméra factice dans l'état
-// INTRO, bouton « Commencer » inerte. Toutes les autres branches (countdown,
-// recording, upload…) restent du code mort en mode showcase : l'utilisateur ne
-// peut jamais les atteindre puisque le bouton qui déclenche la transition est
-// désactivé. Comportement réel (showcase=false, défaut) strictement inchangé.
+// (requestPermission jamais appelé). Contrairement à une V1 plus stricte, le
+// bouton « Commencer » RESTE cliquable en showcase : le client doit pouvoir
+// régler les couleurs de TOUTES les phases (countdown, REC, validation), pas
+// seulement l'écran d'intro. Le cycle showcase est donc : intro → countdown
+// (réel, juste un décompte) → recording factice (chrono local, pas de flux
+// caméra ni de vrai enregistrement) → preview factice (pas de vraie vidéo) →
+// intro. Jamais d'UPLOADING (rien à uploader) : « Parfait ✓ » revient direct à
+// l'intro. Comportement réel (showcase=false, défaut) strictement inchangé —
+// chaque transition ajoute une branche showcase, ne modifie aucune ligne du
+// chemin caméra/upload réel.
 //
 // uploadVideo/guestVideoUrl : injectés (borne : apps/borne/web/src/api/client.js
 // réel ; aperçu Hub : jamais appelés en mode showcase, stubs acceptés).
@@ -48,6 +53,7 @@ export default function RecordingScreen({
   const [uploadProgress, setUploadProgress] = useState(0);   // 0-1
   const [uploadError, setUploadError] = useState(null);
   const [uploadAttempt, setUploadAttempt] = useState(0);
+  const [showcaseDuration, setShowcaseDuration] = useState(0); // chrono factice, showcase uniquement
 
   const videoPreviewRef = useRef(null); // <video> pour le preview caméra (intro)
   const videoBlobRef    = useRef(null); // <video> pour le preview blob (preview)
@@ -76,16 +82,27 @@ export default function RecordingScreen({
 
   // ── Countdown → démarrer l'enregistrement ───────────────────────────────────
   useEffect(() => {
-    if (showcase) return;
     if (subState !== S.COUNTDOWN) return;
     if (countdown <= 0) {
-      recorder.startRecording();
+      if (showcase) {
+        setShowcaseDuration(0);
+      } else {
+        recorder.startRecording();
+      }
       setSubState(S.RECORDING);
       return;
     }
     const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(t);
   }, [subState, countdown, showcase]);
+
+  // ── Chrono factice pendant l'état RECORDING en showcase (pas de vrai
+  //    enregistrement, donc pas de recorder.duration à afficher). ────────────
+  useEffect(() => {
+    if (!showcase || subState !== S.RECORDING) return undefined;
+    const t = setInterval(() => setShowcaseDuration((d) => d + 1), 1000);
+    return () => clearInterval(t);
+  }, [showcase, subState]);
 
   // ── Enregistrement terminé (auto-stop ou stop manuel) → preview ─────────────
   useEffect(() => {
@@ -211,11 +228,10 @@ export default function RecordingScreen({
           <button
             className="btn btn--record btn--large"
             onClick={() => {
-              if (showcase) return;
               setCountdown(question.countdown ?? 3);
               setSubState(S.COUNTDOWN);
             }}
-            disabled={showcase || !cameraReady}
+            disabled={!showcase && !cameraReady}
           >
             ● Commencer
           </button>
@@ -235,7 +251,8 @@ export default function RecordingScreen({
   }
 
   if (subState === S.RECORDING) {
-    const progress = (recorder.duration / (question.max_duration ?? 60));
+    const duration = showcase ? showcaseDuration : recorder.duration;
+    const progress = duration / (question.max_duration ?? 60);
     const s = recorder.streamSettings;
     const resText = (s && s.width && s.height) ? `${s.width}×${s.height}` : null;
     return (
@@ -243,24 +260,31 @@ export default function RecordingScreen({
         <h2 className="rec__question">{question.text}</h2>
         <div className="rec__live-indicator" data-color-target="text-error" aria-live="polite">
           <span className="rec__dot rec__dot--blink" aria-hidden="true" /> REC
-          &nbsp;&nbsp;{formatDuration(recorder.duration)}
-          {resText && <>&nbsp;&nbsp;<span style={{ fontSize: '11px', opacity: 0.85, fontFamily: 'monospace' }}>{resText}</span></>}
+          &nbsp;&nbsp;{formatDuration(duration)}
+          {!showcase && resText && <>&nbsp;&nbsp;<span style={{ fontSize: '11px', opacity: 0.85, fontFamily: 'monospace' }}>{resText}</span></>}
         </div>
         {/* Caméra live pendant l'enregistrement — l'invité se voit (V2.6).
             playsInline + muted obligatoires pour Safari (invariant §11.5). */}
         <div className="rec__camera-wrap">
-          <video
-            ref={videoPreviewRef}
-            className="rec__camera-preview"
-            muted
-            autoPlay
-            playsInline
-          />
+          {showcase ? (
+            <div className="rec__camera-preview rec__camera-preview--placeholder">🎥</div>
+          ) : (
+            <video
+              ref={videoPreviewRef}
+              className="rec__camera-preview"
+              muted
+              autoPlay
+              playsInline
+            />
+          )}
         </div>
         <div className="rec__progress-bar rec__progress-bar--recording">
           <div className="rec__progress-fill" style={{ width: `${progress * 100}%` }} />
         </div>
-        <button className="btn btn--stop btn--large" onClick={() => recorder.stopRecording()}>
+        <button
+          className="btn btn--stop btn--large"
+          onClick={() => { if (showcase) { setSubState(S.PREVIEW); } else { recorder.stopRecording(); } }}
+        >
           ■ Stop
         </button>
       </div>
@@ -272,23 +296,30 @@ export default function RecordingScreen({
       <div className="screen screen--recording">
         <h2 className="rec__question">{question.text}</h2>
         <div className="rec__preview-wrap">
-          {/* playsInline obligatoire pour Safari — invariant §11.5 */}
-          <video
-            ref={videoBlobRef}
-            className="rec__blob-video"
-            src={recorder.blobUrl}
-            controls
-            playsInline
-          />
+          {showcase ? (
+            <div className="rec__camera-preview rec__camera-preview--placeholder">🎬</div>
+          ) : (
+            /* playsInline obligatoire pour Safari — invariant §11.5 */
+            <video
+              ref={videoBlobRef}
+              className="rec__blob-video"
+              src={recorder.blobUrl}
+              controls
+              playsInline
+            />
+          )}
         </div>
         <div className="rec__actions">
           <button className="btn btn--secondary" onClick={() => {
-            recorder.resetRecording();
+            if (!showcase) recorder.resetRecording();
             setSubState(S.INTRO);
           }}>
             Recommencer
           </button>
-          <button className="btn btn--primary btn--large" onClick={() => startUpload(1)}>
+          <button
+            className="btn btn--primary btn--large"
+            onClick={() => { if (showcase) { setSubState(S.INTRO); } else { startUpload(1); } }}
+          >
             Parfait ✓
           </button>
         </div>
