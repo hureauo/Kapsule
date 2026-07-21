@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { imageWidthStyle } from '../../utils/design.js';
+import { imageWidthStyle } from '../design.js';
 
 const AUTO_RETURN_S = 15;
 
-export default function ThankYouScreen({ onRestart, thanksText, design }) {
+// resolveAssetUrl : voir StartScreen.jsx (même principe d'injection).
+export default function ThankYouScreen({ onRestart, thanksText, design, resolveAssetUrl = (f) => f }) {
   const [remaining, setRemaining] = useState(AUTO_RETURN_S);
 
   // Auto-retour à l'accueil après 15 s (spec §8)
@@ -17,11 +18,12 @@ export default function ThankYouScreen({ onRestart, thanksText, design }) {
   // design ou sans image configurée : mode 'none' — rendu identique à celui
   // d'avant l'introduction des designs.
   const image = design?.images?.thanks ?? { mode: 'none', filename: null };
-  const coverStyle = image.mode === 'cover' && image.filename
-    ? { backgroundImage: `url("${image.filename}")` }
+  const imageUrl = image.filename ? resolveAssetUrl(image.filename) : null;
+  const coverStyle = image.mode === 'cover' && imageUrl
+    ? { backgroundImage: `url("${imageUrl}")` }
     : undefined;
-  const imageEl = image.mode === 'centered' && image.filename
-    ? <img className="screen__image" src={image.filename} alt="" style={imageWidthStyle(image)} />
+  const imageEl = image.mode === 'centered' && imageUrl
+    ? <img className="screen__image" src={imageUrl} alt="" style={imageWidthStyle(image)} />
     : null;
 
   return (

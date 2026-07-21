@@ -1,14 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, getGeneralToken, saveGeneralToken, setVideoSettingsPublic } from '../api/client.js';
 import { DEFAULTS } from '@kapsule/core';
-import StartScreen from '../components/guest/StartScreen.jsx';
-import NameInput from '../components/guest/NameInput.jsx';
-import QuestionNav from '../components/guest/QuestionNav.jsx';
-import QuestionSheet from '../components/guest/QuestionSheet.jsx';
-import RecordingScreen from '../components/guest/RecordingScreen.jsx';
-import RecapScreen from '../components/guest/RecapScreen.jsx';
-import ThankYouScreen from '../components/guest/ThankYouScreen.jsx';
+import {
+  StartScreen, QuestionNav, QuestionSheet, ThankYouScreen, NameInput, RecapScreen, RecordingScreen,
+} from '@kapsule/guest-ui';
 import { applyDesign } from '../utils/design.js';
+import { uploadVideo, guestVideoUrl } from '../api/client.js';
 
 // ── sessionStorage : reprise après crash/reload (spec §8) ────────────────────
 const SESSION_KEY = 'kapsule_session';
@@ -455,6 +452,7 @@ export default function GuestPage({ isPreview = false }) {
           onSession={handleSession}
           onBack={() => setScreen(S.START)}
           onClosed={() => setScreen(S.CLOSED)}
+          createSession={api.createSession}
         />
       )}
 
@@ -473,6 +471,8 @@ export default function GuestPage({ isPreview = false }) {
               onLockChange={setNavLocked}
               qualityKey={event?.video_quality}
               orientation={event?.video_orientation}
+              uploadVideo={uploadVideo}
+              guestVideoUrl={guestVideoUrl}
             />
             {/* Barre de progression en BAS — tap ou swipe up → ouvre le panneau */}
             <QuestionNav
@@ -510,6 +510,7 @@ export default function GuestPage({ isPreview = false }) {
           sessionId={sessionId}
           onGo={handleRecapGo}
           onFinish={handleRecapFinish}
+          onFinishSession={api.completeSession}
         />
       )}
 

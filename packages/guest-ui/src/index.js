@@ -11,6 +11,14 @@
 // designUI.A a validé que le JSX de ce package (workspace symlinké, pas de
 // build séparé — même pattern que @kapsule/core) est bien transpilé par vite
 // dans les deux apps consommatrices, sans configuration supplémentaire.
-// Contenu réel ajouté à partir de designUI.C.
 
-export {};
+export { designToVars, MANAGED_DESIGN_VARS, imageWidthStyle } from './design.js';
+
+export { default as StartScreen } from './screens/StartScreen.jsx';
+export { default as ThankYouScreen } from './screens/ThankYouScreen.jsx';
+export { default as QuestionNav } from './screens/QuestionNav.jsx';
+export { default as QuestionSheet } from './screens/QuestionSheet.jsx';
+export { default as NameInput } from './screens/NameInput.jsx';
+export { default as RecapScreen } from './screens/RecapScreen.jsx';
+export { default as RecordingScreen } from './screens/RecordingScreen.jsx';
+export { default as useMediaRecorder, REC_STATUS } from './useMediaRecorder.js';

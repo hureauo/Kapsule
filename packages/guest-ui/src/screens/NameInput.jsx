@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { api } from '../../api/client.js';
 import { LIMITS } from '@kapsule/core';
 
-export default function NameInput({ event, onSession, onBack, onClosed }) {
+// createSession(name) → Promise<{id}> : injecté par l'appelant (borne :
+// api.createSession réel ; aperçu Hub : pas d'appel réseau, le submit peut
+// rester no-op) — jamais importé en dur ici (designUI, injection de dépendances).
+export default function NameInput({ event, onSession, onBack, onClosed, createSession }) {
   const [name, setName] = useState('');
   const [consented, setConsented] = useState(false); // non pré-cochée (RGPD obligatoire)
   const [error, setError] = useState('');
@@ -27,7 +29,7 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
     setLoading(true);
     setError('');
     try {
-      const session = await api.createSession(trimmed); // envoie consent: true
+      const session = await createSession(trimmed); // envoie consent: true
       onSession(session.id, trimmed);
     } catch (err) {
       // 409 event_closed : l'admin a clôturé pendant que l'invité remplissait son prénom

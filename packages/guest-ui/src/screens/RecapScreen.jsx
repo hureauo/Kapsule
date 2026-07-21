@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { api } from '../../api/client.js';
 
-export default function RecapScreen({ questions, answers, sessionId, onGo, onFinish }) {
+// onFinishSession(sessionId) → Promise : injecté par l'appelant (borne :
+// api.completeSession réel ; aperçu Hub : pas d'appel réseau) — même principe
+// que NameInput/createSession (designUI, injection de dépendances).
+export default function RecapScreen({ questions, answers, sessionId, onGo, onFinish, onFinishSession }) {
   const [loading, setLoading] = useState(false);
   const answeredSet = new Set((answers ?? []).map((a) => a.question_id ?? a));
 
   async function handleFinish() {
     setLoading(true);
     try {
-      await api.completeSession(sessionId);
+      await onFinishSession(sessionId);
     } finally {
       onFinish();
     }

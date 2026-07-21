@@ -1,11 +1,17 @@
 import React from 'react';
 import { VIDEO_QUALITY, VIDEO_ORIENTATIONS, DEFAULT_VIDEO_ORIENTATION } from '@kapsule/core';
-import { imageWidthStyle } from '../../utils/design.js';
+import { imageWidthStyle } from '../design.js';
 
 // welcome_title / welcome_subtitle viennent de GET /event (déjà résolus avec
 // leurs fallbacks dynamiques par le serveur — voir design/parcours-invite.md §11).
 // onVideoSettingsChange : callback ({quality?} | {orientation?}) → preview uniquement.
-export default function StartScreen({ event, onStart, onVideoSettingsChange }) {
+//
+// resolveAssetUrl(filename) → url : résout le nom de fichier d'une image de
+// design en URL affichable. Injecté par l'appelant car la résolution diffère
+// entre la borne (le backend a déjà réécrit filename en URL absolue, identité
+// suffit) et l'aperçu Hub (api.designAssetUrl(designId, filename)) — jamais
+// construite en dur ici (designUI).
+export default function StartScreen({ event, onStart, onVideoSettingsChange, resolveAssetUrl = (f) => f }) {
   const isPreview = !!(event?.is_preview);
   const currentQuality = event?.video_quality;
   const currentOrientation = event?.video_orientation ?? DEFAULT_VIDEO_ORIENTATION;
@@ -17,11 +23,12 @@ export default function StartScreen({ event, onStart, onVideoSettingsChange }) {
   // l'introduction des designs.
   const design = event?.design ?? null;
   const image = design?.images?.start ?? { mode: 'none', filename: null };
+  const imageUrl = image.filename ? resolveAssetUrl(image.filename) : null;
 
   // L'image de fond n'est posée qu'en mode 'cover' : un fond ne doit pas
   // s'inviter quand le mode choisi est 'centered' ou 'none'.
-  const coverStyle = image.mode === 'cover' && image.filename
-    ? { backgroundImage: `url("${image.filename}")` }
+  const coverStyle = image.mode === 'cover' && imageUrl
+    ? { backgroundImage: `url("${imageUrl}")` }
     : undefined;
 
   const title = (
@@ -32,8 +39,8 @@ export default function StartScreen({ event, onStart, onVideoSettingsChange }) {
   const tagline = event?.welcome_subtitle
     ? <p className="start__tagline">{event.welcome_subtitle}</p>
     : null;
-  const imageEl = image.mode === 'centered' && image.filename
-    ? <img className="screen__image" src={image.filename} alt="" style={imageWidthStyle(image)} />
+  const imageEl = image.mode === 'centered' && imageUrl
+    ? <img className="screen__image" src={imageUrl} alt="" style={imageWidthStyle(image)} />
     : null;
 
   const body = (

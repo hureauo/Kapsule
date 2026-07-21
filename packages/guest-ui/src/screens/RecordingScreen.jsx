@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import useMediaRecorder, { REC_STATUS } from '../../hooks/useMediaRecorder.js';
-import { uploadVideo, guestVideoUrl } from '../../api/client.js';
+import useMediaRecorder, { REC_STATUS } from '../useMediaRecorder.js';
 
 // Sous-états internes de l'écran d'enregistrement
 const S = {
@@ -22,6 +21,16 @@ function retryDelay(attempt) { return Math.min(2000 * Math.pow(2, attempt - 1), 
 // Keyé par questionIndex dans le parent → remount forcé à chaque question.
 // V2 : plus de prop onBack (bouton « ← Retour » retiré — design/parcours-invite.md §12).
 // Navigation en arrière possible uniquement depuis le récap (RecapScreen.onGo).
+//
+// showcase (designUI) : mode vitrine pour l'aperçu Hub — AUCUN accès caméra
+// (requestPermission jamais appelé), rend un cadre caméra factice dans l'état
+// INTRO, bouton « Commencer » inerte. Toutes les autres branches (countdown,
+// recording, upload…) restent du code mort en mode showcase : l'utilisateur ne
+// peut jamais les atteindre puisque le bouton qui déclenche la transition est
+// désactivé. Comportement réel (showcase=false, défaut) strictement inchangé.
+//
+// uploadVideo/guestVideoUrl : injectés (borne : apps/borne/web/src/api/client.js
+// réel ; aperçu Hub : jamais appelés en mode showcase, stubs acceptés).
 export default function RecordingScreen({
   question,
   sessionId,
@@ -30,6 +39,9 @@ export default function RecordingScreen({
   onLockChange,      // remonte au parent l'état de verrouillage de la nav basse
   qualityKey,        // preset qualité vidéo (DEFAULT_VIDEO_QUALITY si absent)
   orientation,       // 'paysage' | 'portrait' (DEFAULT_VIDEO_ORIENTATION si absent)
+  showcase = false,
+  uploadVideo,
+  guestVideoUrl,
 }) {
   const [subState, setSubState] = useState(existingVideoId ? S.ANSWERED : S.INTRO);
   const [countdown, setCountdown] = useState(question.countdown ?? 3);
@@ -45,23 +57,26 @@ export default function RecordingScreen({
 
   // ── Intro : attacher le preview caméra ──────────────────────────────────────
   useEffect(() => {
+    if (showcase) return; // vitrine : jamais de getUserMedia
     if (subState === S.INTRO && recorder.status === REC_STATUS.IDLE) {
       recorder.requestPermission();
     }
-  }, [subState]);
+  }, [subState, showcase]);
 
   // V2.6 : caméra live aussi en RECORDING (le flux getUserMedia reste actif).
   // attachPreview ne dépend que de streamRef — pas du statut READY/RECORDING.
   useEffect(() => {
+    if (showcase) return;
     const inLiveState = subState === S.INTRO || subState === S.RECORDING;
     const streamActive = recorder.status === REC_STATUS.READY || recorder.status === REC_STATUS.RECORDING;
     if (inLiveState && streamActive && videoPreviewRef.current) {
       recorder.attachPreview(videoPreviewRef.current);
     }
-  }, [subState, recorder.status]);
+  }, [subState, recorder.status, showcase]);
 
   // ── Countdown → démarrer l'enregistrement ───────────────────────────────────
   useEffect(() => {
+    if (showcase) return;
     if (subState !== S.COUNTDOWN) return;
     if (countdown <= 0) {
       recorder.startRecording();
@@ -70,17 +85,19 @@ export default function RecordingScreen({
     }
     const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(t);
-  }, [subState, countdown]);
+  }, [subState, countdown, showcase]);
 
   // ── Enregistrement terminé (auto-stop ou stop manuel) → preview ─────────────
   useEffect(() => {
+    if (showcase) return;
     if (subState === S.RECORDING && recorder.status === REC_STATUS.STOPPED) {
       setSubState(S.PREVIEW);
     }
-  }, [subState, recorder.status]);
+  }, [subState, recorder.status, showcase]);
 
   // ── Upload avec retry backoff ────────────────────────────────────────────────
   async function startUpload(attempt = 1) {
+    if (showcase) return;
     setUploadAttempt(attempt);
     setUploadError(null);
     setUploadProgress(0);
@@ -153,7 +170,7 @@ export default function RecordingScreen({
   }
 
   if (subState === S.INTRO) {
-    const cameraReady = recorder.status === REC_STATUS.READY;
+    const cameraReady = !showcase && recorder.status === REC_STATUS.READY;
     const si = recorder.streamSettings;
     return (
       <div className="screen screen--recording">
@@ -165,7 +182,11 @@ export default function RecordingScreen({
             Le cadre suit l'orientation enregistrée : sans ça, object-fit:cover
             montrerait à l'invité un cadrage différent de la vidéo produite. */}
         <div className={`rec__camera-wrap rec__camera-wrap--${orientation === 'portrait' ? 'portrait' : 'paysage'}`}>
-          {recorder.error ? (
+          {showcase ? (
+            <div className="rec__camera-preview rec__camera-preview--placeholder" data-color-target="surface-alt">
+              🎥
+            </div>
+          ) : recorder.error ? (
             <p className="text--error">{recorder.error}</p>
           ) : (
             <video
@@ -190,10 +211,11 @@ export default function RecordingScreen({
           <button
             className="btn btn--record btn--large"
             onClick={() => {
+              if (showcase) return;
               setCountdown(question.countdown ?? 3);
               setSubState(S.COUNTDOWN);
             }}
-            disabled={!cameraReady}
+            disabled={showcase || !cameraReady}
           >
             ● Commencer
           </button>
