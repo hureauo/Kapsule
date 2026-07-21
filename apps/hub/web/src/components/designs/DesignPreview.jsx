@@ -30,6 +30,9 @@ const DEMO_EVENT = {
   welcome_subtitle: 'Laissez-nous un message vidéo',
   name_prompt: 'Comment tu t\'appelles ?',
   consent_text: 'J\'accepte que mes vidéos soient enregistrées et transmises à l\'organisateur.',
+  // Texte de démo pour que le bouton « En savoir plus » (NameInput) soit
+  // visible dans l'aperçu — il n'apparaît que si consent_details est défini.
+  consent_details: 'Vos vidéos sont conservées le temps de l\'événement puis transmises aux organisateurs. Aucune donnée n\'est partagée avec un tiers.',
 };
 const DEMO_QUESTION = { text: 'Quel est ton meilleur souvenir avec eux ?', max_duration: 60, countdown: 3 };
 // Reproduit l'ancienne maquette : « Question 2 sur 5 », un point répondu, un
