@@ -12,7 +12,7 @@
 
 import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
 import {
-  StartScreen, NameInput, RecordingScreen, ThankYouScreen, designToVars,
+  StartScreen, NameInput, RecordingScreen, QuestionNav, ThankYouScreen, designToVars,
 } from '@kapsule/guest-ui';
 import { api } from '../../api/client.js';
 
@@ -32,6 +32,10 @@ const DEMO_EVENT = {
   consent_text: 'J\'accepte que mes vidéos soient enregistrées et transmises à l\'organisateur.',
 };
 const DEMO_QUESTION = { text: 'Quel est ton meilleur souvenir avec eux ?', max_duration: 60, countdown: 3 };
+// Reproduit l'ancienne maquette : « Question 2 sur 5 », un point répondu, un
+// point courant — juste pour donner un aperçu réaliste de la barre du bas.
+const DEMO_QUESTIONS = [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }];
+const DEMO_ANSWERS = ['q1'];
 
 const noop = () => {};
 
@@ -158,13 +162,21 @@ function Screen({ screen, event, resolveAssetUrl }) {
   }
   if (screen === 'recording') {
     return (
-      <RecordingScreen
-        question={DEMO_QUESTION}
-        sessionId="preview"
-        onNext={noop}
-        onLockChange={noop}
-        showcase
-      />
+      <div className="questions-layout">
+        <RecordingScreen
+          question={DEMO_QUESTION}
+          sessionId="preview"
+          onNext={noop}
+          onLockChange={noop}
+          showcase
+        />
+        <QuestionNav
+          questions={DEMO_QUESTIONS}
+          currentIndex={1}
+          answers={DEMO_ANSWERS}
+          onOpenSheet={noop}
+        />
+      </div>
     );
   }
   if (screen === 'thanks') {
