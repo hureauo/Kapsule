@@ -1,0 +1,790 @@
+/* ── CSS des écrans du parcours invité (designUI) ────────────────────────────
+   Source unique, partagée entre le runtime borne (kiosque réel) et l'aperçu
+   live de l'éditeur Hub. Avant ce chantier, ces règles vivaient uniquement
+   dans apps/borne/web/src/styles/app.css et étaient réimplémentées à la main
+   (classes .dp-*) côté Hub — deux jeux de CSS à synchroniser, source de dérive.
+
+   SCOPE : tout est préfixé .kapsule-guest. Les classes génériques (.btn,
+   .modal, .text--muted…) existent AUSSI dans le CSS du Hub avec des styles
+   différents — sans ce préfixe, les deux entreraient en collision dans les
+   deux sens (l'aperçu Hub prendrait le style Hub, ou pire l'inverse).
+
+   COULEURS : ce fichier ne définit AUCUNE valeur de couleur/rayon/police —
+   uniquement des `var(--token)`. Le thème vient de l'extérieur :
+   - Borne : [data-theme] posé sur <html> (voir apps/borne/web/src/styles/app.css),
+     hérité normalement par .kapsule-guest comme n'importe quel descendant.
+   - Hub (aperçu) : designToVars() pose les tokens en inline sur le wrapper
+     .kapsule-guest lui-même (scope local, jamais sur <html> du Hub).
+*/
+
+.kapsule-guest {
+  height: 100%;
+  width: 100%;
+}
+
+/* ── Conteneurs d'écran ────────────────────────────────────────────────────── */
+.kapsule-guest .screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 2rem;
+}
+
+.kapsule-guest .screen--center {
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  text-align: center;
+}
+
+.kapsule-guest .screen--recap {
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 3rem;
+  gap: 1.5rem;
+  overflow-y: auto;
+}
+
+.kapsule-guest .screen--question {
+  align-items: center;
+  justify-content: space-between;
+  padding: 2rem;
+}
+
+/* ── Typographie — chunky Cutealism (titres gras, ronds, compacts) ─────────── */
+.kapsule-guest .screen__title { font-size: 2rem; font-weight: 800; line-height: 1.15; letter-spacing: -0.01em; }
+.kapsule-guest .text--muted   { color: var(--text-muted); font-size: 1rem; }
+.kapsule-guest .text--error   { color: var(--text-error); font-size: 0.95rem; }
+
+/* ── Boutons — touch targets ≥ 80px (PROJET.md iPad) ─────────────────────── */
+.kapsule-guest .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-pill); /* boutons « pillow » Cutealism */
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-weight: 700;
+  padding: 0 2rem;
+  min-height: 80px;
+  min-width: 200px;
+  box-shadow: var(--shadow-soft);
+  transition: background-color 0.15s ease, opacity 0.15s ease,
+              transform 0.1s ease, box-shadow 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.kapsule-guest .btn:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
+
+/* Effet « on appuie sur un coussin » : la touche enfonce légèrement le bouton */
+.kapsule-guest .btn:not(:disabled):active { transform: translateY(2px); box-shadow: var(--shadow-press); }
+
+.kapsule-guest .btn--primary {
+  background-color: var(--accent);
+  color: #fff;
+}
+.kapsule-guest .btn--primary:not(:disabled):hover  { background-color: var(--accent-hover); }
+
+.kapsule-guest .btn--secondary {
+  background-color: var(--btn-secondary-bg);
+  color: var(--text);
+}
+.kapsule-guest .btn--secondary:not(:disabled):hover  { background-color: var(--btn-secondary-hover); }
+
+.kapsule-guest .btn--large {
+  min-height: 88px;
+  font-size: 1.35rem;
+  width: 100%;
+  max-width: 480px;
+}
+
+.kapsule-guest .btn--small {
+  min-height: 44px;
+  min-width: 0;
+  padding: 0 1.2rem;
+  font-size: 0.95rem;
+  border-radius: 8px;
+}
+
+/* Bouton ghost (retour discret) */
+.kapsule-guest .btn--ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  box-shadow: none; /* bouton discret : pas d'élévation pillow */
+  font-size: 1rem;
+  min-height: 44px;
+  min-width: 0;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.kapsule-guest .btn--ghost:hover { color: var(--text); }
+
+/* Bouton danger (confirmation « Revenir à l'accueil ? ») */
+.kapsule-guest .btn--danger {
+  background-color: #c0392b;
+  color: #fff;
+}
+.kapsule-guest .btn--danger:not(:disabled):hover { background-color: #96281b; }
+
+/* ── Formulaire nom ───────────────────────────────────────────────────────── */
+.kapsule-guest .name-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  max-width: 480px;
+}
+
+.kapsule-guest .name-form__input {
+  width: 100%;
+  padding: 1rem 1.25rem;
+  font-size: 1.3rem;
+  border: 2px solid var(--input-border);
+  border-radius: var(--radius);
+  background: var(--input-bg);
+  color: var(--text);
+  outline: none;
+  min-height: 72px;
+  -webkit-appearance: none;
+  transition: border-color 0.15s ease;
+}
+.kapsule-guest .name-form__input:focus { border-color: var(--input-border-focus); }
+
+/* ── Questions ────────────────────────────────────────────────────────────── */
+.kapsule-guest .question__progress {
+  font-size: 1rem;
+  color: var(--text-muted);
+  align-self: flex-end;
+}
+
+.kapsule-guest .question__text {
+  font-size: 1.8rem;
+  font-weight: 600;
+  text-align: center;
+  max-width: 700px;
+  line-height: 1.3;
+}
+
+/* ── Start / Thanks screen ───────────────────────────────────────────────── */
+.kapsule-guest .start__title   { font-size: 3rem; font-weight: 800; letter-spacing: -0.02em; }
+.kapsule-guest .start__tagline { max-width: 600px; color: var(--text-muted); font-size: 1.1rem; line-height: 1.6; }
+
+/* ── Name / consentement ──────────────────────────────────────────────────── */
+.kapsule-guest .screen--name { align-items: center; justify-content: center; gap: 1.5rem; text-align: center; }
+
+.kapsule-guest .consent-block {
+  width: 100%;
+  max-width: 480px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  text-align: left;
+}
+
+.kapsule-guest .consent-block__text {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  max-height: 8rem;
+  overflow-y: auto;
+}
+
+/* Case à cocher ≥ 44px (PROJET.md §8) */
+.kapsule-guest .consent-block__label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.kapsule-guest .consent-block__checkbox {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.kapsule-guest .consent-block__caption { font-size: 1rem; line-height: 1.4; }
+
+/* Espacer légèrement le bouton « En savoir plus » dans le bloc consentement */
+.kapsule-guest .consent-block__details-btn {
+  align-self: flex-start;
+  font-size: 0.9rem;
+  padding: 0.2rem 0.5rem;
+}
+
+/* ── Questions layout ─────────────────────────────────────────────────────── */
+.kapsule-guest .questions-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* L'écran (RecordingScreen) occupe l'espace ; la nav basse se colle dessous.
+   On neutralise le height:100% du .screen pour qu'il flex-grow au lieu de
+   forcer la pleine hauteur (sinon la barre basse serait poussée hors écran). */
+.kapsule-guest .questions-layout > .screen {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+/* ── QuestionNav — barre de progression BASSE (design/parcours-invite.md) ──────
+   margin-top:auto la colle en bas du .questions-layout (colonne flex).
+   Surface arrondie en haut, légère élévation : elle « flotte » au-dessus du fond. */
+.kapsule-guest .question-nav {
+  margin-top: auto;        /* pousse la nav tout en bas */
+  flex-shrink: 0;
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+/* Barre de remplissage globale, intégrée en haut de la barre basse */
+.kapsule-guest .question-nav__progress {
+  height: 6px;
+  width: 100%;
+  background: var(--primary-tint);
+}
+.kapsule-guest .question-nav__progress-fill {
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s ease;
+}
+
+/* La ligne entière est un bouton — reset des styles natifs */
+.kapsule-guest .question-nav__row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1.25rem;
+  width: 100%;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s;
+}
+.kapsule-guest .question-nav__row:not(:disabled):active { background: var(--surface-alt); }
+.kapsule-guest .question-nav__row:disabled { cursor: default; }
+
+.kapsule-guest .question-nav__dots { display: flex; gap: 0.5rem; flex: 1; justify-content: center; }
+
+/* Dots purement visuels (non-interactifs) — spans, pas de pseudo-element ::after */
+.kapsule-guest .question-nav__dot {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--text-muted);
+  background: transparent;
+  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+.kapsule-guest .question-nav__dot--current  { border-color: var(--accent); background: var(--accent); transform: scale(1.2); }
+.kapsule-guest .question-nav__dot--answered { border-color: var(--primary); background: var(--primary); }
+
+/* Label « Question X / N » dans la barre basse */
+.kapsule-guest .question-nav__label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Chevron discret indiquant que la barre est tappable */
+.kapsule-guest .question-nav__chevron {
+  font-size: 1rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* ── RecordingScreen ──────────────────────────────────────────────────────── */
+.kapsule-guest .screen--recording {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem;
+  gap: 1rem;
+  overflow: hidden;
+}
+
+.kapsule-guest .rec__header { width: 100%; display: flex; flex-direction: column; gap: 0.4rem; }
+
+.kapsule-guest .rec__progress-label { font-size: 0.9rem; color: var(--text-muted); }
+
+.kapsule-guest .rec__progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--input-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.kapsule-guest .rec__progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.kapsule-guest .rec__progress-bar--recording { height: 8px; }
+
+.kapsule-guest .rec__question {
+  font-size: 1.6rem;
+  font-weight: 600;
+  text-align: center;
+  max-width: 680px;
+  line-height: 1.3;
+}
+
+.kapsule-guest .rec__duration-hint { font-size: 0.95rem; }
+
+/* Preview caméra miroir (effet selfie naturel).
+   Le cadre adopte l'aspect-ratio de l'orientation enregistrée : combiné à
+   object-fit:cover sur la vidéo, l'invité voit le cadrage qu'il obtiendra.
+   min-height:0 est nécessaire pour qu'un flex-item puisse rétrécir sous sa
+   taille de contenu — sans lui, un cadre portrait déborde verticalement. */
+.kapsule-guest .rec__camera-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  border-radius: 16px;
+  overflow: hidden;
+  margin: 0 auto;
+}
+
+.kapsule-guest .rec__camera-wrap--paysage {
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16 / 9;
+}
+
+.kapsule-guest .rec__camera-wrap--portrait {
+  height: 100%;
+  max-height: 70vh;
+  aspect-ratio: 9 / 16;
+  width: auto;
+}
+
+.kapsule-guest .rec__camera-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1); /* miroir — naturel pour l'invité */
+}
+
+/* Cadre caméra factice — mode showcase (designUI.E), aperçu sans matériel.
+   min-height assure une vraie présence visuelle même combiné à .rec__blob-video
+   (état PREVIEW), qui n'a par défaut qu'une hauteur `auto` — sans contenu vidéo
+   réel pour la déterminer, le cadre s'écraserait sur la hauteur de l'emoji. */
+.kapsule-guest .rec__camera-preview--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  color: #fff;
+  opacity: 0.55;
+  font-size: 3rem;
+}
+
+/* Replay de la vidéo qu'on vient d'enregistrer. Un <video> fait `contain` par défaut :
+   une source portrait s'affiche entière, sans déformation. `max-height` l'empêche de
+   déborder verticalement de l'écran kiosque, où elle serait deux fois plus haute que large. */
+.kapsule-guest .rec__blob-video {
+  width: 100%;
+  height: auto;
+  max-width: 640px;
+  max-height: 60vh;
+  border-radius: 16px;
+  background: #000;
+}
+
+.kapsule-guest .rec__preview-wrap {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kapsule-guest .rec__actions {
+  display: flex;
+  gap: 1rem;
+  width: 100%;
+  max-width: 640px;
+  justify-content: center;
+}
+
+.kapsule-guest .rec__actions .btn { flex: 1; }
+
+/* Indicateur REC — rouge conservé (--rec), signal d'enregistrement universel */
+.kapsule-guest .rec__live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--rec);
+  font-variant-numeric: tabular-nums;
+}
+
+.kapsule-guest .rec__dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--rec);
+  display: inline-block;
+}
+
+.kapsule-guest .rec__dot--blink { animation: kapsule-guest-blink 1s step-start infinite; }
+
+@keyframes kapsule-guest-blink { 50% { opacity: 0; } }
+
+/* Bouton Stop — arrêt du REC : surface neutre cerclée rouge */
+.kapsule-guest .btn--stop {
+  background-color: var(--surface);
+  color: var(--text);
+  border: 3px solid var(--rec);
+}
+.kapsule-guest .btn--stop:not(:disabled):hover { background-color: var(--rec); color: #fff; }
+
+/* Bouton Record — action principale (orange Cutealism), pas le rouge du REC */
+.kapsule-guest .btn--record {
+  background-color: var(--accent);
+  color: #fff;
+}
+.kapsule-guest .btn--record:not(:disabled):hover { background-color: var(--accent-hover); }
+.kapsule-guest .btn--record:disabled { opacity: 0.5; }
+
+/* Countdown */
+.kapsule-guest .countdown__number {
+  font-size: 8rem;
+  font-weight: 900;
+  animation: kapsule-guest-pulse 1s ease-out;
+}
+
+@keyframes kapsule-guest-pulse {
+  0%   { transform: scale(1.4); opacity: 0.5; }
+  100% { transform: scale(1);   opacity: 1;   }
+}
+
+/* Upload progress */
+.kapsule-guest .upload-progress {
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.kapsule-guest .upload-progress__bar {
+  width: 100%;
+  height: 10px;
+  background: var(--input-border);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.kapsule-guest .upload-progress__fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 5px;
+  transition: width 0.2s ease;
+}
+
+.kapsule-guest .upload-progress__label { font-size: 0.95rem; color: var(--text-muted); }
+
+/* ── Récap ────────────────────────────────────────────────────────────────── */
+.kapsule-guest .recap__list { display: flex; flex-direction: column; gap: 1rem; width: 100%; max-width: 600px; }
+
+.kapsule-guest .recap__item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+  padding: 1rem 1.25rem;
+}
+
+/* Récap cliquable (bouton) */
+.kapsule-guest .recap__item--btn {
+  width: 100%;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+  text-align: left;
+  transition: background 0.15s, transform 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.kapsule-guest .recap__item--btn:hover { background: var(--btn-secondary-bg); }
+.kapsule-guest .recap__item--btn:active { transform: translateY(2px); }
+/* Réponse déjà donnée : pastille bleu clair → repère visuel positif */
+.kapsule-guest .recap__item--done .recap__index { background: var(--primary); }
+.kapsule-guest .recap__item--done .recap__status { color: var(--primary); }
+
+.kapsule-guest .recap__index {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.kapsule-guest .recap__question { font-size: 1.05rem; flex: 1; }
+.kapsule-guest .recap__status   { font-size: 1.2rem; flex-shrink: 0; }
+
+/* ── Done screen ──────────────────────────────────────────────────────────── */
+.kapsule-guest .done__icon { font-size: 5rem; }
+
+/* ── Écran de reprise de session ─────────────────────────────────────────── */
+.kapsule-guest .resume__actions {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ── Modal (confirmation retour accueil, consentement détaillé) ───────────── */
+.kapsule-guest .modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.kapsule-guest .modal {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 2rem;
+  width: 90%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+
+.kapsule-guest .modal__title   { font-size: 1.2rem; font-weight: 700; }
+.kapsule-guest .modal__actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
+
+/* Popup « En savoir plus » — consentement détaillé */
+.kapsule-guest .consent-details-modal { max-width: 480px; }
+.kapsule-guest .consent-details-modal__body {
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text);
+  max-height: 50vh;
+  overflow-y: auto;
+  white-space: pre-wrap;    /* respecte les sauts de ligne du texte éditable */
+  text-align: left;
+}
+
+/* ── Bandeau borne d'essai visible sur le kiosque invité ─────────────────── */
+.kapsule-guest .guest-preview-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  text-align: center;
+  padding: 0.3rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: #7c3aed;
+  color: #fff;
+  pointer-events: none;
+}
+
+/* ── Bouton Accueil — coin haut gauche, discret ────────────────────────────── */
+.kapsule-guest .guest-home-btn {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  z-index: 50;
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: 0.4rem;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.45;
+  transition: opacity 0.15s, background 0.15s;
+}
+.kapsule-guest .guest-home-btn:hover { opacity: 1; background: var(--surface); }
+.kapsule-guest .guest-home-btn:active { opacity: 1; }
+
+/* ── QuestionSheet — panneau slide-up de navigation inter-questions ─────────
+   Overlay semi-transparent + panneau ancré en bas. Animation depuis le bas.
+   z-index 150 : au-dessus de la barre basse (z auto) et du bouton Accueil (50),
+   en dessous de la modal de confirmation (200).                               */
+.kapsule-guest .qsheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  z-index: 150;
+}
+
+.kapsule-guest .qsheet {
+  background: var(--surface);
+  border-radius: var(--radius) var(--radius) 0 0;
+  width: 100%;
+  max-height: 72vh;
+  overflow-y: auto;
+  padding: 0 1.25rem 2.5rem;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.18);
+  animation: kapsule-guest-qsheet-slide-up 0.25s ease;
+}
+
+@keyframes kapsule-guest-qsheet-slide-up {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+
+/* Poignée visuelle — invite au swipe-down pour fermer */
+.kapsule-guest .qsheet__handle {
+  width: 40px;
+  height: 4px;
+  background: var(--input-border);
+  border-radius: 2px;
+  margin: 0.85rem auto 1.25rem;
+}
+
+.kapsule-guest .qsheet__title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
+}
+
+.kapsule-guest .qsheet__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Item : large zone de tap (min-height 72px) pour les gros doigts sur iPad */
+.kapsule-guest .qsheet__item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  width: 100%;
+  padding: 1rem 1.25rem;
+  background: var(--surface-alt);
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  min-height: 72px;
+  color: var(--text);
+  font-size: 1rem;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.kapsule-guest .qsheet__item:active { background: var(--btn-secondary-bg); }
+
+/* Question en cours : bordure accent pour la distinguer */
+.kapsule-guest .qsheet__item--current { border-color: var(--accent); }
+
+/* Question répondue : badge bleu */
+.kapsule-guest .qsheet__item--answered .qsheet__index { background: var(--primary); }
+.kapsule-guest .qsheet__item--answered .qsheet__status { color: var(--primary); }
+
+/* Badge numéro (reprend le style .recap__index) */
+.kapsule-guest .qsheet__index {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+}
+
+.kapsule-guest .qsheet__text   { flex: 1; line-height: 1.35; }
+.kapsule-guest .qsheet__status { font-size: 1.2rem; flex-shrink: 0; color: var(--text-muted); }
+
+/* Question future : grisée, non cliquable — l'ordre doit être respecté */
+.kapsule-guest .qsheet__item--future {
+  opacity: 0.35;
+  cursor: default;
+  background: var(--surface);
+}
+.kapsule-guest .qsheet__item--future .qsheet__index { background: var(--text-muted); }
+
+/* ── Image du design par écran (§9bis, design4/design5) ─────────────────────
+   Sans design ou sans image configurée, mode 'none' : rendu identique à celui
+   d'avant l'introduction des designs. Une seule image par écran (accueil et
+   remerciement), 3 états : centered/cover/none — plus de layout 'split'.     */
+
+.kapsule-guest .start__body,
+.kapsule-guest .thanks__body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+  /* Au-dessus de l'image de fond du mode 'cover'. */
+  position: relative;
+  z-index: 1;
+}
+
+/* Image centrée : hauteur bornée par défaut pour ne pas écraser le titre sur
+   un petit écran (surchargée en inline par imageWidthStyle si widthPercent
+   est réglé, design5). Partagée par les écrans accueil et remerciement. */
+.kapsule-guest .screen__image {
+  max-height: 120px;
+  max-width: 80%;
+  object-fit: contain;
+}
+
+/* Mode 'cover' : l'image occupe tout l'écran, le contenu se superpose.
+   Un voile assombri/éclairci n'est pas posé (le client choisit ses couleurs) —
+   la lisibilité relève du design, pas du code. */
+.kapsule-guest .start--cover,
+.kapsule-guest .thanks--cover {
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}

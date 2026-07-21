@@ -438,3 +438,40 @@ naturel à la largeur choisie.
 **Terminé quand** : un client réglant le slider de largeur en mode Centrée voit l'aperçu Hub
 refléter le changement en direct, et la borne (réelle ou d'essai) affiche l'image à la taille
 choisie.
+
+## Phase designUI — un seul rendu du parcours invité, partagé borne ↔ aperçu Hub
+
+Voir le plan complet dans l'historique de la branche `feat/design-ui-partage`. Contexte :
+l'aperçu live de l'éditeur Hub (`DesignPreview.jsx`) réimplémentait à la main les 4 écrans du
+parcours invité (classes `.dp-*`), dupliquant le rendu réel de la borne — deux jeux de CSS/JSX
+à synchroniser manuellement, source de dérive assumée depuis design2.
+
+Décision actée : extraire les écrans dans un package partagé `@kapsule/guest-ui`, monté
+**directement** (pas d'iframe — la CSP edge bloque `X-Frame-Options`/`frame-ancestors`) à la
+fois par la borne réelle et l'aperçu Hub. Un seul rendu à maintenir, aperçu **live** (le design
+en cours d'édition est passé en props, pas de save/pull nécessaire). Dépendances réseau/caméra
+injectées par props (jamais importées en dur) pour que les mêmes composants tournent en
+production (borne) et en vitrine (aperçu Hub, sans backend ni caméra) : `RecordingScreen` a une
+prop `showcase` qui court-circuite tout `getUserMedia`.
+
+- [x] designUI.A : squelette `@kapsule/guest-ui` (workspace, peerDeps react/react-dom), validation
+  du build vite cross-package dans les deux apps + Docker (COPY manquant corrigé)
+- [x] designUI.B : `designToVars` (fusion `applyDesign`/`cssVarsFor`, dédupliqués) + CSS des écrans
+  migré vers `guest-ui/guest.css`, scopé `.kapsule-guest` (admin borne garde sa propre copie non
+  préfixée des classes partagées — bug trouvé et corrigé en review avant commit)
+- [x] designUI.C-E : extraction des 7 écrans + `useMediaRecorder` vers `guest-ui/src/screens/` ;
+  `apps/borne/web/src/components/guest/` et `hooks/` supprimés ; dépendances réseau/caméra
+  injectées (`resolveAssetUrl`, `createSession`, `onFinishSession`, `uploadVideo`,
+  `guestVideoUrl`) ; `RecordingScreen` gagne la prop `showcase`
+- [x] designUI.F-G : `DesignPreview.jsx` (Hub) monte les vrais écrans au lieu de `.dp-*` ; scope
+  `.kapsule-guest` posé en inline (jamais sur `document.documentElement` du Hub) ; pulsation
+  couleur (`data-color-target`/`.dp-pulse`) conservée et ajoutée aux vrais composants ; CSS
+  `.dp-<écran>` mort supprimé (~205 lignes)
+- [ ] 🧑 designUI.H : vérif borne réelle + iPad Safari (parcours complet, 3 thèmes, design
+  personnalisé — aucune régression visuelle/fonctionnelle après extraction) + aperçu Hub live
+  (couleur/police/image reflétés instantanément, bascule largeur/écran, pulsation, mode showcase
+  recording sans prompt caméra, `.btn`/`.modal` du reste du Hub inchangés)
+
+**Terminé quand** : un seul jeu de composants React rend le parcours invité, utilisé identique en
+production (borne) et dans l'aperçu live du Hub — plus aucune maquette `.dp-*` à maintenir en
+parallèle.

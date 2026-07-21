@@ -24,9 +24,9 @@ export default function QuestionNav({ questions, currentIndex, answers = [], onO
   }
 
   return (
-    <nav className="question-nav" aria-label="Progression du parcours">
-      <div className="question-nav__progress" aria-hidden="true">
-        <div className="question-nav__progress-fill" style={{ width: `${fillPct}%` }} />
+    <nav className="question-nav" data-color-target="surface" aria-label="Progression du parcours">
+      <div className="question-nav__progress" data-color-target="primary-tint" aria-hidden="true">
+        <div className="question-nav__progress-fill" data-color-target="primary" style={{ width: `${fillPct}%` }} />
       </div>
 
       {/* Toute la ligne est un bouton — cible tactile large pour iPad */}

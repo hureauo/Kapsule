@@ -93,16 +93,31 @@ kapsule/
 ├── Makefile                          # raccourcis VPS : vps-build/up/down, hub-reset (voir §10)
 ├── PROJET.md                         # ce document
 ├── packages/
-│   └── core/                         # @kapsule/core — tout ce qui est partagé
-│       ├── package.json
-│       └── src/
-│           ├── index.js              # ré-exporte tout
-│           ├── constants.js          # EVENT_STATUS, JOB_TYPES, LIMITS (500 MB, durées…)
-│           ├── eventDbSchema.js      # SQL de la BD "événement" + createEventDb(filePath)
-│           ├── validate.js           # validateQuestion(), validateGuestName(), assertStatus()
-│           ├── checksum.js           # sha256File(path) → Promise<hex> (stream, pas de readFile)
-│           └── design.js             # DESIGN_COLOR_KEYS/RADIUS/FONTS/LAYOUTS, validateDesign()
-│                                      # (fonction pure, §9bis) — partagé Hub + Borne
+│   ├── core/                         # @kapsule/core — tout ce qui est partagé, sans React
+│   │   ├── package.json
+│   │   └── src/
+│   │       ├── index.js              # ré-exporte tout
+│   │       ├── constants.js          # EVENT_STATUS, JOB_TYPES, LIMITS (500 MB, durées…)
+│   │       ├── eventDbSchema.js      # SQL de la BD "événement" + createEventDb(filePath)
+│   │       ├── validate.js           # validateQuestion(), validateGuestName(), assertStatus()
+│   │       ├── checksum.js           # sha256File(path) → Promise<hex> (stream, pas de readFile)
+│   │       └── design.js             # DESIGN_COLOR_KEYS/RADIUS/FONTS/LAYOUTS, validateDesign()
+│   │                                  # (fonction pure, §9bis) — partagé Hub + Borne
+│   └── guest-ui/                     # @kapsule/guest-ui — écrans React du parcours invité
+│       ├── package.json              # (chantier designUI) partagés Borne (kiosque réel) et
+│       ├── test/design.test.js       # aperçu live Hub — react/react-dom en peerDependency ;
+│       └── src/                      # dépendances réseau/caméra injectées par props, jamais
+│           ├── index.js              # importées en dur (mêmes composants prod + aperçu).
+│           ├── design.js             # designToVars/MANAGED_DESIGN_VARS/imageWidthStyle (pur,
+│           │                          # sans JSX — exporté séparément en "./design" pour
+│           │                          # rester importable par node --test sans traverser le
+│           │                          # barrel JSX)
+│           ├── useMediaRecorder.js   # hook caméra (getUserMedia/MediaRecorder)
+│           ├── screens/              # StartScreen, NameInput, QuestionNav, QuestionSheet,
+│           │                          # RecordingScreen (prop `showcase`), RecapScreen,
+│           │                          # ThankYouScreen
+│           └── guest.css             # CSS des écrans, toutes règles préfixées .kapsule-guest
+│                                      # (scope anti-collision avec le CSS du Hub/admin borne)
 ├── apps/
 │   ├── borne/
 │   │   ├── server/
@@ -128,20 +143,16 @@ kapsule/
 │   │       ├── Dockerfile.preview    # image borne preview (SPA + nginx, arm64/amd64)
 │   │       ├── package.json, vite.config.js, index.html
 │   │       └── src/
-│   │           ├── main.jsx, App.jsx # routes : "/" → GuestPage, "/admin/*" → AdminPage
+│   │           ├── main.jsx, App.jsx # routes : "/" → GuestPage (dans <div class="kapsule-guest">
+│   │           │                      # pour le scope CSS partagé), "/admin/*" → AdminPage
 │   │           ├── api/client.js
-│   │           ├── hooks/useMediaRecorder.js
-│   │           ├── utils/design.js    # applyDesign() : pose les tokens d'un design sur
-│   │           │                      # <html> (whitelist DESIGN_COLOR_KEYS, §9bis)
-│   │           ├── pages/GuestPage.jsx
+│   │           ├── utils/design.js    # applyDesign() : pose les tokens d'un design sur <html>
+│   │           │                      # (whitelist DESIGN_COLOR_KEYS, §9bis) — fine couche
+│   │           │                      # au-dessus de designToVars() (@kapsule/guest-ui)
+│   │           ├── pages/GuestPage.jsx # importe les 7 écrans du parcours invité depuis
+│   │           │                      # @kapsule/guest-ui (chantier designUI) — plus aucun
+│   │           │                      # composant guest ni hook caméra dans cette app
 │   │           ├── pages/AdminPage.jsx
-│   │           ├── components/guest/
-│   │           │   ├── StartScreen.jsx
-│   │           │   ├── NameInput.jsx
-│   │           │   ├── QuestionNav.jsx      # ◀ ▶ + pastilles répondu/non-répondu
-│   │           │   ├── RecordingScreen.jsx
-│   │           │   ├── RecapScreen.jsx      # récap avant "terminé", accès réenregistrement
-│   │           │   └── ThankYouScreen.jsx
 │   │           ├── components/admin/
 │   │           │   ├── AdminLogin.jsx, AdminLayout.jsx
 │   │           │   ├── EventPanel.jsx       # événement actif, création locale, activation, clôture
@@ -577,7 +588,7 @@ Base `/api`. `GET /api/health`.
 - `ThankYouScreen` : message + **auto-retour à l'accueil après 15 s** + bouton manuel.
 - Nettoyage du flux caméra au démontage de chaque écran qui l'utilise.
 
-**`hooks/useMediaRecorder.js`** — gère caméra + cycle d'enregistrement :
+**`useMediaRecorder.js`** (`@kapsule/guest-ui`, chantier designUI) — gère caméra + cycle d'enregistrement :
 - États `idle → requesting → ready → recording → stopped` ; `getUserMedia({ video:{ facingMode:'user', width:{ideal:1280}, height:{ideal:720} }, audio:true })` ; messages d'erreur dédiés `NotAllowedError`/`NotFoundError`.
 - Détection MIME : Safari/iOS → `video/mp4;codecs=avc1,mp4a.40.2` puis `video/mp4` ; sinon `video/webm;codecs=vp9,opus` → vp8 → webm (probe `MediaRecorder.isTypeSupported`).
 - Options : `videoBitsPerSecond: 500_000`, `audioBitsPerSecond: 96_000`, `recorder.start(1000)` (chunks de 1 s pour la robustesse). Collecte des chunks ; au stop, construire un `Blob` + object URL. Auto-stop par timer 1 s quand `duration >= maxDuration`. `attachPreview` branche le flux live sur un `<video>` (muted, autoplay, **playsInline**). Expose `requestPermission/startRecording/stopRecording/resetRecording/cleanup` + `status/error/duration/blob/blobUrl/mimeType`.

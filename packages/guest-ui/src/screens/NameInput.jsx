@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { api } from '../../api/client.js';
 import { LIMITS } from '@kapsule/core';
 
-export default function NameInput({ event, onSession, onBack, onClosed }) {
+// createSession(name) → Promise<{id}> : injecté par l'appelant (borne :
+// api.createSession réel ; aperçu Hub : pas d'appel réseau, le submit peut
+// rester no-op) — jamais importé en dur ici (designUI, injection de dépendances).
+export default function NameInput({ event, onSession, onBack, onClosed, createSession }) {
   const [name, setName] = useState('');
   const [consented, setConsented] = useState(false); // non pré-cochée (RGPD obligatoire)
   const [error, setError] = useState('');
@@ -27,7 +29,7 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
     setLoading(true);
     setError('');
     try {
-      const session = await api.createSession(trimmed); // envoie consent: true
+      const session = await createSession(trimmed); // envoie consent: true
       onSession(session.id, trimmed);
     } catch (err) {
       // 409 event_closed : l'admin a clôturé pendant que l'invité remplissait son prénom
@@ -39,7 +41,7 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
   }
 
   return (
-    <div className="screen screen--name">
+    <div className="screen screen--name" data-color-target="surface">
       <h2 className="screen__title">{namePrompt}</h2>
 
       <form className="name-form" onSubmit={handleSubmit}>
@@ -52,6 +54,7 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
           placeholder="Votre prénom"
           maxLength={LIMITS.GUEST_NAME_MAX}
           disabled={loading}
+          data-color-target="input-bg"
         />
 
         {/* Bloc consentement RGPD — texte scrollable + bouton détail + case à cocher tactile */}
@@ -78,6 +81,7 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
               checked={consented}
               onChange={(e) => { setConsented(e.target.checked); setError(''); }}
               disabled={loading}
+              data-color-target="input-border"
             />
             <span className="consent-block__caption">J'accepte</span>
           </label>
@@ -90,6 +94,7 @@ export default function NameInput({ event, onSession, onBack, onClosed }) {
           className="btn btn--primary btn--large"
           type="submit"
           disabled={!consented || loading}
+          data-color-target="accent-hover"
         >
           {loading ? 'Connexion…' : 'Continuer'}
         </button>

@@ -1,23 +1,25 @@
 ---
 status: tests-pending
-base_commit: fc80afe72cea0bf3b3cdf94ccd2463717b8125af
-workspaces: [@kapsule/core, @kapsule/hub-server, @kapsule/borne-server, @kapsule/hub-web, @kapsule/borne-web]
-generated_at: 2026-07-20T00:00:00Z
+base_commit: ab2f607a7b42b243cd3ec40c15a4cae1aa311585
+workspaces: []
+generated_at: 2026-07-21T00:00:00Z
 verdict: COMMIT OK
 ---
 
 # Relais de review → tests
 
 Workspaces à tester :
-- @kapsule/core (raison : validation widthPercent ajoutée dans design.js + tests)
-- @kapsule/hub-server (raison : bugfix upload spread previousEntry dans routes/designs.js + tests de régression)
-- @kapsule/borne-server (raison : resolveDesign propage widthPercent dans routes/events.js + test)
-- @kapsule/hub-web (raison : DesignEditor.jsx slider + DesignPreview.jsx style — build vite)
-- @kapsule/borne-web (raison : imageWidthStyle + StartScreen/ThankYouScreen — build vite)
+- (aucun) — le seul fichier modifié, `packages/guest-ui/src/screens/RecordingScreen.jsx`,
+  appartient au package `@kapsule/guest-ui`, qui n'a pas de suite de tests dédiée
+  (aucun test ne couvre RecordingScreen ; les tests borne-web/hub-web portent sur
+  design.js/roles.js/format.js, non touchés). L'agent principal a déjà exécuté
+  `npm test -w @kapsule/borne-web` (28/28) et `-w @kapsule/hub-web` (29/29) verts,
+  plus les builds vite des deux fronts (PASS). Rien de nouveau à cibler côté tests.
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- Non-régression du bugfix upload (spread previousEntry) : remplacement de fichier conserve widthPercent, changement de mode centered→cover→centered ne persiste pas de widthPercent invalide (validateDesign rejette widthPercent hors centered). Couvert par les tests ajoutés de designs.test.js.
-- resolveDesign borne : widthPercent absent (non-entier) → non exposé. Couvert par events.test.js.
+- Aucun. Le fix est purement front, sans surface réseau ni PII. La seule vérification
+  restante est visuelle/humaine (rendu réel du cycle showcase dans l'éditeur Hub, sur
+  Safari iPad) — non automatisable ici.
 
 ## Corrections demandées
 

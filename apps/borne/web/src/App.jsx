@@ -22,5 +22,11 @@ export default function App() {
   const path = window.location.pathname;
   if (path.startsWith('/admin/tech')) return <TechPage isPreview={isPreview} eventName={eventName} />;
   if (path.startsWith('/admin')) return <AdminPage isPreview={isPreview} eventName={eventName} />;
-  return <GuestPage isPreview={isPreview} />;
+  // .kapsule-guest scope le CSS partagé (@kapsule/guest-ui/guest.css) — l'admin
+  // n'est jamais dans ce wrapper, aucun risque de collision avec ses .btn/.modal.
+  return (
+    <div className="kapsule-guest">
+      <GuestPage isPreview={isPreview} />
+    </div>
+  );
 }
