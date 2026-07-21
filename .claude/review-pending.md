@@ -1,38 +1,32 @@
 ---
 status: tests-pending
-base_commit: d2259144d3ecece6e6d2a091df970c44772280bf
-workspaces: [@kapsule/hub-web, @kapsule/borne-web]
-generated_at: 2026-07-21T00:00:00Z
+base_commit: 8d1391f293cf068fd30abaff26499c3db0a08202
+workspaces: [@kapsule/borne-web, @kapsule/guest-ui]
+generated_at: 2026-07-21T06:20:00Z
 verdict: COMMIT À CORRIGER
 ---
 
 # Relais de review → tests
 
-Workspaces à tester :
-- @kapsule/hub-web (raison : apps/hub/web/package.json — ajout dependency @kapsule/guest-ui)
-- @kapsule/borne-web (raison : apps/borne/web/package.json — ajout dependency @kapsule/guest-ui)
+Chantier designUI lots B+C+D+E (non commités, tout dans le même working tree).
+Extraction du parcours invité vers `@kapsule/guest-ui` (écrans + hook + CSS + design.js),
+consommé par la borne réelle (`apps/borne/web`). Aucun fichier Hub touché (lot F à venir).
 
-Note : ce sous-lot (designUI.A) n'ajoute aucun code testable (guest-ui = squelette `export {}`).
-`npm test` sur les deux web ne fait que confirmer la non-régression. Le vrai point de
-vérification est le **build Docker** des images web (multi-stage vite), non couvert par `npm test` —
-voir points d'attention. Lancer `npm run smoke:hub` / `npm run smoke:borne` si possible pour
-exercer le build Docker réel.
+Workspaces à tester :
+- @kapsule/guest-ui (raison : nouveau package — screens/*.jsx, useMediaRecorder.js, design.js, guest.css, test/design.test.js)
+- @kapsule/borne-web (raison : GuestPage.jsx importe le barrel guest-ui ; utils/design.js délègue à @kapsule/guest-ui/design ; App.jsx wrapper .kapsule-guest ; app.css restauré ; suppression de components/guest/ + hooks/)
 
 Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
-- Le build **Docker** des images web (apps/borne/web/Dockerfile, apps/borne/web/Dockerfile.preview,
-  apps/hub/web/Dockerfile) ne copie PAS packages/guest-ui avant `npm ci`/`npm run build`. À ce lot,
-  aucun import réel de guest-ui n'existe → le build passe probablement encore. Mais la correction du
-  COPY doit être vérifiée AVANT que les lots C/D/E introduisent un vrai import (sinon build cassé).
-  Un `npm run smoke:*` (qui reconstruit l'image) est le seul test qui exerce ce chemin.
-- Le build vite LOCAL a déjà été validé (hash bundle borne identique = pas de code mort). Les tests
-  n'ont pas à re-vérifier l'absence de la sonde temporaire : git diff sur main.jsx est déjà vide.
+- Le build Vite borne-web doit passer (résolution du barrel `@kapsule/guest-ui` + du sous-export `/design` + de l'import CSS `@kapsule/guest-ui/guest.css`).
+- `node --test` sur borne-web ne doit PAS traverser le barrel JSX : `apps/borne/web/test/design.test.js` importe `utils/design.js` → `@kapsule/guest-ui/design` (sans JSX). Un test qui importerait le barrel racine planterait « Unknown file extension .jsx ».
+- Non-régression du parcours invité borne : `RecordingScreen` monté sans `showcase` (défaut false) — gardes `if(showcase) return` inertes, aucun changement de comportement caméra/upload attendu.
+- Injection `createSession`/`onFinishSession`/`uploadVideo`/`guestVideoUrl` : le runtime borne doit rester identique (indirection pure, `resolveAssetUrl` par défaut = identité).
+- Pas de smoke-test requis : aucun fichier infra/docker/nginx touché.
 
 ## Corrections demandées
 
 > Cette section est lue par l'agent principal pour implémenter les corrections.
 > Chaque item est coché par l'agent principal une fois corrigé.
 
-- [ ] ⚠️ `apps/hub/web/Dockerfile:7,12` — ajouter `COPY packages/guest-ui/package.json ./packages/guest-ui/` avant `npm ci` et `COPY packages/guest-ui/src ./packages/guest-ui/src` avant `npm run build` (calquer sur les lignes `packages/core`). Sinon le build vite Docker ne résoudra pas `@kapsule/guest-ui` dès le premier import réel (lots C/D/E).
-- [ ] ⚠️ `apps/borne/web/Dockerfile:7,12` — même correction : copier `packages/guest-ui/package.json` puis `packages/guest-ui/src` avant, respectivement, `npm ci` et `npm run build`.
-- [ ] ⚠️ `apps/borne/web/Dockerfile.preview:9,14` — même correction (image borne preview, exposée publiquement).
-- [ ] ⚠️ `PROJET.md:95` — la §4 arborescence (contractuelle) ne liste que `packages/core/` ; ajouter `packages/guest-ui/` (@kapsule/guest-ui — écrans invité React partagés) pour lever l'écart doc introduit par ce lot.
+- [ ] ⚠️ `PROJET.md:148` — l'arborescence §4 (contractuelle) liste toujours `apps/borne/web/src/hooks/useMediaRecorder.js`, supprimé par ce diff. Le retirer et mentionner que le hook vit désormais dans `packages/guest-ui/src/useMediaRecorder.js`.
+- [ ] ⚠️ `PROJET.md:153-159` — l'arborescence §4 (contractuelle) liste toujours le dossier `apps/borne/web/src/components/guest/` et ses 6 écrans (`StartScreen`, `NameInput`, `QuestionNav`, `RecordingScreen`, `RecapScreen`, `ThankYouScreen`), supprimés par ce diff. Retirer ce bloc et renvoyer vers `packages/guest-ui/src/screens/` (déjà décrit au §4 guest-ui). Noter que `QuestionSheet` n'était de toute façon pas listé dans l'ancien bloc.

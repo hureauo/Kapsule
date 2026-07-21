@@ -2,8 +2,12 @@
   "name": "@kapsule/guest-ui",
   "version": "0.0.1",
   "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "exports": {
     ".": "./src/index.js",
+    "./design": "./src/design.js",
     "./guest.css": "./src/guest.css"
   },
   "peerDependencies": {
