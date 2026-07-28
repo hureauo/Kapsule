@@ -78,5 +78,11 @@ server {
         proxy_set_header   X-Forwarded-Proto $scheme;
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
+        # Pas de buffering : ce hop est le premier d'une chaîne à deux proxies
+        # (edge → preview-nginx → backend) pour les uploads vidéo invité. Sans
+        # ça, l'edge bufferise tout le corps de la requête avant de le
+        # transmettre, contrairement à borne-nginx.conf (borne réelle, un seul
+        # hop) et preview-nginx.conf (2e hop) qui l'ont déjà désactivé.
+        proxy_request_buffering off;
     }
 }

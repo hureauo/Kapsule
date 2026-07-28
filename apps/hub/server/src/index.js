@@ -34,7 +34,14 @@ export function createApp(dataDir, opts = {}, { docker, resolvePreviewBase, mail
 
   const app = express();
   app.set('trust proxy', 1);
-  app.use(express.json({ limit: '1mb' }));
+  // Jamais monté sur les deux routes multipart de sync.js (PUT .../files/:videoId
+  // et PUT .../db) : elles sont gérées par multer, qui parse le corps lui-même —
+  // un parseur JSON global sur ces chemins n'a aucune utilité et ne doit pas
+  // pouvoir interagir avec un flux binaire volumineux (vidéo poussée par la borne).
+  app.use((req, res, next) => {
+    if (/^\/api\/sync\/events\/[^/]+\/(files\/[^/]+|db)$/.test(req.path)) return next();
+    return express.json({ limit: '1mb' })(req, res, next);
+  });
 
   app.use('/api/auth', makeAuthRouter({ mailer: mail }));
   app.use('/api/events', makeEventsRouter(dataDir, { docker }));

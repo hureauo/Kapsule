@@ -28,7 +28,14 @@ export function createApp(dataDir, cfg = config) {
 
   const app = express();
   app.set('trust proxy', 1);
-  app.use(express.json({ limit: '1mb' }));
+  // Jamais monté sur /api/videos : POST /videos est un upload multipart géré
+  // par multer (voir routes/videos.js), qui parse le corps lui-même — un
+  // parseur JSON global sur ce chemin n'a aucune utilité et ne doit pas
+  // pouvoir interagir avec un flux binaire volumineux.
+  app.use((req, res, next) => {
+    if (req.path.startsWith('/api/videos')) return next();
+    return express.json({ limit: '1mb' })(req, res, next);
+  });
 
   const routerCfg = { ...cfg, requireAdmin: requireAdmin(cfg), requireTech: requireTech(cfg) };
   app.post('/api/admin/login', loginLimiter, makeAuthRouter(cfg, dataDir));
