@@ -6,19 +6,22 @@ import rateLimit from 'express-rate-limit';
 import argon2 from 'argon2';
 import { sha256File } from '@kapsule/core/src/checksum.js';
 import { LIMITS, isValidAssetFilename } from '@kapsule/core';
-import { getDb, getEvent, updateEvent, insertSyncLog, getUserByEmail } from '../registry.js';
+import {
+  getDb, getEvent, updateEvent, insertSyncLog, getUserByEmail,
+  updateBorneHeartbeat, claimPendingCommands, completeBorneCommand, getBorneCommandById,
+} from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { applyEventConfig } from '../eventConfig.js';
-import { requireBox } from '../middleware/boxAuth.js';
+import { requireBox, boxHasEventAccess } from '../middleware/boxAuth.js';
 import { validateUuidParams } from '../middleware/validateParams.js';
 
 // Format : [hub/sync] ← METHOD /path  token=abc…  detail  → status résultat
 function syncLog(req, status, detail = '') {
   const token = (req.headers['x-box-token'] ?? '').slice(0, 8) || '?';
-  const event = req.box?.event_id?.slice(0, 8) ?? '?';
+  const scope = req.box?.kind === 'borne' ? `borne=${req.box.borne_id.slice(0, 8)}` : `event=${req.box?.event_id?.slice(0, 8) ?? '?'}`;
   const ok = status < 400;
   const icon = ok ? '✓' : '✗';
-  const parts = [`[hub/sync] ${icon} ${req.method} ${req.path}`, `token=${token}…`, `event=${event}…`, `→ ${status}`];
+  const parts = [`[hub/sync] ${icon} ${req.method} ${req.path}`, `token=${token}…`, `${scope}…`, `→ ${status}`];
   if (detail) parts.push(detail);
   console.log(parts.join('  '));
 }
@@ -95,7 +98,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const db = getDb();
       const event = getEvent(db, req.params.id);
       if (!event) { syncLog(req, 404); return res.status(404).json({ error: 'Événement introuvable' }); }
-      if (req.params.id !== req.box.event_id) { syncLog(req, 403); return res.status(403).json({ error: 'Non assigné à cette borne' }); }
+      if (!boxHasEventAccess(req.box, req.params.id)) { syncLog(req, 403); return res.status(403).json({ error: 'Non assigné à cette borne' }); }
 
       const CONTENT_FROZEN = new Set(['ready', 'live', 'closed', 'pushed', 'processed', 'waiting']);
       if (CONTENT_FROZEN.has(event.status)) {
@@ -123,6 +126,9 @@ export function makeSyncRouter(dataDir, opts = {}) {
   // La borne n'a ainsi jamais à stocker ni divulguer la liste des emails assignés.
   // Déclarée avant GET /event pour éviter tout conflit de routing.
   router.post('/event/login', rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, skip: () => opts.skipRateLimits === true }), async (req, res) => {
+    if (req.box.kind === 'borne') {
+      return res.status(400).json({ error: 'Route réservée aux tokens preview' });
+    }
     const { email, password } = req.body ?? {};
     if (!email || !password) {
       syncLog(req, 400, 'email ou password manquant');
@@ -169,8 +175,12 @@ export function makeSyncRouter(dataDir, opts = {}) {
   });
 
   // ── GET /api/sync/event ───────────────────────────────────────────────────
-  // Remplace GET /assigned (liste) — un token = un événement (§11.20)
+  // Réservée aux tokens preview (token = événement, §11.20) — une borne physique
+  // a plusieurs événements assignés, elle utilise GET /api/sync/borne/events.
   router.get('/event', (req, res) => {
+    if (req.box.kind === 'borne') {
+      return res.status(400).json({ error: 'Route réservée aux tokens preview — utilisez GET /api/sync/borne/events' });
+    }
     const db = getDb();
     const event = getEvent(db, req.box.event_id);
     if (!event) {
@@ -206,7 +216,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const event = getEvent(db, req.params.id);
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
       // Invariant §11.20 : un token ne peut tirer que son propre événement
-      if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Token non autorisé sur cet événement' });
+      if (!boxHasEventAccess(req.box, req.params.id)) return res.status(403).json({ error: 'Token non autorisé sur cet événement' });
       const pullableStatuses = req.box.is_preview ? ['preview'] : ['ready', 'loaded'];
       if (!pullableStatuses.includes(event.status)) {
         return res.status(409).json({ error: `Statut ${event.status} — bundle non disponible` });
@@ -302,7 +312,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
   // paramètre d'URL pour construire un chemin sans l'avoir confronté au disque.
   router.get('/events/:id/design/:filename', validateUuidParams('id'), (req, res, next) => {
     try {
-      if (req.params.id !== req.box.event_id) {
+      if (!boxHasEventAccess(req.box, req.params.id)) {
         return res.status(403).json({ error: 'Token non autorisé sur cet événement' });
       }
 
@@ -337,7 +347,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const db = getDb();
       const event = getEvent(db, req.params.id);
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-      if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Non assigné à cette borne' });
+      if (!boxHasEventAccess(req.box, req.params.id)) return res.status(403).json({ error: 'Non assigné à cette borne' });
 
       if (statusRank(status) <= statusRank(event.status)) {
         syncLog(req, 409, `transition ${event.status}→${status} refusée`);
@@ -362,7 +372,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const db = getDb();
       const event = getEvent(db, req.params.id);
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-      if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Non assigné à cette borne' });
+      if (!boxHasEventAccess(req.box, req.params.id)) return res.status(403).json({ error: 'Non assigné à cette borne' });
       if (!['closed', 'pushed'].includes(event.status)) {
         return res.status(409).json({ error: `Statut ${event.status} — push non disponible (événement non clôturé)` });
       }
@@ -403,7 +413,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
         try { unlinkSync(req.file.path); } catch {}
         return res.status(404).json({ error: 'Événement introuvable' });
       }
-      if (req.params.id !== req.box.event_id) {
+      if (!boxHasEventAccess(req.box, req.params.id)) {
         try { unlinkSync(req.file.path); } catch {}
         return res.status(403).json({ error: 'Non assigné à cette borne' });
       }
@@ -449,7 +459,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
         try { unlinkSync(req.file.path); } catch {}
         return res.status(404).json({ error: 'Événement introuvable' });
       }
-      if (req.params.id !== req.box.event_id) {
+      if (!boxHasEventAccess(req.box, req.params.id)) {
         try { unlinkSync(req.file.path); } catch {}
         return res.status(403).json({ error: 'Non assigné à cette borne' });
       }
@@ -499,7 +509,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const db = getDb();
       const event = getEvent(db, req.params.id);
       if (!event) return res.status(404).json({ error: 'Événement introuvable' });
-      if (req.params.id !== req.box.event_id) return res.status(403).json({ error: 'Non assigné à cette borne' });
+      if (!boxHasEventAccess(req.box, req.params.id)) return res.status(403).json({ error: 'Non assigné à cette borne' });
       if (!['closed', 'pushed'].includes(event.status)) {
         return res.status(409).json({ error: `Statut ${event.status} — finalize non disponible` });
       }
@@ -562,6 +572,90 @@ export function makeSyncRouter(dataDir, opts = {}) {
     } catch (err) {
       next(err);
     }
+  });
+
+  // ── GET /api/sync/borne/events ────────────────────────────────────────────
+  // Réservée aux tokens borne (machine physique, plusieurs événements assignés).
+  // Remplace GET /event pour ce cas — même règle de statuts pullables qu'un
+  // token réel (un token borne n'est jamais preview, cf. requireBox).
+  router.get('/borne/events', (req, res) => {
+    if (req.box.kind !== 'borne') {
+      return res.status(400).json({ error: 'Route réservée aux bornes physiques — utilisez GET /api/sync/event pour un token preview' });
+    }
+    const db = getDb();
+    const events = req.box.event_ids
+      .map((id) => getEvent(db, id))
+      .filter((event) => event && ['ready', 'loaded'].includes(event.status))
+      .map((event) => ({ id: event.id, name: event.name, event_date: event.event_date, status: event.status, updated_at: event.updated_at }));
+
+    syncLog(req, 200, `events=${events.length}`);
+    res.json({ events });
+  });
+
+  // ── POST /api/sync/borne/heartbeat ────────────────────────────────────────
+  // body: { agent_version, disk: {free, total}, borne_time_ms, active_event_id }
+  // Écrit la télémétrie du battement courant et retourne les commandes en
+  // attente (marquées 'sent' dans la foulée — cf. claimPendingCommands). Ne
+  // touche JAMAIS au statut d'un événement : la transition ready→loaded reste
+  // portée par /events/:id/bundle, par événement (§11.10).
+  //
+  // clock_skew_ms est calculé ICI, côté Hub, PAS transmis par la borne : sans
+  // RTC (§11.16), la borne n'a aucune horloge de référence fiable — c'est le
+  // Hub (VPS, horloge fiable) qui compare son Date.now() au borne_time_ms reçu.
+  router.post('/borne/heartbeat', (req, res, next) => {
+    try {
+      if (req.box.kind !== 'borne') {
+        return res.status(400).json({ error: 'Route réservée aux bornes physiques' });
+      }
+      const db = getDb();
+      const { agent_version, disk, borne_time_ms, active_event_id } = req.body ?? {};
+      const clock_skew_ms = typeof borne_time_ms === 'number' ? Date.now() - borne_time_ms : null;
+      // agent_version : chaîne libre venue du réseau — typée et bornée en
+      // longueur avant stockage (purement informatif, jamais interprété).
+      const safeAgentVersion = typeof agent_version === 'string' ? agent_version.slice(0, 64) : null;
+      // active_event_id : ne conserver que s'il fait partie des événements
+      // assignés à CETTE borne (§11.20) — une valeur hors scope est ignorée
+      // plutôt que stockée telle quelle.
+      const safeActiveEventId = typeof active_event_id === 'string' && req.box.event_ids.includes(active_event_id)
+        ? active_event_id
+        : null;
+      updateBorneHeartbeat(db, req.box.borne_id, {
+        agent_version: safeAgentVersion,
+        disk_free_bytes: disk?.free ?? null,
+        disk_total_bytes: disk?.total ?? null,
+        clock_skew_ms,
+        active_event_id: safeActiveEventId,
+      });
+
+      const commands = claimPendingCommands(db, req.box.borne_id).map((c) => ({
+        id: c.id, type: c.type, payload: c.payload ? JSON.parse(c.payload) : null,
+      }));
+
+      syncLog(req, 200, `commands=${commands.length}`);
+      res.json({ commands });
+    } catch (err) { next(err); }
+  });
+
+  // ── POST /api/sync/borne/commands/:id/result ──────────────────────────────
+  router.post('/borne/commands/:id/result', (req, res) => {
+    if (req.box.kind !== 'borne') {
+      return res.status(400).json({ error: 'Route réservée aux bornes physiques' });
+    }
+    const { status, result } = req.body ?? {};
+    if (!['done', 'failed'].includes(status)) {
+      return res.status(400).json({ error: 'status doit être done ou failed' });
+    }
+
+    const db = getDb();
+    const command = getBorneCommandById(db, req.params.id);
+    // §11.20 (Phase B) : une borne ne peut acquitter qu'une commande qui lui est adressée.
+    if (!command || command.borne_id !== req.box.borne_id) {
+      return res.status(404).json({ error: 'Commande introuvable' });
+    }
+
+    completeBorneCommand(db, { id: req.params.id, status, result });
+    syncLog(req, 200, `command=${req.params.id}  status=${status}`);
+    res.json({ ok: true });
   });
 
   return router;

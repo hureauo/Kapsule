@@ -11,6 +11,7 @@ import { createApp } from '../src/index.js';
 import {
   getDb, closeRegistry, insertUser, insertBoxToken, getBoxTokenByHash, getEvent,
   upsertEventUser, deleteEventUser, updateEvent,
+  insertBorne, getBorneByHash, assignBorneEvent, insertBorneCommand, listBorneCommands,
 } from '../src/registry.js';
 import { closeAllEventDbs, openEventDb, cacheSize } from '../src/eventStore.js';
 
@@ -810,5 +811,177 @@ describe("limite de taille d'upload sync (anti-DoS disque)", () => {
       .set('X-Box-Token', smallBoxToken)
       .attach('file', ok, 'small.mp4');
     assert.equal(res.status, 200);
+  });
+});
+
+// ── Phase B — bornes physiques (token = machine, plusieurs événements) ────────
+// requireBox doit résoudre box_tokens ET bornes ; les routes preview existantes
+// (GET /event, POST /event/login, bundle, manifest, files, db, finalize) ne
+// doivent PAS changer de comportement pour un token preview — c'est la
+// non-régression vérifiée ci-dessous, avec des fixtures locales à ce bloc
+// (indépendantes du eventId/boxToken globaux, mutés par les describes précédents).
+
+describe('Phase B — bornes physiques (requireBox résout box_tokens ET bornes)', () => {
+  let previewToken, previewEventId; // fixture preview LOCALE, pour la non-régression
+  let borneToken, borneId, borneEventId;
+
+  before(async () => {
+    const db = getDb();
+
+    // Fixture preview locale, jamais mutée par les autres describes du fichier.
+    const evPreview = await request.post('/api/events')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Événement preview (non-régression Phase B)' });
+    previewEventId = evPreview.body.id;
+    await request.put(`/api/events/${previewEventId}/status`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ status: 'ready' });
+    const rawPreview = randomBytes(32).toString('hex');
+    insertBoxToken(db, {
+      event_id: previewEventId,
+      token_hash: createHash('sha256').update(rawPreview).digest('hex'),
+      token_clear: rawPreview,
+      label: 'Preview non-régression',
+    });
+    previewToken = rawPreview;
+
+    // Une borne physique, avec un événement assigné amené à 'ready'.
+    const evBorne = await request.post('/api/events')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Événement Borne Physique' });
+    borneEventId = evBorne.body.id;
+    await request.put(`/api/events/${borneEventId}/status`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ status: 'ready' });
+
+    const rawBorne = randomBytes(32).toString('hex');
+    borneId = 'borne-sync-test';
+    insertBorne(db, {
+      id: borneId, name: 'Borne Test',
+      token_hash: createHash('sha256').update(rawBorne).digest('hex'),
+      token_clear: rawBorne,
+    });
+    assignBorneEvent(db, { borne_id: borneId, event_id: borneEventId });
+    borneToken = rawBorne;
+  });
+
+  it('non-régression : GET /api/sync/event marche toujours pour un token preview', async () => {
+    const res = await request.get('/api/sync/event').set('X-Box-Token', previewToken);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.id, previewEventId);
+  });
+
+  it('un token borne inconnu retourne 401', async () => {
+    const res = await request.get('/api/sync/borne/events').set('X-Box-Token', 'inconnu');
+    assert.equal(res.status, 401);
+  });
+
+  it('une borne désactivée (active=0) est rejetée avec 401', async () => {
+    const db = getDb();
+    db.prepare('UPDATE bornes SET active = 0 WHERE id = ?').run(borneId);
+    const res = await request.get('/api/sync/borne/events').set('X-Box-Token', borneToken);
+    assert.equal(res.status, 401);
+    db.prepare('UPDATE bornes SET active = 1 WHERE id = ?').run(borneId);
+  });
+
+  it('GET /api/sync/borne/events liste les événements pullables assignés à la borne', async () => {
+    const res = await request.get('/api/sync/borne/events').set('X-Box-Token', borneToken);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.events.length, 1);
+    assert.equal(res.body.events[0].id, borneEventId);
+    assert.equal(res.body.events[0].status, 'ready');
+  });
+
+  it('GET /api/sync/event (route preview) refuse un token borne (400)', async () => {
+    const res = await request.get('/api/sync/event').set('X-Box-Token', borneToken);
+    assert.equal(res.status, 400);
+  });
+
+  it('GET /api/sync/borne/events refuse un token preview (400)', async () => {
+    const res = await request.get('/api/sync/borne/events').set('X-Box-Token', previewToken);
+    assert.equal(res.status, 400);
+  });
+
+  it('un token borne peut puller le bundle d\'un événement qui lui est assigné', async () => {
+    const res = await request.get(`/api/sync/events/${borneEventId}/bundle`).set('X-Box-Token', borneToken);
+    assert.equal(res.status, 200);
+    const updated = getEvent(getDb(), borneEventId);
+    assert.equal(updated.status, 'loaded', 'ready→loaded doit se déclencher pour un token borne aussi');
+  });
+
+  it('un token borne reçoit 403 sur un événement qui ne lui est PAS assigné', async () => {
+    const res = await request.get(`/api/sync/events/${previewEventId}/bundle`).set('X-Box-Token', borneToken);
+    assert.equal(res.status, 403);
+  });
+
+  it('POST /api/sync/borne/heartbeat écrit la télémétrie et retourne les commandes en attente', async () => {
+    const db = getDb();
+    insertBorneCommand(db, { borne_id: borneId, type: 'pull' });
+
+    const res = await request.post('/api/sync/borne/heartbeat')
+      .set('X-Box-Token', borneToken)
+      .send({ agent_version: '1.2.3', disk: { free: 111, total: 222 }, borne_time_ms: Date.now() - 3000, active_event_id: borneEventId });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.commands.length, 1);
+    assert.equal(res.body.commands[0].type, 'pull');
+
+    const borneRow = getBorneByHash(db, createHash('sha256').update(borneToken).digest('hex'));
+    assert.equal(borneRow.agent_version, '1.2.3');
+    assert.equal(borneRow.disk_free_bytes, 111);
+    assert.equal(borneRow.active_event_id, borneEventId);
+    assert.ok(borneRow.last_seen_at !== null);
+    // clock_skew_ms calculé côté Hub (Date.now() - borne_time_ms) — pas transmis
+    // tel quel par la borne (§11.16, pas d'horloge de référence locale fiable).
+    assert.equal(typeof borneRow.clock_skew_ms, 'number');
+    assert.ok(borneRow.clock_skew_ms >= 2000 && borneRow.clock_skew_ms < 10000, `skew plausible ~3000ms, reçu ${borneRow.clock_skew_ms}`);
+  });
+
+  it('POST /api/sync/borne/heartbeat ne renvoie pas deux fois la même commande', async () => {
+    const res = await request.post('/api/sync/borne/heartbeat').set('X-Box-Token', borneToken).send({});
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.commands, []);
+  });
+
+  it('POST /api/sync/borne/heartbeat refuse un token preview (400)', async () => {
+    const res = await request.post('/api/sync/borne/heartbeat').set('X-Box-Token', previewToken).send({});
+    assert.equal(res.status, 400);
+  });
+
+  it('POST /api/sync/borne/commands/:id/result marque la commande terminée', async () => {
+    const db = getDb();
+    const target = listBorneCommands(db, borneId).find((c) => c.type === 'pull');
+
+    const res = await request.post(`/api/sync/borne/commands/${target.id}/result`)
+      .set('X-Box-Token', borneToken)
+      .send({ status: 'done', result: { ok: true } });
+    assert.equal(res.status, 200);
+
+    const updated = listBorneCommands(db, borneId).find((c) => c.id === target.id);
+    assert.equal(updated.status, 'done');
+  });
+
+  it('POST /api/sync/borne/commands/:id/result retourne 404 pour une commande d\'une autre borne', async () => {
+    const db = getDb();
+    const otherId = 'borne-sync-other';
+    const rawOther = randomBytes(32).toString('hex');
+    insertBorne(db, {
+      id: otherId, name: 'Autre borne',
+      token_hash: createHash('sha256').update(rawOther).digest('hex'), token_clear: rawOther,
+    });
+    const otherCmd = insertBorneCommand(db, { borne_id: otherId, type: 'pull' });
+
+    const res = await request.post(`/api/sync/borne/commands/${otherCmd.lastInsertRowid}/result`)
+      .set('X-Box-Token', borneToken)
+      .send({ status: 'done' });
+    assert.equal(res.status, 404);
+  });
+
+  it('POST /api/sync/borne/commands/:id/result retourne 400 pour un status invalide', async () => {
+    const db = getDb();
+    const cmd = insertBorneCommand(db, { borne_id: borneId, type: 'close_event' });
+    const res = await request.post(`/api/sync/borne/commands/${cmd.lastInsertRowid}/result`)
+      .set('X-Box-Token', borneToken)
+      .send({ status: 'bogus' });
+    assert.equal(res.status, 400);
   });
 });
