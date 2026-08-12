@@ -1,7 +1,6 @@
-// Helpers partagés entre les suites de tests borne — auth 7C
+// Helpers partagés entre les suites de tests borne — auth 7C, PIN partagé Phase C
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import argon2 from 'argon2';
 import { insertEvent, setActiveEvent, getRegistry } from '../src/registry.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 
@@ -12,8 +11,12 @@ export const TEST_CFG = {
   skipRateLimits: true,
 };
 
-// Crée un événement 'ev-seed' actif avec deux users : admin_borne + tech_borne.
-// À appeler après openRegistry (via createApp).
+export const SEED_ADMIN_PIN = '111111';
+export const SEED_TECH_PIN  = '222222';
+
+// Crée un événement 'ev-seed' actif avec ses PIN admin_borne/tech_borne
+// (event_meta.admin_pin / tech_pin — plus de compte nominatif pour ces rôles,
+// cf. PROJET.md). À appeler après openRegistry (via createApp).
 export async function seedAuthUsers(dir) {
   insertEvent({ id: 'ev-seed', name: 'Seed Auth', origin: 'hub', status: 'loaded' });
   setActiveEvent('ev-seed');
@@ -21,16 +24,8 @@ export async function seedAuthUsers(dir) {
   const eventDir = join(dir, 'events', 'ev-seed');
   mkdirSync(eventDir, { recursive: true });
   const edb = createEventDb(join(eventDir, 'db.sqlite'));
-
-  const hashAdmin = await argon2.hash('admin-test', { type: argon2.argon2id });
-  const hashTech  = await argon2.hash('tech-test',  { type: argon2.argon2id });
-
-  edb.prepare('INSERT INTO event_users (email, password_hash, roles) VALUES (?, ?, ?)').run(
-    'admin@borne.test', hashAdmin, JSON.stringify(['admin_borne'])
-  );
-  edb.prepare('INSERT INTO event_users (email, password_hash, roles) VALUES (?, ?, ?)').run(
-    'tech@borne.test', hashTech, JSON.stringify(['tech_borne'])
-  );
+  edb.prepare("INSERT INTO event_meta (key, value) VALUES ('admin_pin', ?)").run(SEED_ADMIN_PIN);
+  edb.prepare("INSERT INTO event_meta (key, value) VALUES ('tech_pin', ?)").run(SEED_TECH_PIN);
   edb.close();
 }
 
@@ -40,18 +35,14 @@ export function clearSeedEvent() {
   getRegistry().prepare("DELETE FROM local_events WHERE id = 'ev-seed'").run();
 }
 
-// Connecte l'utilisateur admin_borne et retourne le token.
+// Connecte avec le PIN admin_borne et retourne le token.
 export async function loginAdmin(app, request) {
-  const res = await request(app)
-    .post('/api/admin/login')
-    .send({ email: 'admin@borne.test', password: 'admin-test' });
+  const res = await request(app).post('/api/admin/login').send({ pin: SEED_ADMIN_PIN });
   return res.body.token;
 }
 
-// Connecte l'utilisateur tech_borne et retourne le token.
+// Connecte avec le PIN tech_borne et retourne le token.
 export async function loginTech(app, request) {
-  const res = await request(app)
-    .post('/api/admin/login')
-    .send({ email: 'tech@borne.test', password: 'tech-test' });
+  const res = await request(app).post('/api/admin/login').send({ pin: SEED_TECH_PIN });
   return res.body.token;
 }

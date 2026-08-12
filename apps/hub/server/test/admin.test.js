@@ -753,9 +753,9 @@ describe('event_users — gestion des utilisateurs par événement', () => {
   it('POST assigne un user avec rôles (201)', async () => {
     const res = await request.post(`/api/admin/events/${eventId}/users`)
       .set('Authorization', `Bearer ${tokenAdmin}`)
-      .send({ user_id: clientUserId, roles: ['tech_borne'] });
+      .send({ user_id: clientUserId, roles: ['general'] });
     assert.equal(res.status, 201);
-    assert.deepEqual(res.body.roles, ['tech_borne']);
+    assert.deepEqual(res.body.roles, ['general']);
   });
 
   it('GET retourne le user assigné avec ses rôles', async () => {
@@ -764,7 +764,7 @@ describe('event_users — gestion des utilisateurs par événement', () => {
     assert.equal(res.status, 200);
     assert.equal(res.body.length, 1);
     assert.equal(res.body[0].user_id, clientUserId);
-    assert.deepEqual(res.body[0].roles, ['tech_borne']);
+    assert.deepEqual(res.body[0].roles, ['general']);
   });
 
   it('POST retourne 400 si roles invalide', async () => {
@@ -778,6 +778,13 @@ describe('event_users — gestion des utilisateurs par événement', () => {
     const res = await request.post(`/api/admin/events/${eventId}/users`)
       .set('Authorization', `Bearer ${tokenAdmin}`)
       .send({ user_id: clientUserId, roles: ['admin_borne'] });
+    assert.equal(res.status, 400);
+  });
+
+  it('POST retourne 400 pour tech_borne (rôle passé au PIN partagé, plus assignable)', async () => {
+    const res = await request.post(`/api/admin/events/${eventId}/users`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ user_id: clientUserId, roles: ['tech_borne'] });
     assert.equal(res.status, 400);
   });
 

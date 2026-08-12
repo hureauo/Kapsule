@@ -405,9 +405,9 @@ export function makeAdminRouter(dataDir, { mailer } = {}) {
     if (!user_id) return res.status(400).json({ error: 'user_id requis' });
     if (!Array.isArray(roles) || roles.length === 0) return res.status(400).json({ error: 'roles requis (tableau non vide)' });
 
-    // admin_borne n'est plus assignable : rôle remplacé par le code PIN
-    // partagé (event_meta.admin_pin).
-    const VALID_ROLES = ['tech_borne', 'general'];
+    // admin_borne et tech_borne ne sont plus assignables : rôles remplacés par
+    // les codes PIN partagés (event_meta.admin_pin / tech_pin).
+    const VALID_ROLES = ['general'];
     const invalid = roles.filter(r => !VALID_ROLES.includes(r));
     if (invalid.length > 0) return res.status(400).json({ error: `Rôles invalides : ${invalid.join(', ')}` });
 

@@ -10,7 +10,7 @@ import {
 import {
   getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog, upsertEventUser,
   getUserByEmail, insertUser, createRegistrationToken, listUsers, getDesign,
-  setEventDesignRef, deleteEventDesignRef, listEventBornes,
+  setEventDesignRef, deleteEventDesignRef, listEventBornes, getEventUser,
 } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { META_KEYS, applyEventConfig } from '../eventConfig.js';
@@ -164,13 +164,53 @@ const MANUAL_TRANSITIONS = new Map([
   ['ready',   new Set(['preview'])],
 ]);
 
+// Backfill : un événement créé avant l'introduction de tech_pin (Phase C) ou
+// même d'admin_pin n'a pas ces clés en event_meta. Sans ça, le formulaire Design
+// relit une valeur vide et la renvoie telle quelle au PUT suivant, qui la rejette
+// (400, « doit être un code à 6 chiffres ») et bloque TOUTE la sauvegarde du
+// design — pas seulement le PIN. Génère et persiste ce qui manque, une fois.
+function ensurePins(edb) {
+  const present = new Set(
+    edb.prepare("SELECT key FROM event_meta WHERE key IN ('admin_pin', 'tech_pin')").all().map(r => r.key)
+  );
+  const missing = ['admin_pin', 'tech_pin'].filter(k => !present.has(k));
+  if (missing.length === 0) return;
+  // OR IGNORE : deux requêtes concurrentes sur le même événement fraîchement migré
+  // ne doivent jamais lever (collision de clé primaire) — la perdante retombe sur
+  // la valeur écrite par la gagnante au lieu de faire échouer tout withMeta().
+  const ins = edb.prepare('INSERT OR IGNORE INTO event_meta (key, value) VALUES (?, ?)');
+  for (const key of missing) {
+    ins.run(key, String(randomInt(0, 1_000_000)).padStart(6, '0'));
+  }
+}
+
+// Un membre event_users dont les rôles se limitent à 'general' (auth wall preview,
+// §11.24) passe requireOwner — qui ne regarde que l'EXISTENCE de la ligne, pas son
+// contenu — avec les mêmes droits qu'un vrai propriétaire. Ce n'est pas nouveau,
+// mais depuis Phase C, event_meta porte des secrets (admin_pin/tech_pin, codes
+// d'accès à la console borne physique) qu'un tel compte ne doit JAMAIS voir ni
+// modifier — ce sont des identifiants de la borne, pas du contenu événement.
+function isGeneralOnlyMember(db, req) {
+  if (req.user.role === 'superuser') return false;
+  const eventId = req.event?.id ?? req.params.eventId;
+  const membership = getEventUser(db, { event_id: eventId, user_id: req.user.sub });
+  if (!membership) return false;
+  const roles = JSON.parse(membership.roles ?? '[]');
+  return roles.length > 0 && roles.every(r => r === 'general');
+}
+
 // Enrichit un événement avec ses event_meta (thème, textes, idle_timeout).
-// Retourne null si l'event_meta n'existe pas encore (événement tout juste créé).
-function withMeta(event, dataDir) {
+// redactPins : retire admin_pin/tech_pin de la réponse (cf. isGeneralOnlyMember).
+function withMeta(event, dataDir, { redactPins = false } = {}) {
   try {
     const edb = openEventDb(event.id, dataDir);
+    ensurePins(edb);
     const rows = edb.prepare('SELECT key, value FROM event_meta').all();
     const meta = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    if (redactPins) {
+      delete meta.admin_pin;
+      delete meta.tech_pin;
+    }
     return { ...event, meta };
   } catch {
     return event;
@@ -200,21 +240,23 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       const db = getDb();
       insertEvent(db, { id, name: name.trim(), event_date: event_date ?? null });
 
-      // Assigne le créateur avec tech_borne (admin_borne est passé au PIN partagé,
-      // event_meta.admin_pin — plus de compte nominatif pour ce rôle)
-      upsertEventUser(db, { event_id: id, user_id: req.user.sub, roles: ['tech_borne'] });
+      // Rôles borne vides : admin_borne et tech_borne sont tous deux passés au PIN
+      // partagé (event_meta.admin_pin / tech_pin) — plus de compte nominatif pour ces
+      // rôles. L'assignation ne sert plus qu'à l'accès Hub (requireOwner, §11.19).
+      upsertEventUser(db, { event_id: id, user_id: req.user.sub, roles: [] });
 
-      // Assigne tous les superusers actifs avec les rôles borne restants
+      // Assigne tous les superusers actifs (accès Hub, rôle 'general' pour la preview)
       const superusers = listUsers(db).filter(u => u.role === 'superuser' && u.active && u.id !== req.user.sub);
       for (const su of superusers) {
-        upsertEventUser(db, { event_id: id, user_id: su.id, roles: ['tech_borne', 'general'] });
+        upsertEventUser(db, { event_id: id, user_id: su.id, roles: ['general'] });
       }
 
-      // Initialise db.sqlite avec le schéma, puis génère le code d'accès client
-      // (6 chiffres, cf. META_KEYS) — visible/régénérable depuis l'onglet Design.
+      // Initialise db.sqlite avec le schéma, puis génère les codes d'accès partagés
+      // (6 chiffres chacun, cf. META_KEYS) — visibles/régénérables depuis l'onglet Design.
       const evDb = openEventDb(id, dataDir);
       const admin_pin = String(randomInt(0, 1_000_000)).padStart(6, '0');
-      applyEventConfig(evDb, { mode: 'overwrite', meta: { admin_pin } });
+      const tech_pin = String(randomInt(0, 1_000_000)).padStart(6, '0');
+      applyEventConfig(evDb, { mode: 'overwrite', meta: { admin_pin, tech_pin } });
 
       // Provision automatique de la borne preview dès la création (statut démarre en preview)
       try {
@@ -232,7 +274,8 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
 
   // ── GET /api/events/:eventId ───────────────────────────────────────────────
   router.get('/:eventId', requireUser, requireOwner, (req, res) => {
-    res.json(withMeta(req.event, dataDir));
+    const redactPins = isGeneralOnlyMember(getDb(), req);
+    res.json(withMeta(req.event, dataDir, { redactPins }));
   });
 
   // ── PUT /api/events/:eventId ───────────────────────────────────────────────
@@ -242,14 +285,19 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       if (isContentFrozen(event.status)) {
         return res.status(409).json({ error: `Édition impossible : événement en statut ${event.status}` });
       }
+      const db0 = getDb();
+      const redactPins = isGeneralOnlyMember(db0, req);
       const { name, event_date } = req.body;
       const fields = {};
       if (name !== undefined) fields.name = name;
       if (event_date !== undefined) fields.event_date = event_date;
 
       // Champs event_meta : thème, textes du parcours, idle_timeout, consent_text,
-      // video_quality, video_orientation, admin_pin
-      const { theme, idle_timeout, video_quality, video_orientation, admin_pin } = req.body;
+      // video_quality, video_orientation, admin_pin, tech_pin
+      const { theme, idle_timeout, video_quality, video_orientation, admin_pin, tech_pin } = req.body;
+      if (redactPins && (admin_pin !== undefined || tech_pin !== undefined)) {
+        return res.status(403).json({ error: 'Réservé au propriétaire ou à un superuser' });
+      }
       if (theme !== undefined && !THEMES.includes(theme)) {
         return res.status(400).json({ error: `Thème invalide : ${theme}` });
       }
@@ -261,6 +309,9 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       }
       if (admin_pin !== undefined && !/^\d{6}$/.test(admin_pin)) {
         return res.status(400).json({ error: 'admin_pin doit être un code à 6 chiffres' });
+      }
+      if (tech_pin !== undefined && !/^\d{6}$/.test(tech_pin)) {
+        return res.status(400).json({ error: 'tech_pin doit être un code à 6 chiffres' });
       }
       const metaKeys = META_KEYS.filter(k => req.body[k] !== undefined);
       if (metaKeys.length > 0) {
@@ -278,7 +329,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       const edb = openEventDb(event.id, dataDir);
       captureSnapshot(db, edb, { event_id: event.id, author: resolveAuthor(db, req.user) });
 
-      res.json(withMeta(getEvent(db, event.id), dataDir));
+      res.json(withMeta(getEvent(db, event.id), dataDir, { redactPins }));
       triggerPreviewPull(event.id);
     } catch (err) {
       next(err);
@@ -582,7 +633,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
 
       captureSnapshot(db, edb, { event_id: event.id, author: resolveAuthor(db, req.user) });
 
-      res.json(withMeta(getEvent(db, event.id), dataDir));
+      res.json(withMeta(getEvent(db, event.id), dataDir, { redactPins: isGeneralOnlyMember(db, req) }));
       triggerPreviewPull(event.id);
     } catch (err) {
       next(err);
@@ -607,7 +658,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
 
       captureSnapshot(db, edb, { event_id: event.id, author: resolveAuthor(db, req.user) });
 
-      res.json(withMeta(getEvent(db, event.id), dataDir));
+      res.json(withMeta(getEvent(db, event.id), dataDir, { redactPins: isGeneralOnlyMember(db, req) }));
       triggerPreviewPull(event.id);
     } catch (err) {
       next(err);

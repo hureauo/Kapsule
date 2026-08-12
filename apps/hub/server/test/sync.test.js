@@ -10,7 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { createApp } from '../src/index.js';
 import {
   getDb, closeRegistry, insertUser, insertBoxToken, getBoxTokenByHash, getEvent,
-  upsertEventUser, deleteEventUser, updateEvent,
+  upsertEventUser, updateEvent,
   insertBorne, getBorneByHash, assignBorneEvent, insertBorneCommand, listBorneCommands,
 } from '../src/registry.js';
 import { closeAllEventDbs, openEventDb, cacheSize } from '../src/eventStore.js';
@@ -270,7 +270,7 @@ describe('GET /api/sync/events/:id/bundle', () => {
     assert.equal(res.status, 409);
   });
 
-  it('inclut users dans le bundle — superusers (sans general), clients sans hash exclus, requiresLogin', async () => {
+  it('ne transporte plus de comptes nominatifs — admin_pin/tech_pin dans meta, requiresLogin sur le rôle general', async () => {
     const db = getDb();
 
     // Créer un événement dédié avec token
@@ -287,62 +287,21 @@ describe('GET /api/sync/events/:id/bundle', () => {
     const hashU = createHash('sha256').update(rawU).digest('hex');
     insertBoxToken(db, { event_id: evU.body.id, token_hash: hashU, token_clear: rawU, label: 'Borne U' });
 
-    // Ajouter un client sans hash avec rôle general → ne doit PAS être dans users,
-    // mais déclenche requiresLogin: true (auth wall proxié vers Hub)
+    // Ajouter un client sans hash avec rôle general → déclenche requiresLogin: true
+    // (auth wall proxié vers Hub, §11.24) — n'apparaît dans aucun champ du bundle.
     const noHashId = insertUser(db, { email: 'nohash@sync.test', role: 'client' });
     upsertEventUser(db, { event_id: evU.body.id, user_id: noHashId.lastInsertRowid, roles: ['general'] });
 
     const res = await request.get(`/api/sync/events/${evU.body.id}/bundle`)
       .set('X-Box-Token', rawU);
     assert.equal(res.status, 200);
-    assert.ok(Array.isArray(res.body.users), 'users doit être un tableau');
+    assert.equal(res.body.users, undefined, 'bundle.users n\'existe plus (admin_borne/tech_borne passés au PIN partagé)');
 
-    const emails = res.body.users.map(u => u.email);
-    // admin@sync.test est superuser → toujours dans le bundle avec rôles borne (sans general)
-    assert.ok(emails.includes('admin@sync.test'), 'superuser doit être dans le bundle');
-    assert.ok(!emails.includes('nohash@sync.test'), 'client sans hash ne doit pas être dans le bundle');
-
-    const adminUser = res.body.users.find(u => u.email === 'admin@sync.test');
-    assert.ok(adminUser.password_hash, 'password_hash doit être présent');
-    // Les superusers ont tech_borne (admin_borne est passé au PIN partagé, sans
-    // compte pull-able ; sans general — général proxié vers Hub, §11.24)
-    assert.deepEqual(adminUser.roles, ['tech_borne']);
+    // admin_pin/tech_pin voyagent comme n'importe quelle clé event_meta.
+    assert.match(res.body.event.meta.admin_pin, /^\d{6}$/);
+    assert.match(res.body.event.meta.tech_pin, /^\d{6}$/);
 
     // requiresLogin = true car un user avec rôle general est assigné
-    assert.equal(res.body.requiresLogin, true);
-  });
-
-  it('bundle.users contient toujours les superusers actifs, même sans event_users', async () => {
-    const db = getDb();
-    const evEmpty = await request.post('/api/events')
-      .set('Authorization', `Bearer ${tokenAdmin}`)
-      .send({ name: 'Événement sans users client' });
-    await request.put(`/api/events/${evEmpty.body.id}/status`)
-      .set('Authorization', `Bearer ${tokenAdmin}`)
-      .send({ status: 'preview' });
-    await request.put(`/api/events/${evEmpty.body.id}/status`)
-      .set('Authorization', `Bearer ${tokenAdmin}`)
-      .send({ status: 'ready' });
-    const rawEmp = 'e'.repeat(62) + 'mp';
-    const hashEmp = createHash('sha256').update(rawEmp).digest('hex');
-    insertBoxToken(db, { event_id: evEmpty.body.id, token_hash: hashEmp, token_clear: rawEmp, label: 'Borne Empty' });
-
-    // Retirer tous les event_users (y compris l'admin auto-assigné)
-    const adminRow = db.prepare("SELECT id FROM users WHERE email = 'admin@sync.test'").get();
-    deleteEventUser(db, { event_id: evEmpty.body.id, user_id: adminRow.id });
-
-    // Assigner uniquement un client sans hash (rôle general)
-    const noHash2 = insertUser(db, { email: 'nohash2@sync.test', role: 'client' });
-    upsertEventUser(db, { event_id: evEmpty.body.id, user_id: noHash2.lastInsertRowid, roles: ['general'] });
-
-    const res = await request.get(`/api/sync/events/${evEmpty.body.id}/bundle`)
-      .set('X-Box-Token', rawEmp);
-    assert.equal(res.status, 200);
-    // Le superuser (admin@sync.test) est toujours inclus même retiré d'event_users
-    const emails = res.body.users.map(u => u.email);
-    assert.ok(emails.includes('admin@sync.test'), 'superuser toujours présent dans le bundle');
-    assert.ok(!emails.includes('nohash2@sync.test'), 'client sans hash absent du bundle');
-    // requiresLogin = true car nohash2 a le rôle general
     assert.equal(res.body.requiresLogin, true);
   });
 });

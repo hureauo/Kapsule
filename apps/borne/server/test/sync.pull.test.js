@@ -224,54 +224,40 @@ describe('pull — pullEvent', () => {
     assert.equal(questions[0].text, 'Nouvelle question');
   });
 
-  it('écrit bundle.users dans event_users de la BD événement', async () => {
+  it('ignore un bundle.users éventuel — event_users reste vide (admin_borne/tech_borne passés au PIN partagé)', async () => {
     globalThis.fetch = async () => ({
       ok: true, status: 200,
       json: async () => ({
         ...BUNDLE,
-        users: [
-          { email: 'alice@test.com', password_hash: '$argon2id$v=19$test', roles: ['admin_borne'] },
-          { email: 'bob@test.com',   password_hash: '$argon2id$v=19$test2', roles: ['tech_borne', 'general'] },
-        ],
+        // Champ historique, ignoré s'il est encore envoyé par un vieux Hub.
+        users: [{ email: 'alice@test.com', password_hash: '$argon2id$v=19$test', roles: ['tech_borne'] }],
       }),
     });
 
-    await pullEvent('hub-ev-1', dir);
-
-    const edb = new Database(join(dir, 'events', 'hub-ev-1', 'db.sqlite'));
-    const users = edb.prepare('SELECT * FROM event_users ORDER BY email').all();
-    edb.close();
-
-    assert.equal(users.length, 2);
-    assert.equal(users[0].email, 'alice@test.com');
-    assert.equal(users[0].password_hash, '$argon2id$v=19$test');
-    assert.deepEqual(JSON.parse(users[0].roles), ['admin_borne']);
-    assert.equal(users[1].email, 'bob@test.com');
-    assert.deepEqual(JSON.parse(users[1].roles), ['tech_borne', 'general']);
-  });
-
-  it('re-pull écrase event_users (DELETE+INSERT)', async () => {
-    // Premier pull avec alice
-    globalThis.fetch = async () => ({
-      ok: true, status: 200,
-      json: async () => ({
-        ...BUNDLE,
-        users: [{ email: 'alice@test.com', password_hash: '$argon2id$hash1', roles: ['admin_borne'] }],
-      }),
-    });
-    await pullEvent('hub-ev-1', dir);
-
-    // Second pull sans alice (liste vide)
-    globalThis.fetch = async () => ({
-      ok: true, status: 200,
-      json: async () => ({ ...BUNDLE, users: [] }),
-    });
     await pullEvent('hub-ev-1', dir);
 
     const edb = new Database(join(dir, 'events', 'hub-ev-1', 'db.sqlite'));
     const users = edb.prepare('SELECT * FROM event_users').all();
     edb.close();
-    assert.equal(users.length, 0, 'event_users doit être vide après pull sans users');
+    assert.equal(users.length, 0);
+  });
+
+  it('écrit admin_pin/tech_pin depuis bundle.event.meta dans event_meta', async () => {
+    globalThis.fetch = async () => ({
+      ok: true, status: 200,
+      json: async () => ({
+        ...BUNDLE,
+        event: { ...BUNDLE.event, meta: { admin_pin: '111111', tech_pin: '222222' } },
+      }),
+    });
+
+    await pullEvent('hub-ev-1', dir);
+
+    const edb = new Database(join(dir, 'events', 'hub-ev-1', 'db.sqlite'));
+    const meta = Object.fromEntries(edb.prepare('SELECT key, value FROM event_meta').all().map(r => [r.key, r.value]));
+    edb.close();
+    assert.equal(meta.admin_pin, '111111');
+    assert.equal(meta.tech_pin, '222222');
   });
 });
 

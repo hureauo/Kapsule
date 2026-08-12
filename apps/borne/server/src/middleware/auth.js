@@ -1,5 +1,4 @@
 import jwt from 'jsonwebtoken';
-import argon2 from 'argon2';
 import { timingSafeEqual } from 'node:crypto';
 import { getActiveEvent } from '../registry.js';
 import { getActiveEventDb } from '../eventDb.js';
@@ -21,53 +20,46 @@ function safeCompare(a, b) {
   return timingSafeEqual(ba, bb);
 }
 
-// Login : trois voies possibles.
-//  1. { pin } — admin_borne, contre event_meta.admin_pin de l'événement actif
-//     (code à 6 chiffres partagé, pulled depuis le Hub — pas de compte nominatif
-//     pour ce rôle, cf. PROJET.md).
-//  2. { email, password } — tech_borne, contre event_users de l'événement actif
-//     (comptes nominatifs pull depuis le Hub — actions plus sensibles : synchro,
-//     clôture, purge).
-//  3. { password } seul — fallback TECH_PASSWORD env (mode autonome, sans Hub).
+// Login : deux voies possibles.
+//  1. { pin } — code à 6 chiffres partagé contre event_meta de l'événement actif,
+//     pullé depuis le Hub. Pas de compte nominatif pour admin_borne NI tech_borne
+//     (cf. PROJET.md) : on essaie tech_pin (rôle le plus élevé) avant admin_pin.
+//  2. { password } seul — fallback TECH_PASSWORD env, actif tant que l'événement
+//     (s'il y en a un) ne porte AUCUN PIN (mode autonome, avant le premier pull,
+//     ou événement pullé d'un Hub antérieur à Phase C).
 export function makeAuthRouter(config, dataDir) {
   return async function loginHandler(req, res, next) {
     try {
-      const { email, password, pin } = req.body;
+      const { password, pin } = req.body;
 
       const activeEvent = getActiveEvent();
       const edb = activeEvent ? getActiveEventDb(dataDir, activeEvent) : null;
 
       if (pin !== undefined) {
-        const row = edb ? edb.prepare("SELECT value FROM event_meta WHERE key = 'admin_pin'").get() : null;
-        if (!row?.value || !safeCompare(String(pin), row.value)) {
-          return res.status(401).json({ error: 'Identifiants incorrects' });
+        const techRow = edb ? edb.prepare("SELECT value FROM event_meta WHERE key = 'tech_pin'").get() : null;
+        if (techRow?.value && safeCompare(String(pin), techRow.value)) {
+          const token = jwt.sign({ roles: ['tech_borne'] }, config.jwtSecret, { expiresIn: '24h' });
+          return res.json({ token });
         }
-        // Pas d'email : code partagé, pas de compte personnel.
-        const token = jwt.sign({ roles: ['admin_borne'] }, config.jwtSecret, { expiresIn: '24h' });
-        return res.json({ token });
+        const adminRow = edb ? edb.prepare("SELECT value FROM event_meta WHERE key = 'admin_pin'").get() : null;
+        if (adminRow?.value && safeCompare(String(pin), adminRow.value)) {
+          const token = jwt.sign({ roles: ['admin_borne'] }, config.jwtSecret, { expiresIn: '24h' });
+          return res.json({ token });
+        }
+        return res.status(401).json({ error: 'Identifiants incorrects' });
       }
 
-      if (!password) return res.status(401).json({ error: 'Identifiants incorrects' });
-
-      const users = edb ? edb.prepare('SELECT * FROM event_users').all() : [];
-
-      if (users.length > 0) {
-        // Auth par compte nominatif (pull depuis Hub)
-        if (!email) return res.status(401).json({ error: 'Identifiants incorrects' });
-        const user = users.find(u => u.email === email);
-        if (!user || !user.password_hash) {
-          return res.status(401).json({ error: 'Identifiants incorrects' });
-        }
-        const valid = await argon2.verify(user.password_hash, password);
-        if (!valid) return res.status(401).json({ error: 'Identifiants incorrects' });
-        const roles = JSON.parse(user.roles);
-        const token = jwt.sign({ email: user.email, roles }, config.jwtSecret, { expiresIn: '24h' });
-        return res.json({ token });
-      }
-
-      // Fallback mode autonome : TECH_PASSWORD env
+      // Fallback TECH_PASSWORD : réservé au cas où l'événement actif n'a AUCUN PIN
+      // configuré (mode autonome, borne fraîchement appairée avant le premier pull,
+      // ou événement pullé depuis un Hub antérieur à Phase C). Dès qu'un tech_pin OU
+      // un admin_pin existe sur l'événement actif, TECH_PASSWORD est refusé — sinon
+      // il resterait une porte dérobée permanente y compris sur une borne appairée
+      // (et sur une preview, où TECH_PASSWORD_PREVIEW est partagé par toutes les previews).
+      const hasAnyPin = edb
+        ? Boolean(edb.prepare("SELECT 1 FROM event_meta WHERE key IN ('admin_pin', 'tech_pin') LIMIT 1").get())
+        : false;
       const techPwd = config.techPassword;
-      if (!techPwd || !safeCompare(password, techPwd)) {
+      if (hasAnyPin || !password || !techPwd || !safeCompare(password, techPwd)) {
         return res.status(401).json({ error: 'Identifiants incorrects' });
       }
       const token = jwt.sign({ roles: ['tech_borne'] }, config.jwtSecret, { expiresIn: '24h' });

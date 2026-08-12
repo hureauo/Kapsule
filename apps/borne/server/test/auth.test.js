@@ -5,10 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
-import argon2 from 'argon2';
-import Database from 'better-sqlite3';
 import { createApp } from '../src/index.js';
-import { closeRegistry, getRegistry, insertEvent, setActiveEvent } from '../src/registry.js';
+import { closeRegistry, insertEvent, setActiveEvent } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 import { requireAdmin, requireTech } from '../src/middleware/auth.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
@@ -20,86 +18,29 @@ const TEST_CONFIG = {
   skipRateLimits: true,
 };
 
-// Crée un événement actif avec un user event_users (hash argon2)
-async function seedActiveEvent(dir, email, password, roles) {
-  insertEvent({ id: 'ev-auth', name: 'Auth Test', origin: 'hub', status: 'loaded' });
-  setActiveEvent('ev-auth');
+// ── POST /api/admin/login — PIN partagé (admin_pin / tech_pin) ───────────────
+// Ni admin_borne ni tech_borne n'ont de compte nominatif (cf. PROJET.md) : les
+// deux rôles s'authentifient par un code à 6 chiffres partagé, pullé dans
+// event_meta. tech_pin (rôle le plus élevé) est essayé avant admin_pin.
 
-  const eventDir = join(dir, 'events', 'ev-auth');
-  mkdirSync(eventDir, { recursive: true });
-  const edb = createEventDb(join(eventDir, 'db.sqlite'));
-  const hash = await argon2.hash(password, { type: argon2.argon2id });
-  edb.prepare('INSERT INTO event_users (email, password_hash, roles) VALUES (?, ?, ?)').run(
-    email, hash, JSON.stringify(roles)
-  );
-  edb.close();
-}
-
-// ── POST /api/admin/login — auth par compte nominatif ────────────────────────
-
-describe('POST /api/admin/login — compte nominatif (event_users)', () => {
-  let dir, app;
-
-  beforeEach(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'borne-auth-'));
-    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
-    await seedActiveEvent(dir, 'alice@test.com', 'mdp-alice', ['admin_borne']);
-  });
-
-  afterEach(() => {
-    closeEventDb();
-    closeRegistry();
-    rmSync(dir, { recursive: true });
-  });
-
-  test('login ok → JWT avec email + roles', async () => {
-    const res = await request(app)
-      .post('/api/admin/login')
-      .send({ email: 'alice@test.com', password: 'mdp-alice' });
-    assert.equal(res.status, 200);
-    assert.ok(res.body.token);
-    const payload = jwt.verify(res.body.token, TEST_CONFIG.jwtSecret);
-    assert.equal(payload.email, 'alice@test.com');
-    assert.deepEqual(payload.roles, ['admin_borne']);
-  });
-
-  test('retourne 401 avec un mauvais mot de passe', async () => {
-    const res = await request(app)
-      .post('/api/admin/login')
-      .send({ email: 'alice@test.com', password: 'mauvais' });
-    assert.equal(res.status, 401);
-  });
-
-  test('retourne 401 si email inconnu', async () => {
-    const res = await request(app)
-      .post('/api/admin/login')
-      .send({ email: 'inconnu@test.com', password: 'mdp-alice' });
-    assert.equal(res.status, 401);
-  });
-
-  test('retourne 401 si corps vide', async () => {
-    const res = await request(app).post('/api/admin/login').send({});
-    assert.equal(res.status, 401);
-  });
-});
-
-// ── POST /api/admin/login — PIN partagé (admin_borne) ────────────────────────
-
-// Crée un événement actif avec un admin_pin dans event_meta (sans event_users)
-function seedActiveEventWithPin(dir, pin) {
+// Crée un événement actif avec des PIN dans event_meta (admin_pin/tech_pin, ou null pour omettre)
+function seedActiveEventWithPin(dir, { adminPin = null, techPin = null } = {}) {
   insertEvent({ id: 'ev-pin', name: 'PIN Test', origin: 'hub', status: 'loaded' });
   setActiveEvent('ev-pin');
 
   const eventDir = join(dir, 'events', 'ev-pin');
   mkdirSync(eventDir, { recursive: true });
   const edb = createEventDb(join(eventDir, 'db.sqlite'));
-  if (pin !== null) {
-    edb.prepare("INSERT INTO event_meta (key, value) VALUES ('admin_pin', ?)").run(pin);
+  if (adminPin !== null) {
+    edb.prepare("INSERT INTO event_meta (key, value) VALUES ('admin_pin', ?)").run(adminPin);
+  }
+  if (techPin !== null) {
+    edb.prepare("INSERT INTO event_meta (key, value) VALUES ('tech_pin', ?)").run(techPin);
   }
   edb.close();
 }
 
-describe('POST /api/admin/login — PIN partagé (event_meta.admin_pin)', () => {
+describe('POST /api/admin/login — PIN partagé (event_meta.admin_pin / tech_pin)', () => {
   let dir, app;
 
   afterEach(() => {
@@ -108,10 +49,10 @@ describe('POST /api/admin/login — PIN partagé (event_meta.admin_pin)', () => 
     rmSync(dir, { recursive: true });
   });
 
-  test('PIN correct → JWT roles admin_borne, sans email', async () => {
+  test('admin_pin correct → JWT roles admin_borne, sans email', async () => {
     dir = mkdtempSync(join(tmpdir(), 'borne-pin-'));
     app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
-    seedActiveEventWithPin(dir, '123456');
+    seedActiveEventWithPin(dir, { adminPin: '123456', techPin: '654321' });
 
     const res = await request(app).post('/api/admin/login').send({ pin: '123456' });
     assert.equal(res.status, 200);
@@ -121,19 +62,30 @@ describe('POST /api/admin/login — PIN partagé (event_meta.admin_pin)', () => 
     assert.equal(payload.email, undefined);
   });
 
+  test('tech_pin correct → JWT roles tech_borne', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-pin-'));
+    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+    seedActiveEventWithPin(dir, { adminPin: '123456', techPin: '654321' });
+
+    const res = await request(app).post('/api/admin/login').send({ pin: '654321' });
+    assert.equal(res.status, 200);
+    const payload = jwt.verify(res.body.token, TEST_CONFIG.jwtSecret);
+    assert.deepEqual(payload.roles, ['tech_borne']);
+  });
+
   test('retourne 401 si mauvais PIN', async () => {
     dir = mkdtempSync(join(tmpdir(), 'borne-pin-'));
     app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
-    seedActiveEventWithPin(dir, '123456');
+    seedActiveEventWithPin(dir, { adminPin: '123456', techPin: '654321' });
 
     const res = await request(app).post('/api/admin/login').send({ pin: '000000' });
     assert.equal(res.status, 401);
   });
 
-  test('retourne 401 si aucun admin_pin configuré sur l\'événement actif', async () => {
+  test('retourne 401 si aucun PIN configuré sur l\'événement actif', async () => {
     dir = mkdtempSync(join(tmpdir(), 'borne-pin-'));
     app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
-    seedActiveEventWithPin(dir, null);
+    seedActiveEventWithPin(dir, {});
 
     const res = await request(app).post('/api/admin/login').send({ pin: '123456' });
     assert.equal(res.status, 401);
@@ -149,6 +101,36 @@ describe('POST /api/admin/login — PIN partagé (event_meta.admin_pin)', () => 
 });
 
 // ── POST /api/admin/login — fallback TECH_PASSWORD (mode autonome) ───────────
+
+describe('POST /api/admin/login — fallback TECH_PASSWORD, événement actif SANS aucun PIN', () => {
+  let dir, app;
+
+  afterEach(() => {
+    closeEventDb();
+    closeRegistry();
+    rmSync(dir, { recursive: true });
+  });
+
+  test('un événement actif pullé d\'un Hub pré-Phase C (sans PIN) laisse TECH_PASSWORD fonctionner', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-auth-nopin-'));
+    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+    seedActiveEventWithPin(dir, {}); // événement actif, aucune clé admin_pin/tech_pin
+
+    const res = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
+    assert.equal(res.status, 200);
+    const payload = jwt.verify(res.body.token, TEST_CONFIG.jwtSecret);
+    assert.deepEqual(payload.roles, ['tech_borne']);
+  });
+
+  test('dès qu\'un PIN existe sur l\'événement actif, TECH_PASSWORD est refusé', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-auth-haspin-'));
+    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+    seedActiveEventWithPin(dir, { techPin: '654321' }); // pas d'admin_pin, mais un tech_pin suffit
+
+    const res = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
+    assert.equal(res.status, 401);
+  });
+});
 
 describe('POST /api/admin/login — fallback TECH_PASSWORD (aucun user en base)', () => {
   let dir, app;

@@ -9,7 +9,6 @@ import { closeRegistry, getActiveEvent, insertEvent, setActiveEvent, getRegistry
 import { closeEventDb } from '../src/eventDb.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { TEST_CFG, seedAuthUsers, loginAdmin, loginTech } from './helpers.js';
-import argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
 
 const EVENT_ID = 'ev-sessions-test';
@@ -443,17 +442,16 @@ describe('token general — accès refusé aux routes admin', () => {
     const eventDir = join(dir, 'events', 'ev-general');
     mkdirSync(join(eventDir, 'videos'), { recursive: true });
     const edb = createEventDb(join(eventDir, 'db.sqlite'));
-    const hash = await argon2.hash('pwd', { type: argon2.argon2id });
-    edb.prepare('INSERT INTO event_users (email, password_hash, roles) VALUES (?, ?, ?)').run(
-      'guest@general.test', hash, JSON.stringify(['general'])
-    );
     edb.close();
     app = createApp(dir, { ...TEST_CFG, dataDir: dir });
     insertEvent({ id: 'ev-general', name: 'General Test', origin: 'hub', status: 'loaded' });
     setActiveEvent('ev-general');
-    // Login avec le compte general
-    const res = await request(app).post('/api/admin/login').send({ email: 'guest@general.test', password: 'pwd' });
-    generalToken = res.body.token;
+    // Le rôle 'general' n'a pas de compte local (auth proxiée vers le Hub, §11.24) —
+    // le JWT est signé directement, comme le ferait /api/preview/login.
+    generalToken = jwt.sign(
+      { email: 'guest@general.test', roles: ['general'], event_id: 'ev-general' },
+      TEST_CFG.jwtSecret, { expiresIn: '1h' }
+    );
   });
 
   afterEach(() => {

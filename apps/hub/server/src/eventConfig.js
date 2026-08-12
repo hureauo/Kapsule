@@ -1,11 +1,10 @@
 import { THEMES, TEXT_FIELDS, QUALITY_KEYS, VIDEO_ORIENTATIONS } from '@kapsule/core';
 
 // Clés event_meta gérées par applyEventConfig — source unique pour les routes config.
-// admin_pin : code à 6 chiffres remplaçant le compte nominatif pour le rôle
-// admin_borne (client) — cf. PROJET.md, plus simple qu'un compte email/mdp
-// pour un usage partagé sur place. tech_borne reste nominatif (actions plus
-// sensibles : synchro, clôture, purge).
-export const META_KEYS = ['theme', 'idle_timeout', 'video_quality', 'video_orientation', 'admin_pin', ...Object.keys(TEXT_FIELDS)];
+// admin_pin / tech_pin : codes à 6 chiffres remplaçant les comptes nominatifs pour les
+// rôles admin_borne (client) et tech_borne (technicien) — cf. PROJET.md, plus simple
+// qu'un compte email/mdp pour un usage partagé sur place.
+export const META_KEYS = ['theme', 'idle_timeout', 'video_quality', 'video_orientation', 'admin_pin', 'tech_pin', ...Object.keys(TEXT_FIELDS)];
 
 /**
  * Applique meta + questions sur une event DB ouverte.

@@ -151,10 +151,10 @@ function CreateEventForm({ onCreated }) {
 
 // ── Panneau d'un événement (inline) ──────────────────────────────────────────
 
-// admin_borne n'est plus assignable ici : passé au code PIN partagé
-// (event_meta.admin_pin, onglet Design de l'événement).
-const BORNE_ROLES = ['tech_borne', 'general'];
-const BORNE_ROLE_LABELS = { tech_borne: 'Technicien', general: 'Général' };
+// admin_borne et tech_borne ne sont plus assignables ici : passés aux codes PIN
+// partagés (event_meta.admin_pin / tech_pin, onglet Design de l'événement).
+const BORNE_ROLES = ['general'];
+const BORNE_ROLE_LABELS = { general: 'Général' };
 
 function EventPanel({ event, onRefresh, canDelete, onDelete }) {
   const [tokens, setTokens] = useState(null);

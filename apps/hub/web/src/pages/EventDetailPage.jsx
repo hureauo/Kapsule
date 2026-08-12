@@ -163,9 +163,10 @@ function DesignTab({ event, frozen, onSaved }) {
   const [idleTimeout, setIdleTimeout] = useState(
     parseInt(meta.idle_timeout ?? String(DEFAULTS.IDLE_TIMEOUT_S), 10)
   );
-  // Code d'accès partagé de l'admin borne (/admin, gestion questions/vidéos/design)
-  // — remplace le compte nominatif pour ce rôle, cf. event_meta.admin_pin.
+  // Codes d'accès partagés — remplacent les comptes nominatifs pour ces rôles
+  // (event_meta.admin_pin pour /admin, tech_pin pour /borne).
   const [adminPin, setAdminPin] = useState(meta.admin_pin ?? '');
+  const [techPin, setTechPin] = useState(meta.tech_pin ?? '');
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
 
@@ -183,10 +184,11 @@ function DesignTab({ event, frozen, onSaved }) {
     setTexts(t);
     setIdleTimeout(parseInt(m.idle_timeout ?? String(DEFAULTS.IDLE_TIMEOUT_S), 10));
     setAdminPin(m.admin_pin ?? '');
+    setTechPin(m.tech_pin ?? '');
   }, [event?.id, event?.updated_at]);
 
-  function regeneratePin() {
-    setAdminPin(String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0'));
+  function regeneratePin(setter) {
+    setter(String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0'));
   }
 
   async function handleSave(e) {
@@ -198,6 +200,7 @@ function DesignTab({ event, frozen, onSaved }) {
         theme, idle_timeout: idleTimeout,
         video_quality: videoQuality, video_orientation: videoOrientation,
         admin_pin: adminPin,
+        tech_pin: techPin,
         ...texts,
       });
       setSaveMsg('Sauvegardé.');
@@ -325,7 +328,7 @@ function DesignTab({ event, frozen, onSaved }) {
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"
-                onClick={regeneratePin}
+                onClick={() => regeneratePin(setAdminPin)}
                 disabled={frozen}
               >
                 Régénérer
@@ -334,6 +337,32 @@ function DesignTab({ event, frozen, onSaved }) {
             <span className="text--muted" style={{ fontSize: '13px' }}>
               À communiquer sur place pour ouvrir l'admin de la borne (questions, vidéos, design)
               — sans compte à créer.
+            </span>
+          </label>
+          <label className="field-label" style={{ marginTop: '12px' }}>
+            Code d'accès technicien borne (6 chiffres)
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input
+                type="text"
+                inputMode="numeric"
+                className="hub-input hub-input--sm"
+                style={{ maxWidth: '100px', fontFamily: 'monospace', letterSpacing: '2px' }}
+                value={techPin}
+                onChange={(e) => setTechPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                disabled={frozen}
+              />
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={() => regeneratePin(setTechPin)}
+                disabled={frozen}
+              >
+                Régénérer
+              </button>
+            </div>
+            <span className="text--muted" style={{ fontSize: '13px' }}>
+              À communiquer au technicien pour ouvrir la console machine /borne
+              (identité, synchro, clôture, purge) — sans compte à créer.
             </span>
           </label>
         </section>
@@ -383,11 +412,11 @@ function PreviewBox({ event }) {
 }
 
 // ── Onglet Utilisateurs ───────────────────────────────────────────────────────
-// admin_borne n'est plus assignable ici : ce rôle est passé au code PIN partagé
-// (event_meta.admin_pin, onglet Design) — plus de compte nominatif pour la
-// gestion de contenu, seuls tech_borne/general restent des comptes personnels.
-const BORNE_ROLES = ['tech_borne', 'general'];
-const BORNE_ROLE_LABELS = { tech_borne: 'Technicien', general: 'Invité (general)' };
+// admin_borne et tech_borne ne sont plus assignables ici : ces deux rôles sont
+// passés aux codes PIN partagés (event_meta.admin_pin / tech_pin, onglet Design)
+// — seul 'general' (auth wall preview, §11.24) reste un compte personnel.
+const BORNE_ROLES = ['general'];
+const BORNE_ROLE_LABELS = { general: 'Invité (general)' };
 
 function UtilisateursTab({ eventId }) {
   const [eventUsers, setEventUsers] = useState([]);

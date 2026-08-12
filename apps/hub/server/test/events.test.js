@@ -107,6 +107,13 @@ describe('GET /api/events/:eventId', () => {
     assert.equal(res.body.id, eventId);
   });
 
+  it('génère admin_pin et tech_pin à la création (codes à 6 chiffres distincts)', async () => {
+    const res = await request.get(`/api/events/${eventId}`).set(auth(tokenAlice));
+    assert.match(res.body.meta.admin_pin, /^\d{6}$/);
+    assert.match(res.body.meta.tech_pin, /^\d{6}$/);
+    assert.notEqual(res.body.meta.admin_pin, res.body.meta.tech_pin);
+  });
+
   it('retourne 403 pour un autre user', async () => {
     const res = await request.get(`/api/events/${eventId}`).set(auth(tokenBob));
     assert.equal(res.status, 403);
@@ -115,6 +122,22 @@ describe('GET /api/events/:eventId', () => {
   it('retourne 404 pour un id inconnu', async () => {
     const res = await request.get('/api/events/evt-inconnu').set(auth(tokenAlice));
     assert.equal(res.status, 404);
+  });
+
+  it('redacte admin_pin/tech_pin pour un membre au rôle general uniquement', async () => {
+    const db = getDb();
+    upsertEventUser(db, { event_id: eventId, user_id: bobId, roles: ['general'] });
+    const res = await request.get(`/api/events/${eventId}`).set(auth(tokenBob));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.meta.admin_pin, undefined);
+    assert.equal(res.body.meta.tech_pin, undefined);
+  });
+
+  it('refuse (403) qu\'un membre general modifie admin_pin/tech_pin via PUT', async () => {
+    const res = await request.put(`/api/events/${eventId}`)
+      .set(auth(tokenBob))
+      .send({ tech_pin: '999999' });
+    assert.equal(res.status, 403);
   });
 });
 
@@ -181,6 +204,21 @@ describe('PUT /api/events/:eventId', () => {
     const res = await request.put(`/api/events/${eventId}`)
       .set(auth(tokenAlice))
       .send({ video_orientation: 'diagonale' });
+    assert.equal(res.status, 400);
+  });
+
+  it('régénère tech_pin et le retourne dans meta', async () => {
+    const res = await request.put(`/api/events/${eventId}`)
+      .set(auth(tokenAlice))
+      .send({ tech_pin: '654321' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.meta?.tech_pin, '654321');
+  });
+
+  it('rejette un tech_pin qui n\'est pas un code à 6 chiffres', async () => {
+    const res = await request.put(`/api/events/${eventId}`)
+      .set(auth(tokenAlice))
+      .send({ tech_pin: 'abcdef' });
     assert.equal(res.status, 400);
   });
 
