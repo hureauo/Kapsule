@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomInt } from 'node:crypto';
 import { mkdirSync, rmSync, existsSync, copyFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
@@ -199,17 +200,21 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       const db = getDb();
       insertEvent(db, { id, name: name.trim(), event_date: event_date ?? null });
 
-      // Assigne le créateur avec admin_borne
-      upsertEventUser(db, { event_id: id, user_id: req.user.sub, roles: ['admin_borne'] });
+      // Assigne le créateur avec tech_borne (admin_borne est passé au PIN partagé,
+      // event_meta.admin_pin — plus de compte nominatif pour ce rôle)
+      upsertEventUser(db, { event_id: id, user_id: req.user.sub, roles: ['tech_borne'] });
 
-      // Assigne tous les superusers actifs avec tous les rôles borne
+      // Assigne tous les superusers actifs avec les rôles borne restants
       const superusers = listUsers(db).filter(u => u.role === 'superuser' && u.active && u.id !== req.user.sub);
       for (const su of superusers) {
-        upsertEventUser(db, { event_id: id, user_id: su.id, roles: ['admin_borne', 'tech_borne', 'general'] });
+        upsertEventUser(db, { event_id: id, user_id: su.id, roles: ['tech_borne', 'general'] });
       }
 
-      // Initialise db.sqlite avec le schéma
-      openEventDb(id, dataDir);
+      // Initialise db.sqlite avec le schéma, puis génère le code d'accès client
+      // (6 chiffres, cf. META_KEYS) — visible/régénérable depuis l'onglet Design.
+      const evDb = openEventDb(id, dataDir);
+      const admin_pin = String(randomInt(0, 1_000_000)).padStart(6, '0');
+      applyEventConfig(evDb, { mode: 'overwrite', meta: { admin_pin } });
 
       // Provision automatique de la borne preview dès la création (statut démarre en preview)
       try {
@@ -219,7 +224,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
         console.error('[preview/start] échec au provisionnement initial pour', id, err.message);
       }
 
-      res.status(201).json(getEvent(db, id));
+      res.status(201).json(withMeta(getEvent(db, id), dataDir));
     } catch (err) {
       next(err);
     }
@@ -243,8 +248,8 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       if (event_date !== undefined) fields.event_date = event_date;
 
       // Champs event_meta : thème, textes du parcours, idle_timeout, consent_text,
-      // video_quality, video_orientation
-      const { theme, idle_timeout, video_quality, video_orientation } = req.body;
+      // video_quality, video_orientation, admin_pin
+      const { theme, idle_timeout, video_quality, video_orientation, admin_pin } = req.body;
       if (theme !== undefined && !THEMES.includes(theme)) {
         return res.status(400).json({ error: `Thème invalide : ${theme}` });
       }
@@ -253,6 +258,9 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       }
       if (video_orientation !== undefined && !VIDEO_ORIENTATIONS.includes(video_orientation)) {
         return res.status(400).json({ error: `Orientation vidéo invalide : ${video_orientation}` });
+      }
+      if (admin_pin !== undefined && !/^\d{6}$/.test(admin_pin)) {
+        return res.status(400).json({ error: 'admin_pin doit être un code à 6 chiffres' });
       }
       const metaKeys = META_KEYS.filter(k => req.body[k] !== undefined);
       if (metaKeys.length > 0) {
@@ -401,7 +409,12 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
         created = true;
       }
 
-      upsertEventUser(db, { event_id: req.params.eventId, user_id: user.id, roles: ['admin_borne'] });
+      // Rôles borne vides : l'accès Hub (requireOwner) ne dépend que de
+      // l'existence de la ligne event_users, pas de son contenu. admin_borne
+      // n'existe plus comme rôle assignable (code PIN partagé) ; tech_borne
+      // reste une élévation explicite depuis l'onglet Utilisateurs, pas un
+      // effet de bord de l'assignation du propriétaire.
+      upsertEventUser(db, { event_id: req.params.eventId, user_id: user.id, roles: [] });
       db.prepare('UPDATE events SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.eventId);
 
       res.json({

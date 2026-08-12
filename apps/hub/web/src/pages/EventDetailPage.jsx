@@ -163,6 +163,9 @@ function DesignTab({ event, frozen, onSaved }) {
   const [idleTimeout, setIdleTimeout] = useState(
     parseInt(meta.idle_timeout ?? String(DEFAULTS.IDLE_TIMEOUT_S), 10)
   );
+  // Code d'accès partagé de l'admin borne (/admin, gestion questions/vidéos/design)
+  // — remplace le compte nominatif pour ce rôle, cf. event_meta.admin_pin.
+  const [adminPin, setAdminPin] = useState(meta.admin_pin ?? '');
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
 
@@ -179,7 +182,12 @@ function DesignTab({ event, frozen, onSaved }) {
     for (const key of Object.keys(TEXT_FIELDS)) t[key] = m[key] ?? '';
     setTexts(t);
     setIdleTimeout(parseInt(m.idle_timeout ?? String(DEFAULTS.IDLE_TIMEOUT_S), 10));
+    setAdminPin(m.admin_pin ?? '');
   }, [event?.id, event?.updated_at]);
+
+  function regeneratePin() {
+    setAdminPin(String(Math.floor(Math.random() * 1_000_000)).padStart(6, '0'));
+  }
 
   async function handleSave(e) {
     e.preventDefault();
@@ -189,6 +197,7 @@ function DesignTab({ event, frozen, onSaved }) {
       await api.updateEvent(event.id, {
         theme, idle_timeout: idleTimeout,
         video_quality: videoQuality, video_orientation: videoOrientation,
+        admin_pin: adminPin,
         ...texts,
       });
       setSaveMsg('Sauvegardé.');
@@ -301,6 +310,32 @@ function DesignTab({ event, frozen, onSaved }) {
               disabled={frozen}
             />
           </label>
+          <label className="field-label" style={{ marginTop: '12px' }}>
+            Code d'accès admin borne (6 chiffres)
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input
+                type="text"
+                inputMode="numeric"
+                className="hub-input hub-input--sm"
+                style={{ maxWidth: '100px', fontFamily: 'monospace', letterSpacing: '2px' }}
+                value={adminPin}
+                onChange={(e) => setAdminPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                disabled={frozen}
+              />
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                onClick={regeneratePin}
+                disabled={frozen}
+              >
+                Régénérer
+              </button>
+            </div>
+            <span className="text--muted" style={{ fontSize: '13px' }}>
+              À communiquer sur place pour ouvrir l'admin de la borne (questions, vidéos, design)
+              — sans compte à créer.
+            </span>
+          </label>
         </section>
 
       </form>
@@ -348,8 +383,11 @@ function PreviewBox({ event }) {
 }
 
 // ── Onglet Utilisateurs ───────────────────────────────────────────────────────
-const BORNE_ROLES = ['admin_borne', 'tech_borne', 'general'];
-const BORNE_ROLE_LABELS = { admin_borne: 'Admin borne', tech_borne: 'Technicien', general: 'Invité (general)' };
+// admin_borne n'est plus assignable ici : ce rôle est passé au code PIN partagé
+// (event_meta.admin_pin, onglet Design) — plus de compte nominatif pour la
+// gestion de contenu, seuls tech_borne/general restent des comptes personnels.
+const BORNE_ROLES = ['tech_borne', 'general'];
+const BORNE_ROLE_LABELS = { tech_borne: 'Technicien', general: 'Invité (general)' };
 
 function UtilisateursTab({ eventId }) {
   const [eventUsers, setEventUsers] = useState([]);

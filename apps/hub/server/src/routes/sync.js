@@ -239,8 +239,9 @@ export function makeSyncRouter(dataDir, opts = {}) {
       // la Borne ne doit jamais la recevoir, comme le rôle 'general' est exclu ci-dessous.
       delete meta.design_source_id;
 
-      // Bundle users : uniquement les rôles borne (admin_borne, tech_borne).
-      // Le rôle 'general' n'est pas pullé — son auth est proxiée vers le Hub à chaque login (§11.24).
+      // Bundle users : uniquement le rôle borne nominatif restant (tech_borne).
+      // admin_borne n'a plus de compte pull-able (code PIN partagé, event_meta.admin_pin) ;
+      // le rôle 'general' n'est pas pullé — son auth est proxiée vers le Hub à chaque login (§11.24).
       const assignedUsers = db.prepare(`
         SELECT u.email, u.password_hash, eu.roles
         FROM event_users eu
@@ -256,7 +257,7 @@ export function makeSyncRouter(dataDir, opts = {}) {
       const superusers = db.prepare(`
         SELECT email, password_hash FROM users
         WHERE role = 'superuser' AND active = 1
-      `).all().map(u => ({ email: u.email, password_hash: u.password_hash, roles: ['admin_borne', 'tech_borne'] }));
+      `).all().map(u => ({ email: u.email, password_hash: u.password_hash, roles: ['tech_borne'] }));
 
       // Fusionner : les superusers remplacent leurs éventuels rôles restreints dans event_users.
       // Filtrer les rôles 'general' des assignés non-superusers.

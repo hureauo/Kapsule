@@ -304,8 +304,9 @@ describe('GET /api/sync/events/:id/bundle', () => {
 
     const adminUser = res.body.users.find(u => u.email === 'admin@sync.test');
     assert.ok(adminUser.password_hash, 'password_hash doit être présent');
-    // Les superusers ont admin_borne + tech_borne (sans general — général proxié vers Hub, §11.24)
-    assert.deepEqual(adminUser.roles, ['admin_borne', 'tech_borne']);
+    // Les superusers ont tech_borne (admin_borne est passé au PIN partagé, sans
+    // compte pull-able ; sans general — général proxié vers Hub, §11.24)
+    assert.deepEqual(adminUser.roles, ['tech_borne']);
 
     // requiresLogin = true car un user avec rôle general est assigné
     assert.equal(res.body.requiresLogin, true);

@@ -83,6 +83,71 @@ describe('POST /api/admin/login — compte nominatif (event_users)', () => {
   });
 });
 
+// ── POST /api/admin/login — PIN partagé (admin_borne) ────────────────────────
+
+// Crée un événement actif avec un admin_pin dans event_meta (sans event_users)
+function seedActiveEventWithPin(dir, pin) {
+  insertEvent({ id: 'ev-pin', name: 'PIN Test', origin: 'hub', status: 'loaded' });
+  setActiveEvent('ev-pin');
+
+  const eventDir = join(dir, 'events', 'ev-pin');
+  mkdirSync(eventDir, { recursive: true });
+  const edb = createEventDb(join(eventDir, 'db.sqlite'));
+  if (pin !== null) {
+    edb.prepare("INSERT INTO event_meta (key, value) VALUES ('admin_pin', ?)").run(pin);
+  }
+  edb.close();
+}
+
+describe('POST /api/admin/login — PIN partagé (event_meta.admin_pin)', () => {
+  let dir, app;
+
+  afterEach(() => {
+    closeEventDb();
+    closeRegistry();
+    rmSync(dir, { recursive: true });
+  });
+
+  test('PIN correct → JWT roles admin_borne, sans email', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-pin-'));
+    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+    seedActiveEventWithPin(dir, '123456');
+
+    const res = await request(app).post('/api/admin/login').send({ pin: '123456' });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.token);
+    const payload = jwt.verify(res.body.token, TEST_CONFIG.jwtSecret);
+    assert.deepEqual(payload.roles, ['admin_borne']);
+    assert.equal(payload.email, undefined);
+  });
+
+  test('retourne 401 si mauvais PIN', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-pin-'));
+    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+    seedActiveEventWithPin(dir, '123456');
+
+    const res = await request(app).post('/api/admin/login').send({ pin: '000000' });
+    assert.equal(res.status, 401);
+  });
+
+  test('retourne 401 si aucun admin_pin configuré sur l\'événement actif', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-pin-'));
+    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+    seedActiveEventWithPin(dir, null);
+
+    const res = await request(app).post('/api/admin/login').send({ pin: '123456' });
+    assert.equal(res.status, 401);
+  });
+
+  test('retourne 401 si aucun événement actif', async () => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-pin-'));
+    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
+
+    const res = await request(app).post('/api/admin/login').send({ pin: '123456' });
+    assert.equal(res.status, 401);
+  });
+});
+
 // ── POST /api/admin/login — fallback TECH_PASSWORD (mode autonome) ───────────
 
 describe('POST /api/admin/login — fallback TECH_PASSWORD (aucun user en base)', () => {

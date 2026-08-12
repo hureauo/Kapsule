@@ -21,16 +21,34 @@ function safeCompare(a, b) {
   return timingSafeEqual(ba, bb);
 }
 
-// Login : { email, password } contre event_users de l'événement actif.
-// Si aucun user en base → fallback sur TECH_PASSWORD env (mode autonome).
+// Login : trois voies possibles.
+//  1. { pin } — admin_borne, contre event_meta.admin_pin de l'événement actif
+//     (code à 6 chiffres partagé, pulled depuis le Hub — pas de compte nominatif
+//     pour ce rôle, cf. PROJET.md).
+//  2. { email, password } — tech_borne, contre event_users de l'événement actif
+//     (comptes nominatifs pull depuis le Hub — actions plus sensibles : synchro,
+//     clôture, purge).
+//  3. { password } seul — fallback TECH_PASSWORD env (mode autonome, sans Hub).
 export function makeAuthRouter(config, dataDir) {
   return async function loginHandler(req, res, next) {
     try {
-      const { email, password } = req.body;
-      if (!password) return res.status(401).json({ error: 'Identifiants incorrects' });
+      const { email, password, pin } = req.body;
 
       const activeEvent = getActiveEvent();
       const edb = activeEvent ? getActiveEventDb(dataDir, activeEvent) : null;
+
+      if (pin !== undefined) {
+        const row = edb ? edb.prepare("SELECT value FROM event_meta WHERE key = 'admin_pin'").get() : null;
+        if (!row?.value || !safeCompare(String(pin), row.value)) {
+          return res.status(401).json({ error: 'Identifiants incorrects' });
+        }
+        // Pas d'email : code partagé, pas de compte personnel.
+        const token = jwt.sign({ roles: ['admin_borne'] }, config.jwtSecret, { expiresIn: '24h' });
+        return res.json({ token });
+      }
+
+      if (!password) return res.status(401).json({ error: 'Identifiants incorrects' });
+
       const users = edb ? edb.prepare('SELECT * FROM event_users').all() : [];
 
       if (users.length > 0) {

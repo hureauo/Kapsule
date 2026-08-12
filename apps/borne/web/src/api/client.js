@@ -103,6 +103,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }),
+  // admin_borne : code à 6 chiffres partagé (event_meta.admin_pin), pas de compte nominatif.
+  loginPin: (pin) =>
+    apiFetch('/api/admin/login', {
+      method: 'POST',
+      body: JSON.stringify({ pin }),
+    }),
 
   // ── Routes client admin (requireAdmin = client OU tech) ───────────────────
 

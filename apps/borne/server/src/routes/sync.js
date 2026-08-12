@@ -9,7 +9,10 @@ import { getLastPull, pullMyEvent, pullMyEvents } from '../sync/pull.js';
 import { pushEvent, pushConfig, getPushState } from '../sync/push.js';
 import { hubFetchJson } from '../sync/hubClient.js';
 
-const META_HASH_KEYS = ['theme', 'idle_timeout', 'welcome_title', 'welcome_subtitle', 'name_prompt', 'consent_text', 'consent_details', 'thanks_text'];
+// admin_pin inclus : si le client le régénère côté Hub, le technicien doit voir
+// « config différente » sur place (sinon confusion — l'ancien code ne marche
+// plus mais rien ne l'indique).
+const META_HASH_KEYS = ['theme', 'idle_timeout', 'welcome_title', 'welcome_subtitle', 'name_prompt', 'consent_text', 'consent_details', 'thanks_text', 'admin_pin'];
 
 function configHash(questions, meta) {
   const q = questions.map(({ text, max_duration, countdown, order_index, enabled }) =>
