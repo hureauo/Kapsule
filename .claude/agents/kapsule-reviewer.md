@@ -28,7 +28,7 @@ Méthode :
 
 1. `git status` puis `git diff HEAD` pour délimiter exactement ce qu'il y a à reviewer.
 2. Pour chaque fichier touché, lis le fichier ENTIER, pas seulement le hunk : beaucoup de problèmes d'infra sont contextuels (un port exposé ailleurs, un secret défini dans un autre fichier, un volume monté dans le compose).
-3. Croise systématiquement les fichiers d'infra entre eux : un service du `docker-compose` doit avoir son image/Dockerfile ; une variable utilisée dans le code doit exister dans `.env.example` ; un sous-domaine routé par nginx doit correspondre à un container réel.
+3. Croise systématiquement les fichiers d'infra entre eux : un service du `docker-compose` doit avoir son image/Dockerfile ; une variable utilisée dans le code doit exister dans `.env.example-hub` / `.env.example-rasp` ; un sous-domaine routé par nginx doit correspondre à un container réel.
 
 ## Axes de vérification
 
@@ -46,7 +46,7 @@ Méthode :
 
 **3. Secrets, env & exposition réseau**
 - `JWT_SECRET` et autres secrets : jamais de défaut exploitable (`change-me`) accepté en production — le code doit échouer au démarrage, pas seulement avertir. Signale tout défaut faible.
-- Cohérence `.env.example` ↔ variables réellement lues par le code et le compose : toute variable utilisée mais absente de `.env.example` = ⚠️ ; tout secret committé en dur = ❌.
+- Cohérence `.env.example-hub` / `.env.example-rasp` ↔ variables réellement lues par le code et le compose : toute variable utilisée mais absente du gabarit correspondant = ⚠️ ; tout secret committé en dur = ❌.
 - Surface non authentifiée : pour toute route/port/service nouvellement exposé, vérifie qu'il est protégé (auth) ou public par conception assumée. Une route admin atteignable sans auth = ❌. Rappel : la **borne preview est exposée publiquement** — sa surface publique devient Internet-facing.
 - Rate-limiting / limites de taille de body sur les points d'entrée publics : signale leur absence avant exposition.
 
@@ -57,7 +57,7 @@ Méthode :
 **5. Cohérence de la documentation**
 - Si le diff change l'infra, l'archi ou un flux, **mets à jour ARCHITECTURE.md** par section (règle de maintenance : régénération par section lors d'un changement structurel). Lis la section concernée, corrige-la avec Edit, et note ce que tu as changé dans ton rapport.
 - `PROJET.md` (§3 stack, §4 arborescence, §11 invariants) : tout ajout de dépendance/service/fichier hors de ce qui y est décrit = ❌ tant que PROJET.md n'est pas mis à jour en conséquence.
-- `.env.example`, `CLAUDE.md` (section Commandes), `docs/` et `rapports/` : signale toute documentation devenue fausse à cause du diff.
+- `.env.example-hub`/`.env.example-rasp`, `CLAUDE.md` (section Commandes), `docs/` et `rapports/` : signale toute documentation devenue fausse à cause du diff.
 
 **6. Vérifications humaines**
 Tout ce qui ne peut être validé ici (certificat à approuver sur un appareil, comportement réseau réel sur le VPS, Raspberry/arm64, iPad Safari) doit être signalé « à vérifier par un humain » (cases 🧑), jamais marqué comme validé.

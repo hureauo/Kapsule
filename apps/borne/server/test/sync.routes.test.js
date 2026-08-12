@@ -69,6 +69,52 @@ function restoreFetch() {
 
 // ── GET /api/sync/status ─────────────────────────────────────────────────────
 
+// ── GET /api/sync/pairing-status ─────────────────────────────────────────────
+// AUCUNE auth (Phase C) : c'est tout l'intérêt — l'écran d'onboarding pré-
+// appairage doit pouvoir l'interroger sans mot de passe.
+
+describe('GET /api/sync/pairing-status', () => {
+  let dir, app;
+
+  beforeEach(async () => {
+    ({ dir, app } = await setup());
+    mockFetchSuccess();
+  });
+  afterEach(() => { restoreFetch(); teardown(dir); });
+
+  it('répond 200 sans aucune authentification', async () => {
+    const res = await request(app).get('/api/sync/pairing-status');
+    assert.equal(res.status, 200);
+  });
+
+  it('une fois appairée (hasToken=true), ne renvoie que hasToken/hasActiveEvent — ni hubUrl ni logs', async () => {
+    const res = await request(app).get('/api/sync/pairing-status');
+    assert.deepEqual(Object.keys(res.body).sort(), ['hasActiveEvent', 'hasToken']);
+    assert.equal(JSON.stringify(res.body).includes(TEST_CFG.boxToken), false);
+  });
+
+  it('hasToken=true quand boxToken est configuré (setup() en fournit un)', async () => {
+    const res = await request(app).get('/api/sync/pairing-status');
+    assert.equal(res.body.hasToken, true);
+  });
+});
+
+describe('GET /api/sync/pairing-status — sans aucun token configuré', () => {
+  it('hasToken=false, hasActiveEvent=false, expose hubUrl/lastPull/logs (onboarding)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-pairing-'));
+    const app = createApp(dir, { ...config, dataDir: dir, hubUrl: '', boxToken: '', borneToken: '', skipRateLimits: true });
+    const res = await request(app).get('/api/sync/pairing-status');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.hasToken, false);
+    assert.equal(res.body.hasActiveEvent, false);
+    assert.ok('hubUrl' in res.body);
+    assert.ok('lastPull' in res.body);
+    assert.ok(Array.isArray(res.body.logs));
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 describe('GET /api/sync/status', () => {
   let dir, app, token;
 

@@ -15,7 +15,6 @@ export const config = {
   pullIntervalMs: parseInt(env.PULL_INTERVAL_MS ?? '300000', 10),
 maxDataBytes: parseInt(env.MAX_DATA_BYTES || '0', 10),
   previewMode: env.PREVIEW_MODE === 'true',
-  hostPort: env.HOST_PORT ?? null,
 };
 
 export function validateConfig(cfg, nodeEnv) {
@@ -27,7 +26,10 @@ export function validateConfig(cfg, nodeEnv) {
     }
     console.warn('[borne] ⚠️  JWT_SECRET non configuré — acceptable en dev/test uniquement.');
   }
-  if (strict && cfg.techPassword === 'tech123') {
-    throw new Error('[borne] TECH_PASSWORD est la valeur par défaut "tech123" — refus de démarrer en production/preview. Définissez TECH_PASSWORD.');
+  // 'tech123' = défaut historique (config.js) ; 'change-me' = valeur d'exemple des
+  // deux gabarits .env.example-* — les deux sont des mots de passe connus publiquement.
+  const weakTechPassword = cfg.techPassword === 'tech123' || cfg.techPassword === 'change-me';
+  if (strict && weakTechPassword) {
+    throw new Error('[borne] TECH_PASSWORD est une valeur d\'exemple ("tech123"/"change-me") — refus de démarrer en production/preview. Définissez TECH_PASSWORD.');
   }
 }

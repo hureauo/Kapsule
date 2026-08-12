@@ -92,7 +92,8 @@ expect PUT "$QB/$QID" 200 "update question" "$TOKEN" '{"text":"Question smoke é
 expect DELETE "$QB/$QID" 204 "suppression question" "$TOKEN"
 
 # Passage en ready APRÈS l'édition des questions (ready gèle l'édition — PROJET.md §7).
-expect PUT "$BASE/api/events/$EID/status" 200 "statut draft→preview" "$TOKEN" '{"status":"preview"}'
+# Un événement démarre déjà en 'preview' (statut 'draft' supprimé, migration remove_draft_status) —
+# rien à transitionner avant ready, MANUAL_TRANSITIONS n'autorise que preview↔ready.
 expect PUT "$BASE/api/events/$EID/status" 200 "statut preview→ready" "$TOKEN" '{"status":"ready"}'
 
 # ── 5. Tokens de borne ────────────────────────────────────────────────────────

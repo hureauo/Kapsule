@@ -239,34 +239,10 @@ export function makeSyncRouter(dataDir, opts = {}) {
       // la Borne ne doit jamais la recevoir, comme le rôle 'general' est exclu ci-dessous.
       delete meta.design_source_id;
 
-      // Bundle users : uniquement le rôle borne nominatif restant (tech_borne).
-      // admin_borne n'a plus de compte pull-able (code PIN partagé, event_meta.admin_pin) ;
-      // le rôle 'general' n'est pas pullé — son auth est proxiée vers le Hub à chaque login (§11.24).
-      const assignedUsers = db.prepare(`
-        SELECT u.email, u.password_hash, eu.roles
-        FROM event_users eu
-        INNER JOIN users u ON u.id = eu.user_id
-        WHERE eu.event_id = ? AND u.active = 1 AND u.password_hash IS NOT NULL
-        ORDER BY u.email
-      `).all(event.id).map(u => ({ email: u.email, password_hash: u.password_hash, roles: JSON.parse(u.roles) }));
-
-      const superuserEmails = new Set(
-        db.prepare(`SELECT email FROM users WHERE role = 'superuser' AND active = 1`).all().map(u => u.email)
-      );
-
-      const superusers = db.prepare(`
-        SELECT email, password_hash FROM users
-        WHERE role = 'superuser' AND active = 1
-      `).all().map(u => ({ email: u.email, password_hash: u.password_hash, roles: ['tech_borne'] }));
-
-      // Fusionner : les superusers remplacent leurs éventuels rôles restreints dans event_users.
-      // Filtrer les rôles 'general' des assignés non-superusers.
-      const assignedNonSuperusers = assignedUsers
-        .filter(u => !superuserEmails.has(u.email))
-        .map(u => ({ ...u, roles: u.roles.filter(r => r !== 'general') }))
-        .filter(u => u.roles.length > 0);
-
-      const usersWithHash = [...assignedNonSuperusers, ...superusers];
+      // Plus aucun compte nominatif pull-able : admin_borne et tech_borne sont tous deux
+      // passés au PIN partagé (event_meta.admin_pin / tech_pin, transmis via `meta`
+      // ci-dessus). Le rôle 'general' n'est pas pullé — son auth est proxiée vers le
+      // Hub à chaque login (§11.24).
 
       // requiresLogin : vrai si au moins un user 'general' est assigné (auth wall preview via Hub)
       const hasGeneral = db.prepare(`
@@ -294,11 +270,10 @@ export function makeSyncRouter(dataDir, opts = {}) {
       }
 
       const freshEvent = getEvent(db, event.id);
-      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  users=${usersWithHash.length}  status=${freshEvent.status}  requiresLogin=${hasGeneral}  design_assets=${design_assets.length}`);
+      syncLog(req, 200, `name="${event.name}"  questions=${questions.length}  status=${freshEvent.status}  requiresLogin=${hasGeneral}  design_assets=${design_assets.length}`);
       res.json({
         event: { ...freshEvent, meta },
         questions,
-        users: usersWithHash,
         requiresLogin: hasGeneral,
         design_assets,
       });

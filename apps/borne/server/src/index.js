@@ -14,6 +14,7 @@ import { makeSyncRouter } from './routes/sync.js';
 import { pullMyEvent, pullMyEvents } from './sync/pull.js';
 import { resolveBorneIdentity } from './borneIdentity.js';
 import { startHeartbeat } from './sync/heartbeat.js';
+import { logInit } from './initLog.js';
 
 export function createApp(dataDir, cfg = config) {
   openRegistry(dataDir);
@@ -99,7 +100,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   app.listen(config.port, async () => {
     const isPreview = config.previewMode;
     const isBornePhysique = Boolean(config.hubUrl && config.borneToken);
-    const hostPort = config.hostPort ?? config.port;
+    const hostPort = config.port;
     const w = 52;
     const line = (s = '') => console.log(`│ ${s.padEnd(w - 2)} │`);
 
@@ -110,13 +111,23 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     let pullResult = null;
     if (isBornePhysique) {
       console.log('[borne] connexion au Hub (identité borne)…');
+      logInit('info', `Démarrage — identité borne, Hub ${config.hubUrl}`);
       pullResult = await pullMyEvents(config.dataDir)
         .then(({ pulled }) => ({ pulled: pulled > 0 }))
         .catch(err => ({ error: err.message }));
+      logInit(pullResult.error ? 'error' : 'info', pullResult.error
+        ? `Pull initial échoué — ${pullResult.error}`
+        : (pullResult.pulled ? 'Pull initial réussi' : 'Pull initial — aucun événement pullable'));
       startHeartbeat(config.dataDir);
     } else if (config.hubUrl && config.boxToken) {
       console.log('[borne] connexion au Hub…');
+      logInit('info', `Démarrage — token d'événement, Hub ${config.hubUrl}`);
       pullResult = await pullMyEvent(config.dataDir).then(n => ({ pulled: n > 0 })).catch(err => ({ error: err.message }));
+      logInit(pullResult.error ? 'error' : 'info', pullResult.error
+        ? `Pull initial échoué — ${pullResult.error}`
+        : (pullResult.pulled ? 'Pull initial réussi' : 'Pull initial — aucun événement pullable'));
+    } else {
+      logInit('info', 'Démarrage — mode autonome (aucun token configuré)');
     }
 
     const activeEvent = getActiveEvent();

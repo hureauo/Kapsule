@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { getActiveEvent } from '../registry.js';
 import { hubFetchJson } from './hubClient.js';
 import { runCommand } from './commandExecutor.js';
+import { logInit } from '../initLog.js';
 
 let _timer = null;
 
@@ -59,8 +60,10 @@ export async function beat(dataDir) {
     }
 
     heartbeatLog(true, commands?.length ? `commands=${commands.length}` : '');
+    logInit('info', `Battement ✓${commands?.length ? ` — ${commands.length} commande(s)` : ''}`);
   } catch (err) {
     heartbeatLog(false, err.message);
+    logInit('error', `Battement ✗ — ${err.message}`);
   }
 }
 

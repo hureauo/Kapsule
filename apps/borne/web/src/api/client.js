@@ -103,11 +103,24 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }),
-  // admin_borne : code à 6 chiffres partagé (event_meta.admin_pin), pas de compte nominatif.
+  // admin_borne / tech_borne : code à 6 chiffres partagé (event_meta.admin_pin /
+  // tech_pin), pas de compte nominatif.
   loginPin: (pin) =>
     apiFetch('/api/admin/login', {
       method: 'POST',
       body: JSON.stringify({ pin }),
+    }),
+
+  // Public, sans auth (Phase C) : état d'appairage + journal d'init pour l'écran
+  // d'onboarding affiché tant qu'aucun token n'est configuré sur la borne.
+  pairingStatus: () => apiFetch('/api/sync/pairing-status'),
+
+  // Auth wall preview (rôle general, §11.24) : proxy vers le Hub via /api/preview/login,
+  // distinct de /api/admin/login (PIN admin_borne/tech_borne).
+  previewLogin: (email, password) =>
+    apiFetch('/api/preview/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
     }),
 
   // ── Routes client admin (requireAdmin = client OU tech) ───────────────────

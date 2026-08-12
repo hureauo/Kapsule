@@ -25,3 +25,24 @@ describe('validateConfig (hub)', () => {
     assert.doesNotThrow(() => validateConfig(SAFE_CFG, 'production'));
   });
 });
+
+describe('validateConfig (hub) — ADMIN_PASSWORD_HUB', () => {
+  test('lève une erreur en production si adminPassword vaut "change-me"', () => {
+    assert.throws(
+      () => validateConfig({ ...SAFE_CFG, adminPassword: 'change-me' }, 'production'),
+      /ADMIN_PASSWORD_HUB/
+    );
+  });
+
+  test('ne lève pas en test avec adminPassword "change-me"', () => {
+    assert.doesNotThrow(() => validateConfig({ ...SAFE_CFG, adminPassword: 'change-me' }, 'test'));
+  });
+
+  test('ne lève pas en production si adminPassword est vide (seed désactivé)', () => {
+    assert.doesNotThrow(() => validateConfig({ ...SAFE_CFG, adminPassword: '' }, 'production'));
+  });
+
+  test('ne lève pas en production avec un vrai mot de passe', () => {
+    assert.doesNotThrow(() => validateConfig({ ...SAFE_CFG, adminPassword: 'un-mdp-fort' }, 'production'));
+  });
+});

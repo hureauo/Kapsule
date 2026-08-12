@@ -64,7 +64,7 @@ Le compose monte `/etc/letsencrypt` en lecture seule dans le conteneur Nginx. Sa
 ### Étape 2 — Créer le `.env`
 
 ```bash
-cp .env.example .env
+cp .env.example-hub .env
 ```
 
 Modifiez au minimum :
@@ -138,17 +138,19 @@ Le token en clair n'est affiché **qu'une seule fois** — copiez-le immédiatem
 
 ```bash
 git clone <url-du-depot> kapsule && cd kapsule
-cp .env.example .env
+cp .env.example-rasp .env
 ```
 
+`HUB_URL` est déjà réglé sur `kapsule.hureau.com` dans `.env.example-rasp` — il ne reste
+normalement qu'à coller le token de l'étape 2 :
+
 ```ini
-JWT_SECRET=une-longue-chaine-aleatoire
-TECH_PASSWORD=mot-de-passe-technicien     # fallback mode autonome (sans Hub) uniquement
-HUB_URL=https://votre-domaine.com
 BORNE_TOKEN=<token-copié-à-l'étape-2>
 ```
 
-> **Auth en mode appairé (avec Hub)** : les comptes sont définis côté Hub (onglet Utilisateurs de chaque événement) et pullés dans le bundle. L'admin et le technicien se connectent par email + mot de passe. `TECH_PASSWORD` n'est utilisé qu'en **mode autonome** (sans `HUB_URL`), où il est le seul moyen d'accéder à la console `/borne`.
+Changez aussi `JWT_SECRET` et `TECH_PASSWORD` (fallback mode autonome) en prod.
+
+> **Auth en mode appairé (avec Hub)** : l'admin et le technicien se connectent par un code à 6 chiffres partagé (`admin_pin`/`tech_pin`, onglet Design de l'événement côté Hub, régénérable à tout moment) — pas de compte à créer. `TECH_PASSWORD` n'est utilisé que tant qu'**aucun événement n'est actif** (mode autonome sans `HUB_URL`, ou juste après appairage avant le premier pull) ; dès qu'un événement est actif, seul le PIN fonctionne.
 
 ### Étape 4 — Construire et démarrer
 
@@ -177,8 +179,8 @@ Safari n'autorise la caméra qu'en HTTPS. Le certificat auto-signé doit être a
 
 ### Étape 7 — Préflight
 
-Sur `https://<ip-de-la-borne>/borne`, connectez-vous en tant que **technicien** (email + mot de
-passe si la borne est appairée au Hub, sinon `TECH_PASSWORD`). Onglet **Événements** : activez
+Sur `https://<ip-de-la-borne>/borne`, connectez-vous en tant que **technicien** (code PIN à 6
+chiffres une fois un événement actif, sinon `TECH_PASSWORD`). Onglet **Événements** : activez
 l'événement à jouer (si plusieurs sont assignés). Onglet **Machine** : vérifiez que tout est au
 vert (disque, horloge, caméra).
 
@@ -271,7 +273,9 @@ Chaque assertion logge `✓`/`✗` ; le script s'arrête sur la première qui ca
 
 ## 7. Variables d'environnement
 
-Toutes dans `.env` à la racine (copié depuis `.env.example`). `${VAR:-defaut}` dans les fichiers compose signifie « valeur du `.env` sinon ce défaut ».
+Toutes dans `.env` à la racine, copié depuis `.env.example-hub` (VPS) ou `.env.example-rasp`
+(Raspberry Pi) selon la machine. `${VAR:-defaut}` dans les fichiers compose signifie
+« valeur du `.env` sinon ce défaut ».
 
 ### Hub
 
@@ -288,7 +292,7 @@ Toutes dans `.env` à la racine (copié depuis `.env.example`). `${VAR:-defaut}`
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `JWT_SECRET` | `change-me` | Secret JWT — **à changer en prod** |
-| `TECH_PASSWORD` | `tech123` | Fallback technicien **mode autonome seulement** (sans Hub). En mode appairé, les comptes sont pullés depuis le Hub. |
+| `TECH_PASSWORD` | `tech123` | Fallback technicien, actif **uniquement tant qu'aucun événement n'est actif** (mode autonome, ou juste après appairage avant le premier pull). Une fois un événement actif, seul le code PIN (`tech_pin`, régénérable depuis le Hub) fonctionne. |
 | `HUB_URL` | _(vide)_ | URL du Hub. **Vide = mode autonome** (pas de synchro) |
 | `BOX_TOKEN` | _(vide)_ | Token d'événement (essai/legacy) — préférer `BORNE_TOKEN` pour une borne physique |
 | `BORNE_TOKEN` | _(vide)_ | Identité de borne physique (Phase B), créée depuis l'onglet Bornes du Hub. Seed uniquement : une rotation depuis `/borne` persiste en base et prime dessus |

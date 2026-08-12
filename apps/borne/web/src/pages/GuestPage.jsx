@@ -90,7 +90,7 @@ function PreviewLoginScreen({ onSuccess }) {
     setLoading(true);
     setError('');
     try {
-      const data = await api.login(email, password);
+      const data = await api.previewLogin(email, password);
       saveGeneralToken(data.token);
       onSuccess();
     } catch {

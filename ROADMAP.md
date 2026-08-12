@@ -566,3 +566,39 @@ purger) exécutées au battement suivant.
 > attendant un correctif, lancer les fichiers de test individuellement
 > (`docker compose run --rm dev node --test apps/hub/server/test/<fichier>.test.js`) plutôt que
 > la suite complète du workspace Hub.
+
+## Phase C — PIN technicien + onboarding pré-appairage
+
+Contexte : `admin_borne` est passé à un code PIN partagé le 12/08/2026 (`event_meta.admin_pin`) pour
+éviter la gestion de comptes sur un rôle qui n'agit que sur l'événement actif. `tech_borne` avait
+été délibérément laissé nominatif (actions plus sensibles : synchro, clôture, purge) — décision
+révisée : même constat de complexité inutile pour une borne de terrain, on généralise le PIN aux
+deux rôles. En parallèle, avant tout appairage au Hub, la console `/borne` retombe aujourd'hui sur
+un mode quasi vide protégé par `TECH_PASSWORD` sans jamais l'expliciter comme un état distinct :
+on formalise cet état « pas encore appairée » avec un écran dédié, sans mot de passe (rien de
+sensible n'existe encore), qui montre la progression de l'appairage (token détecté, Hub joignable,
+premier pull) au technicien sur place.
+
+- [x] C.1 : PIN partagé pour `tech_borne`, symétrique à `admin_borne` — `event_meta.tech_pin`
+  (généré à la création de l'événement, régénérable depuis le Hub, onglet Design). Remplace
+  entièrement l'auth nominative pour ce rôle : `POST /api/admin/login { pin }` essaie `tech_pin`
+  (rôle le plus élevé) avant `admin_pin` ; bundle (`routes/sync.js` Hub) ne transporte plus aucun
+  compte (`assignedUsers`/`superusers` retirés) ; `pull.js` (Borne) n'écrit plus jamais dans
+  `event_users` ; `VALID_ROLES` de `/api/admin/events/:id/users` réduit à `['general']`.
+  `TECH_PASSWORD` env reste le seul fallback (pas d'événement actif — mode autonome ou juste
+  après appairage, avant le premier pull). Web : `BornePage.jsx` en mode PIN, `EventDetailPage.jsx`
+  (champ + régénération tech_pin), `UtilisateursTab` réduit à `general`. Tests : `auth.test.js`
+  (Borne), `helpers.js` (PIN au lieu de comptes seed, partagé par 6 suites), `events.test.js`/
+  `admin.test.js`/`sync.test.js` (Hub), `sync.pull.test.js` (Borne) mis à jour.
+- [x] C.2 : Écran d'onboarding pré-appairage sur `/borne` — `GET /api/sync/pairing-status`
+  (Borne, **seule route non protégée** de `routes/sync.js`, volontairement) expose
+  `{ hasToken, hubUrl, hasActiveEvent, lastPull, logs }` ; `logs` vient de `initLog.js` (journal
+  en mémoire, ~100 entrées, alimenté par `index.js`/`pull.js`/`heartbeat.js`). Tant qu'aucun
+  token n'est configuré, `BornePage.jsx` affiche `OnboardingScreen` (aucune auth) au lieu du
+  login ; une fois le token détecté mais avant tout événement actif, retombe sur le login
+  `TECH_PASSWORD` (pas encore de `tech_pin` disponible) ; sinon PIN normal. Tests :
+  `sync.routes.test.js` (Borne).
+
+**Terminé quand** : le technicien se connecte à `/borne` et `/admin` avec un code à 6 chiffres
+régénérable depuis le Hub, sans compte à créer ; une borne neuve affiche sa progression
+d'appairage sans qu'aucun mot de passe ne soit demandé avant le premier pull réussi.

@@ -6,6 +6,8 @@ const SAFE = { jwtSecret: 'une-vraie-cle', techPassword: 'mdp-fort', previewMode
 const WEAK_JWT = { jwtSecret: 'change-me', techPassword: 'mdp-fort', previewMode: false };
 const EMPTY_JWT = { jwtSecret: '', techPassword: 'mdp-fort', previewMode: false };
 const WEAK_TECH = { jwtSecret: 'une-vraie-cle', techPassword: 'tech123', previewMode: false };
+// change-me : valeur d'exemple des deux gabarits .env.example-hub/-rasp (Phase C)
+const WEAK_TECH_CHANGEME = { jwtSecret: 'une-vraie-cle', techPassword: 'change-me', previewMode: false };
 
 describe('validateConfig (borne) — production', () => {
   test('JWT_SECRET change-me → erreur', () => {
@@ -18,6 +20,10 @@ describe('validateConfig (borne) — production', () => {
 
   test('TECH_PASSWORD tech123 → erreur', () => {
     assert.throws(() => validateConfig(WEAK_TECH, 'production'), /TECH_PASSWORD/);
+  });
+
+  test('TECH_PASSWORD change-me → erreur', () => {
+    assert.throws(() => validateConfig(WEAK_TECH_CHANGEME, 'production'), /TECH_PASSWORD/);
   });
 
   test('secrets valides → OK', () => {

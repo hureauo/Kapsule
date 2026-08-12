@@ -3,11 +3,11 @@ import { api } from '../../api/client.js';
 
 // onSuccess(token) : le composant parent décide où stocker le token
 // (admin_token pour /admin, tech_token pour /borne)
-// mode : 'pin' (6 chiffres, /admin — code partagé, pas de compte nominatif pour
-//   ce rôle, cf. event_meta.admin_pin) | 'password' (email + mot de passe, /borne
-//   — compte nominatif tech_borne, ou TECH_PASSWORD en mode autonome)
+// mode : 'pin' (6 chiffres, code partagé — event_meta.admin_pin sur /admin,
+//   tech_pin sur /borne — pas de compte nominatif pour ces rôles) | 'password'
+//   (mot de passe seul, fallback TECH_PASSWORD — actif uniquement tant qu'aucun
+//   événement n'est actif, cf. middleware/auth.js)
 export default function AdminLogin({ onSuccess, title = 'Administration', mode = 'password' }) {
-  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -20,7 +20,7 @@ export default function AdminLogin({ onSuccess, title = 'Administration', mode =
     try {
       const data = mode === 'pin'
         ? await api.loginPin(pin)
-        : await api.login(email || undefined, password);
+        : await api.login(undefined, password);
       const accepted = onSuccess(data.token);
       if (accepted === false) setError('Accès refusé : droits insuffisants.');
     } catch {
@@ -49,25 +49,15 @@ export default function AdminLogin({ onSuccess, title = 'Administration', mode =
             style={{ textAlign: 'center', letterSpacing: '4px', fontSize: '1.5rem' }}
           />
         ) : (
-          <>
-            <input
-              className="name-form__input"
-              type="email"
-              autoFocus
-              value={email}
-              onChange={(e) => { setEmail(e.target.value); setError(''); }}
-              placeholder="Email (vide en mode autonome)"
-              disabled={loading}
-            />
-            <input
-              className="name-form__input"
-              type="password"
-              value={password}
-              onChange={(e) => { setPassword(e.target.value); setError(''); }}
-              placeholder="Mot de passe"
-              disabled={loading}
-            />
-          </>
+          <input
+            className="name-form__input"
+            type="password"
+            autoFocus
+            value={password}
+            onChange={(e) => { setPassword(e.target.value); setError(''); }}
+            placeholder="Mot de passe"
+            disabled={loading}
+          />
         )}
         {error && <p className="text--error" role="alert">{error}</p>}
         <button

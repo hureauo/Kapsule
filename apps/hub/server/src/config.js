@@ -26,6 +26,15 @@ export function validateConfig(cfg, nodeEnv) {
     }
     console.warn('[hub] ⚠️  JWT_SECRET non configuré (valeur par défaut "change-me") — acceptable en dev/test uniquement.');
   }
+  // adminPassword vide = seed automatique désactivé (voir index.js) : rien à valider.
+  // Non vide + valeur d'exemple = un superuser Internet-facing serait créé avec un
+  // mot de passe public (.env.example-hub) — même garde que JWT_SECRET.
+  if (cfg.adminPassword === 'change-me') {
+    if (nodeEnv === 'production') {
+      throw new Error('[hub] ADMIN_PASSWORD_HUB est "change-me" — refus de démarrer en production. Définissez ADMIN_PASSWORD_HUB (ou laissez-le vide pour désactiver le seed automatique).');
+    }
+    console.warn('[hub] ⚠️  ADMIN_PASSWORD_HUB non configuré (valeur par défaut "change-me") — acceptable en dev/test uniquement.');
+  }
   // SMTP non bloquant : son absence dégrade (pas d'envoi auto) mais ne doit pas
   // empêcher le Hub de démarrer — le fallback « lien copiable » couvre ce cas.
   if (!cfg.smtpHost) {

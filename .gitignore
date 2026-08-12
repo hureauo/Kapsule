@@ -1,10 +1,11 @@
 # Dépendances
 node_modules/
 
-# Environnement (secrets) — seul .env.example est versionné
+# Environnement (secrets) — seuls les .env.example-* sont versionnés
 .env
 .env.*
-!.env.example
+!.env.example-hub
+!.env.example-rasp
 
 # Données locales de dev (bases SQLite, vidéos)
 .data/

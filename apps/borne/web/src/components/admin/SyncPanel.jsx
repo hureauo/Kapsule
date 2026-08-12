@@ -13,7 +13,7 @@ function diffConfig(hub, local) {
   if (!hub || !local) return 'unknown';
   const hubQ = JSON.stringify(hub.questions.map(q => ({ text: q.text, max_duration: q.max_duration, countdown: q.countdown, enabled: q.enabled })));
   const locQ = JSON.stringify(local.questions.map(q => ({ text: q.text, max_duration: q.max_duration, countdown: q.countdown, enabled: q.enabled })));
-  const META_KEYS = ['theme', 'idle_timeout', 'welcome_title', 'welcome_subtitle', 'name_prompt', 'consent_text', 'consent_details', 'thanks_text', 'admin_pin'];
+  const META_KEYS = ['theme', 'idle_timeout', 'welcome_title', 'welcome_subtitle', 'name_prompt', 'consent_text', 'consent_details', 'thanks_text', 'admin_pin', 'tech_pin'];
   const pick = (meta) => Object.fromEntries(META_KEYS.filter(k => meta[k] !== undefined).map(k => [k, meta[k]]));
   if (hubQ !== locQ) return 'different';
   if (JSON.stringify(pick(hub.meta)) !== JSON.stringify(pick(local.meta))) return 'different';

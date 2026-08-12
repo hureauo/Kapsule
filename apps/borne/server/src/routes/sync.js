@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { rmSync, existsSync, unlink } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -8,11 +9,12 @@ import { closeEventDb, getActiveEventDb } from '../eventDb.js';
 import { getLastPull, pullMyEvent, pullMyEvents } from '../sync/pull.js';
 import { pushEvent, pushConfig, getPushState } from '../sync/push.js';
 import { hubFetchJson } from '../sync/hubClient.js';
+import { getInitLog } from '../initLog.js';
 
-// admin_pin inclus : si le client le régénère côté Hub, le technicien doit voir
-// « config différente » sur place (sinon confusion — l'ancien code ne marche
+// admin_pin/tech_pin inclus : si un code est régénéré côté Hub, le technicien doit
+// voir « config différente » sur place (sinon confusion — l'ancien code ne marche
 // plus mais rien ne l'indique).
-const META_HASH_KEYS = ['theme', 'idle_timeout', 'welcome_title', 'welcome_subtitle', 'name_prompt', 'consent_text', 'consent_details', 'thanks_text', 'admin_pin'];
+const META_HASH_KEYS = ['theme', 'idle_timeout', 'welcome_title', 'welcome_subtitle', 'name_prompt', 'consent_text', 'consent_details', 'thanks_text', 'admin_pin', 'tech_pin'];
 
 function configHash(questions, meta) {
   const q = questions.map(({ text, max_duration, countdown, order_index, enabled }) =>
@@ -45,6 +47,34 @@ function getLocalConfig(dataDir) {
 export function makeSyncRouter(dataDir, cfg) {
   const router = Router();
   const auth = cfg.requireTech;
+
+  // Rate-limiter pour la route de statut publique (borne preview Internet-facing,
+  // sondée toutes les 4s par l'écran d'onboarding).
+  const pairingStatusLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Trop de requêtes, réessayez dans un moment.' },
+    skip: () => cfg.skipRateLimits === true,
+  });
+
+  // ── GET /api/sync/pairing-status ────────────────────────────────────────────
+  // AUCUNE auth (Phase C) : tant qu'aucun token n'est configuré, rien de sensible
+  // n'existe encore sur la borne — l'écran d'onboarding (technicien sur place,
+  // avant tout mot de passe) s'en sert pour montrer la progression de l'appairage.
+  // Une fois appairée (hasToken=true), la route reste publique mais NE RÉPOND
+  // PLUS que hasToken/hasActiveEvent — hubUrl (topologie interne du Hub) et logs
+  // (ids d'événement, erreurs Hub) ne sont utiles qu'à l'écran d'onboarding et ne
+  // doivent jamais fuiter sur une borne (a fortiori une preview, Internet-facing).
+  router.get('/sync/pairing-status', pairingStatusLimiter, (req, res) => {
+    const hasToken = Boolean(cfg.borneToken || config.borneToken || cfg.boxToken || config.boxToken);
+    if (!hasToken) {
+      const hubUrl = cfg.hubUrl || config.hubUrl || null;
+      return res.json({ hasToken, hubUrl, hasActiveEvent: false, lastPull: null, logs: getInitLog() });
+    }
+    res.json({ hasToken, hasActiveEvent: Boolean(getActiveEvent()) });
+  });
 
   // ── GET /api/sync/status ──────────────────────────────────────────────────────
   // Retourne connexion Hub, token masqué, config locale, état du push en cours.

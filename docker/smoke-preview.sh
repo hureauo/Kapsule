@@ -119,7 +119,9 @@ GUSER_ID=$(json_get "$(http_body GET "$BASE/api/admin/users" "$TOKEN" | tr '}' '
 expect POST "$BASE/api/admin/events/$CREATED_EID/users" 201 "assignation general" "$TOKEN" \
   "{\"user_id\":$GUSER_ID,\"roles\":[\"general\"]}"
 
-expect PUT "$BASE/api/events/$CREATED_EID/status" 200 "statut → preview" "$TOKEN" '{"status":"preview"}'
+# Un événement démarre déjà en 'preview' (statut 'draft' supprimé, migration
+# remove_draft_status) — rien à transitionner ici, MANUAL_TRANSITIONS n'autorise
+# que preview↔ready et rejetterait un preview→preview.
 
 SLUG=$(slug_for "$CREATED_EID")
 echo "  ℹ slug preview : $SLUG (container preview-$SLUG)"

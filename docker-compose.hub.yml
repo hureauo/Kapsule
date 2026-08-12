@@ -15,6 +15,9 @@ services:
       - ADMIN_PASSWORD_HUB=${ADMIN_PASSWORD_HUB:-}
       - EDGE_DOMAIN=${EDGE_DOMAIN:-kapsule.hureau.com}
       - PREVIEW_IMAGE=${PREVIEW_IMAGE:-kapsule-borne-preview-frontend}
+      - PREVIEW_BACKEND_IMAGE=${PREVIEW_BACKEND_IMAGE:-kapsule-borne-preview-backend}
+      - HUB_URL_INTERNAL=${HUB_URL_INTERNAL:-http://hub-backend:3001}
+      - TECH_PASSWORD_PREVIEW=${TECH_PASSWORD_PREVIEW:-}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_SECURE=${SMTP_SECURE:-false}

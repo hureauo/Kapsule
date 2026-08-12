@@ -85,7 +85,8 @@ preview → ready → loaded → live → closed → pushed → processed → wa
 ```
 kapsule/
 ├── package.json                      # workspaces: ["packages/*", "apps/*/server", "apps/*/web"]
-├── .env.example
+├── .env.example-hub                  # gabarit .env pour le VPS (Hub)
+├── .env.example-rasp                 # gabarit .env pour le Raspberry Pi (Borne), HUB_URL prérempli
 ├── docker-compose.yml                # dev local (services dev:borne, dev:hub)
 ├── docker-compose.borne.yml          # déploiement Borne (production Raspberry)
 ├── docker-compose.hub.yml            # déploiement Hub (production VPS)
@@ -130,6 +131,8 @@ kapsule/
 │   │   │       ├── borneIdentity.js  # Phase B : resolveBorneIdentity() — sème/résout le token de
 │   │   │       │                     # borne physique persistant (borne_settings, prime sur l'env)
 │   │   │       ├── eventDb.js        # getActiveEventDb() — ouvre/cache la BD de l'événement actif
+│   │   │       ├── initLog.js        # Phase C : journal d'init en mémoire (logInit/getInitLog),
+│   │   │       │                     # exposé sans auth par GET /api/sync/pairing-status
 │   │   │       ├── middleware/auth.js
 │   │   │       ├── routes/
 │   │   │       │   ├── events.js     # admin : gestion des événements locaux, activation, clôture
@@ -167,6 +170,8 @@ kapsule/
 │   │           │                      # Machine, Synchro (ex TechPage.jsx)
 │   │           ├── components/admin/
 │   │           │   ├── AdminLogin.jsx, AdminLayout.jsx
+│   │           │   ├── OnboardingScreen.jsx # Phase C : écran /borne sans auth tant qu'aucun
+│   │           │   │                        # token n'est configuré (usePairingStatus)
 │   │           │   ├── IdentityPanel.jsx    # Phase B : connexion Hub, token de borne masqué + rotation
 │   │           │   ├── EventPanel.jsx       # tous les événements de la borne : activer, clôturer, purger
 │   │           │   ├── PreflightPanel.jsx   # checklist (config, caméra, disque, horloge) + qualité/
@@ -508,12 +513,27 @@ borne_settings (                               -- Phase B : identité persistant
 
 Base `/api`. JSON partout sauf flux de fichiers. Gestionnaire d'erreurs global → `{ error }` + status. `GET /api/health` → `{ ok: true, activeEvent: <id|null>, disk: { free_bytes, total_bytes } }` (via `fs.statfs` sur `DATA_DIR` — l'admin affiche une alerte rouge sous 10 Go).
 
-**Auth admin local** (`middleware/auth.js`) :
-- `POST /api/admin/login` `{ email, password }` — deux modes :
-  1. **Comptes nominatifs (mode appairé)** : si un événement actif a des entrées dans `event_users` (pullées depuis le bundle Hub), l'auth se fait par email + argon2 contre ces comptes ; le JWT contient `{ email, roles: ['admin_borne'|'tech_borne'|'general'] }`.
-  2. **Fallback TECH_PASSWORD (mode autonome)** : si aucun `event_users` n'existe, `email` est ignoré et on compare `password` à `TECH_PASSWORD` → JWT `{ roles: ['tech_borne'] }`.
+**Auth admin local** (`middleware/auth.js`) — ni `admin_borne` ni `tech_borne` n'ont de compte
+nominatif (Phase C) : les deux s'authentifient par un code à 6 chiffres partagé, régénérable
+depuis le Hub, plus simple qu'un compte email/mdp pour un usage partagé sur place :
+- `POST /api/admin/login` `{ pin }` ou `{ password }` — deux modes :
+  1. **PIN partagé (mode appairé)** : `pin` comparé à `event_meta.tech_pin` de l'événement actif
+     (rôle le plus élevé, essayé en premier) puis `event_meta.admin_pin` ; JWT
+     `{ roles: ['tech_borne'] }` ou `{ roles: ['admin_borne'] }` selon le code saisi — jamais
+     d'email dans le payload.
+  2. **Fallback TECH_PASSWORD** : actif tant que l'événement actif (s'il y en a un) ne porte
+     **aucun PIN** (`admin_pin` ni `tech_pin` en `event_meta`) — mode autonome, borne fraîchement
+     appairée avant le premier pull, ou événement pullé d'un Hub antérieur à Phase C. `password`
+     comparé à `TECH_PASSWORD` → JWT `{ roles: ['tech_borne'] }`. Dès qu'un PIN existe sur
+     l'événement actif, ce fallback est refusé — sinon il resterait une porte dérobée permanente.
 - `requireAdmin = requireRole('admin_borne')` — accepte `admin_borne` **ou** `tech_borne` (sur-ensemble). Accepte `Authorization: Bearer` **ou** `?token=` (indispensable pour `<video src>`, downloads, CSV).
 - `requireTech = requireRole('tech_borne')` — réservé préflight, synchro, clôture.
+- `GET /api/sync/pairing-status` — **public, aucune auth** (Phase C), rate-limitée (60/min,
+  `skipRateLimits` en test). Réponse à **deux formes** selon `hasToken` — pour ne jamais
+  divulguer la topologie interne du Hub ni le journal d'init une fois la borne appairée
+  (a fortiori sur une borne d'essai, Internet-facing) :
+  - `hasToken: false` (avant appairage) → `{ hasToken, hubUrl, hasActiveEvent: false, lastPull: null, logs }` (`logs` = `initLog.js`, ~100 dernières lignes en mémoire), consommé par l'écran d'onboarding `/borne`.
+  - `hasToken: true` (appairée) → `{ hasToken, hasActiveEvent }` uniquement.
 
 **Événements locaux** (`routes/events.js`) — admin :
 - `GET /api/events` — liste du registre local.
@@ -593,8 +613,8 @@ Base `/api`. `GET /api/health`.
   - `GET /api/admin/users` — liste (email, name, role, active, a-un-mot-de-passe).
   - `PUT /api/admin/users/:id` `{ active?, name? }` — désactive/réactive (login refusé si `active=0`), renomme. Régénération d'un lien d'enregistrement : `POST /api/admin/users/:id/registration-link` → nouveau token + URL.
 - **Utilisateurs par événement** (`event_users`) — orchestre quels comptes ont accès à quelle borne :
-  - `GET /api/admin/events/:id/users` — liste des users assignés avec leurs rôles borne (`roles: ['admin_borne'|'tech_borne'|'general']`).
-  - `POST /api/admin/events/:id/users` `{ user_id, roles }` — assigne ou met à jour les rôles (upsert). Valide les rôles : seuls `admin_borne`, `tech_borne`, `general` sont acceptés.
+  - `GET /api/admin/events/:id/users` — liste des users assignés avec leurs rôles borne (`roles: ['general']` — `admin_borne`/`tech_borne` ne sont plus assignables, PIN partagé).
+  - `POST /api/admin/events/:id/users` `{ user_id, roles }` — assigne ou met à jour les rôles (upsert). Valide les rôles : seul `general` est accepté (accès Hub de l'assignation lui-même indépendant du contenu de `roles`, cf. `requireOwner`).
   - `DELETE /api/admin/events/:id/users/:userId` — retire l'association.
 - **Tokens de borne, par événement** (token = événement, §1) :
   - `POST /api/admin/events/:id/tokens` `{ label?, location?, is_preview? }` → génère token (32 octets hex), stocke `sha256(token)` + `token_clear` dans `box_tokens` lié à `:id`, retourne `token_clear` (consultable à tout moment via `GET /api/admin/tokens`).
@@ -620,7 +640,7 @@ L'invariant §11.20 (« un token ne touche que son propre scope ») est porté p
 - `POST /api/sync/borne/heartbeat` — **réservée aux tokens borne**. Body `{ agent_version?, disk?: {free,total}, borne_time_ms, active_event_id? }` → écrit la télémétrie (`clock_skew_ms` **calculé côté Hub**, `Date.now() - borne_time_ms` — la borne n'a pas d'horloge de référence fiable sans RTC, §11.16) et retourne les commandes en attente `{ commands: [{id, type, payload}] }` (marquées `sent` dans la foulée). Ne touche **jamais** au statut d'un événement — la transition `ready→loaded` reste portée par `bundle`, par événement.
 - `POST /api/sync/borne/commands/:id/result` — **réservée aux tokens borne**. Body `{ status: 'done'|'failed', result? }` — 404 si la commande n'appartient pas à la borne authentifiée.
 - `POST /api/sync/event/login` `{ email, password }` — auth wall preview (§11.24). Protégé par `X-Box-Token`. Vérifie les credentials Hub de l'utilisateur **et** son assignation à l'événement du token avec le rôle `general`. Répond `200 { ok: true }` si les deux conditions sont remplies, `401` si credentials invalides, `403` si l'utilisateur n'est pas assigné `general` ou si l'événement n'est pas en statut `preview`. Rate-limit : 10 essais / 15 min / IP.
-- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […], users: [{email, password_hash, roles}] }`. **403 si `!boxHasEventAccess(req.box, :id)`** (token preview hors de son événement, ou token borne sur un événement qui ne lui est pas assigné). Passe `ready→loaded` (token réel) ou ne change pas le statut (token preview, qui reste en `preview`), set `pulled_at`. `users` contient les comptes Hub ayant un mot de passe défini et assignés à l'événement **avec le rôle `admin_borne` ou `tech_borne`** — la Borne les stocke dans `event_users` de sa BD événement et les utilise pour l'auth nominative (§6). Les utilisateurs avec le rôle `general` ne sont **pas** inclus dans le bundle : leur auth est proxiée vers le Hub à chaque login (§11.24). Le bundle inclut aussi `requiresLogin: true` si au moins un user `general` est assigné à l'événement.
+- `GET /api/sync/events/:id/bundle` — `{ event: { …, meta }, questions: […], requiresLogin, design_assets: […] }`. **403 si `!boxHasEventAccess(req.box, :id)`** (token preview hors de son événement, ou token borne sur un événement qui ne lui est pas assigné). Passe `ready→loaded` (token réel) ou ne change pas le statut (token preview, qui reste en `preview`), set `pulled_at`. Plus aucun compte nominatif transporté (Phase C, `admin_borne`/`tech_borne` passés au PIN partagé) : `meta.admin_pin`/`meta.tech_pin` voyagent comme n'importe quelle autre clé `event_meta`. Les utilisateurs avec le rôle `general` ne sont **pas** inclus dans le bundle : leur auth est proxiée vers le Hub à chaque login (§11.24). `requiresLogin: true` si au moins un user `general` est assigné à l'événement.
 - `POST /api/sync/events/:id/status` `{ status: 'live'|'closed' }` — envoyé par la Borne au moment du push (transitions avant uniquement, jamais de retour en arrière) ; met à jour le statut dans le registre Hub pour déclencher le gel d'édition.
 - `POST /api/sync/events/:id/manifest` — body `{ files: [{ video_id, filename, size, checksum }], db: { size, checksum } }`. Réponse : `{ missing: [video_id…] }` (ceux non encore reçus ou de checksum différent) → **c'est ce qui rend le push reprenable et idempotent**.
 - `PUT /api/sync/events/:id/files/:videoId` — upload multipart d'UN fichier ; le Hub recalcule le sha256, 422 si mismatch (la Borne retentera).
@@ -951,7 +971,7 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 
 | Variable | App | Défaut | Rôle |
 |---|---|---|---|
-| `TECH_PASSWORD` | Borne | `tech123` | Fallback **technicien** (mode autonome sans Hub) — ignoré si `event_users` pullés |
+| `TECH_PASSWORD` | Borne | `tech123` | Fallback **technicien** — actif uniquement si **aucun événement actif** (mode autonome, ou borne fraîchement appairée avant le premier pull) ; refusé dès qu'un événement est actif, seul le PIN (`tech_pin`) fonctionne alors |
 | `JWT_SECRET` | Borne+Hub | `change-me` | Signature JWT |
 | `DATA_DIR` | Borne+Hub | `/app/data` | Racine stockage |
 | `PORT` | Borne+Hub | `3001` | Port backend |
@@ -992,11 +1012,11 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 16. **Le Raspberry n'a pas d'horloge RTC** : sans Internet, l'heure dérive ou repart du dernier arrêt — or `consent_at` est la **preuve légale RGPD** et tous les timestamps en dépendent. Matériel requis : module **RTC DS3231** (~5 €, I2C) + chrony ; le Préflight vérifie l'écart d'horloge avec l'appareil admin.
 17. Le ZIP d'archive se génère **sans compression** (mode store) : la vidéo est déjà compressée, recompresser brûle du CPU sur le VPS pour 0 % de gain.
 18. Progression d'upload côté kiosque : `fetch` n'expose pas la progression d'envoi — utiliser `XMLHttpRequest` (`xhr.upload.onprogress`).
-19. **Auth Borne à deux niveaux** : `requireAdmin` (rôle `admin_borne`) ≠ `requireTech` (rôle `tech_borne`). Le tech est sur-ensemble : un token `tech_borne` est accepté par `requireAdmin`. Mais un token `admin_borne` doit recevoir **403** sur préflight, clôture et toute la synchro — re-tagger chaque route, ne pas se contenter de cacher l'onglet côté front. En mode autonome (fallback `TECH_PASSWORD`), le JWT contient `roles: ['tech_borne']` — le tech a accès à tout.
+19. **Auth Borne à deux niveaux** : `requireAdmin` (rôle `admin_borne`) ≠ `requireTech` (rôle `tech_borne`). Le tech est sur-ensemble : un token `tech_borne` est accepté par `requireAdmin`. Mais un token `admin_borne` doit recevoir **403** sur préflight, clôture et toute la synchro — re-tagger chaque route, ne pas se contenter de cacher l'onglet côté front. En mode autonome (fallback `TECH_PASSWORD`), le JWT contient `roles: ['tech_borne']` — le tech a accès à tout. Depuis Phase C, les deux rôles s'authentifient par PIN partagé (`event_meta.admin_pin`/`tech_pin`) — `POST /api/admin/login { pin }` essaie `tech_pin` avant `admin_pin`.
 20. **Token = borne (physique) ou événement (preview), réécrit Phase B** : `requireBox` résout `X-Box-Token` contre **deux** tables et normalise `req.box` — `{kind:'preview', event_id, is_preview}` (token = événement, `box_tokens`, comportement 6C inchangé) ou `{kind:'borne', borne_id, event_ids:[…]}` (token = machine, `bornes`, plusieurs événements assignés). **`boxHasEventAccess(box, eventId)` est le seul point de contrôle** de l'invariant « un token ne touche que son propre scope » — `box.event_id === eventId` (preview) ou `box.event_ids.includes(eventId)` (borne) ; **rejeter (403) toute route `…/events/:id/…`** où ce test échoue. `GET /sync/event` (preview) et `GET /sync/borne/events` (borne, plusieurs) sont deux routes distinctes, chacune 400 si appelée avec le mauvais type de token.
 21. **Borne d'essai** : une borne dont le token est `is_preview=1` (ou `PREVIEW_MODE=true`) **ne doit jamais pouvoir push** (409) — ce sont des données jetables. Quota `MAX_DATA_BYTES` vérifié **avant** d'écrire le fichier d'upload invité (507 si plein), sinon un client peut saturer le disque du VPS via l'aperçu.
 22. **Compte client sans mot de passe** : `users.password_hash` est NULL tant que le client n'a pas suivi le lien d'enregistrement. Le login (argon2) doit gérer ce cas **avant** d'appeler `argon2.verify(null, …)` (sinon exception) ; un compte `active=0` ou sans hash → 401 « identifiants invalides » (ne pas divulguer lequel).
-23. **`event_users` Borne** : les comptes pullés dans `event_users` de la BD événement (`events/<id>/db.sqlite`) ne contiennent que `email`, `password_hash`, `roles` — **RGPD : pas de nom ni d'autre PII** (le nom reste sur le Hub). Ces données sont **écrasées à chaque pull** (DELETE+INSERT en transaction).
+23. **`event_users` Borne** : table historique, **plus jamais peuplée depuis Phase C** — `admin_borne`/`tech_borne` sont passés au PIN partagé (`event_meta.admin_pin`/`tech_pin`), `pull.js` n'y écrit plus jamais de compte. Une borne mise à niveau depuis une version antérieure peut porter d'anciennes lignes (`email`, `password_hash` argon2) : `pull.js` les **purge à chaque pull** (`DELETE FROM event_users` inconditionnel) — aucune donnée invité n'y transite (RGPD non impacté), et ce résidu ne survit jamais plus d'un cycle de synchro.
 24. **Preview requiresLogin (rôle `general`)** : si le bundle indique `requiresLogin: true` (au moins un user `general` assigné côté Hub), la borne stocke `requires_login=true` dans `event_meta` au pull. Le kiosque de la borne d'essai doit alors exiger un login avant d'afficher le parcours invité. Le login est **proxié vers le Hub via un seul appel** : `POST /api/preview/login` `{ email, password }` sur la borne → la borne appelle `POST /api/sync/event/login` du Hub (protégé par `X-Box-Token`). Le Hub vérifie les credentials **ET** que l'utilisateur est assigné à CET événement précis avec le rôle `general` — il répond `200 { ok: true }` / `401` / `403`. En cas de succès, la borne émet un JWT local `{ email, roles: ['general'], event_id }` (8 h). Ce JWT est stocké en `sessionStorage` (durée de session navigateur uniquement) et envoyé en Bearer à `POST /api/sessions`. **Le rôle `general` n'est jamais pullé dans le bundle ni stocké dans `event_users` borne** — la vérification de l'assignation se fait entièrement côté Hub à chaque login (la borne preview est toujours connectée).
 25. **Transitions d'état `preview`** : un token `is_preview=1` ne peut puller que si le statut Hub est `preview`. Un token réel (`is_preview=0`) ne peut puller que si le statut est `ready` ou `loaded`. `requireBox` doit vérifier cette cohérence et retourner 403 si le type de token ne correspond pas au statut attendu.
 26. **Design appliqué = snapshot copié** (§9bis) : `PUT /api/events/:id/design` copie la config JSON et les fichiers assets du design vers `event_meta.design` et `events/<id>/design/` au moment de l'application. La copie est **autonome** : le rendu d'un événement ne dépend jamais, à la lecture (bundle, kiosque), du design source. Une *trace de provenance* (`event_meta.design_source_id` + table registre `event_design_refs`) est conservée, mais ce n'est **pas** une référence vivante — elle sert uniquement à rafraîchir la copie des événements **en statut `preview`** quand le design source est édité (borne d'essai, §9bis « Rafraîchissement de la borne d'essai »). Un événement de tout autre statut (`ready`+) n'est **jamais** modifié par une édition ou une suppression du design source.
