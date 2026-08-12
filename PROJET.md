@@ -14,7 +14,7 @@ Un système de **borne d'enregistrement de messages vidéo pour événements** (
 **Cycle de vie** : le client configure sur le Hub → valide via la **borne preview** (conteneur d'essai, étape officielle) → marque l'événement prêt → la Borne **tire** (pull) la configuration → l'événement se déroule offline, **la Borne est maître** → de retour sur la fibre, on **pousse** (push, déclenchement manuel) vidéos + configuration finale vers le Hub → traitement → consultation → purge manuel.
 
 **Contraintes structurantes :**
-- Multi-événements, multi-clients **côté Hub** ; **une Borne (un Raspberry) ne sert qu'un seul événement**. Chaque Raspberry est déployé à un lieu donné pour un événement donné : pas de gestion multi-événements sur la Borne. Le **token d'appairage est lié à l'événement** (table `box_tokens`, §5.3) — fournir ce token à une Borne (réelle ou conteneur d'essai) l'initialise sur cet événement précis, sans étape d'assignation séparée.
+- Multi-événements, multi-clients **côté Hub** ; **une Borne (un Raspberry) n'a qu'un seul événement ACTIF à la fois** — mais, depuis la Phase B, une borne est une **machine persistante** (table `bornes`, §5.3) à laquelle le Hub peut assigner plusieurs événements dans le temps (table de jonction `borne_events`) : pas besoin de régénérer un token entre deux événements sur le même Raspberry, seulement de choisir (localement, ou via une commande Hub) lequel activer. Deux mécanismes d'appairage coexistent : le **token de borne** (`bornes.token_hash`) identifie la machine ; le **token d'événement** (`box_tokens`, inchangé depuis 6C) reste réservé aux bornes d'essai — un conteneur preview est provisionné pour un seul événement, sans notion de machine persistante.
 - **RGPD : cloisonnement strict par événement — une base SQLite et un dossier de fichiers indépendants par événement.** Effacer un événement = supprimer son dossier.
 - **RGPD : consentement explicite de l'invité** — case à cocher obligatoire avant tout enregistrement (écran du prénom), texte configurable par événement, acceptation **horodatée en base** (preuve de consentement).
 - La Borne doit être **utilisable seule** (mode autonome : créer un événement localement sans Hub).
@@ -126,7 +126,9 @@ kapsule/
 │   │   │   └── src/
 │   │   │       ├── index.js          # bootstrap Express, montage des routes, error handler
 │   │   │       ├── config.js         # lecture env + valeurs par défaut
-│   │   │       ├── registry.js       # registre local (local_events, push_state)
+│   │   │       ├── registry.js       # registre local (local_events, push_state, borne_settings — Phase B)
+│   │   │       ├── borneIdentity.js  # Phase B : resolveBorneIdentity() — sème/résout le token de
+│   │   │       │                     # borne physique persistant (borne_settings, prime sur l'env)
 │   │   │       ├── eventDb.js        # getActiveEventDb() — ouvre/cache la BD de l'événement actif
 │   │   │       ├── middleware/auth.js
 │   │   │       ├── routes/
@@ -134,17 +136,25 @@ kapsule/
 │   │   │       │   ├── questions.js  # CRUD + reorder (sur l'événement actif)
 │   │   │       │   ├── sessions.js   # sessions invités (rate-limit, cloisonnement event)
 │   │   │       │   ├── videos.js     # upload/replace (rate-limit), stream (Range), download, csv, delete
-│   │   │       │   └── sync.js       # admin : état synchro, déclenchement pull/push, purge
+│   │   │       │   └── sync.js       # admin : état synchro, déclenchement pull/push, purge, rotation token
 │   │   │       └── sync/
-│   │   │           ├── hubClient.js  # fetch vers le Hub avec token borne + retry/backoff + borneLog
-│   │   │           ├── pull.js       # pullMyEvent() : pull one-shot ; pullEvent(id) : écrit bundle
-│   │   │           └── push.js       # pushEvent(eventId) + pushConfig(eventId) — manifest, uploads, finalize, reprise
+│   │   │           ├── hubClient.js       # fetch vers le Hub + retry/backoff + borneLog. X-Box-Token =
+│   │   │           │                      # config.borneToken (borne physique) sinon config.boxToken (preview)
+│   │   │           ├── pull.js            # pullMyEvent() : pull one-shot (preview) ; pullMyEvents()
+│   │   │           │                      # Phase B (borne physique, plusieurs événements) ; pullEvent(id) : écrit bundle
+│   │   │           ├── push.js            # pushEvent(eventId) + pushConfig(eventId) — manifest, uploads, finalize, reprise
+│   │   │           ├── commandExecutor.js # Phase B : runCommand() — exécute pull/activate_event/
+│   │   │           │                      # close_event/purge_event reçues au heartbeat
+│   │   │           └── heartbeat.js       # Phase B : beat()/startHeartbeat() — battement périodique
+│   │   │                                  # (PULL_INTERVAL_MS), télémétrie + exécution des commandes
 │   │   └── web/
 │   │       ├── Dockerfile.preview    # image borne preview (SPA + nginx, arm64/amd64)
 │   │       ├── package.json, vite.config.js, index.html
 │   │       └── src/
 │   │           ├── main.jsx, App.jsx # routes : "/" → GuestPage (dans <div class="kapsule-guest">
-│   │           │                      # pour le scope CSS partagé), "/admin/*" → AdminPage
+│   │           │                      # pour le scope CSS partagé), "/admin" → AdminPage (événement
+│   │           │                      # actif), "/borne" → BornePage (Phase B, console machine —
+│   │           │                      # remplace l'ancien "/admin/tech")
 │   │           ├── api/client.js
 │   │           ├── utils/design.js    # applyDesign() : pose les tokens d'un design sur <html>
 │   │           │                      # (whitelist DESIGN_COLOR_KEYS, §9bis) — fine couche
@@ -152,14 +162,18 @@ kapsule/
 │   │           ├── pages/GuestPage.jsx # importe les 7 écrans du parcours invité depuis
 │   │           │                      # @kapsule/guest-ui (chantier designUI) — plus aucun
 │   │           │                      # composant guest ni hook caméra dans cette app
-│   │           ├── pages/AdminPage.jsx
+│   │           ├── pages/AdminPage.jsx # "/admin" — événement ACTIF uniquement : Questions, Vidéos, Design
+│   │           ├── pages/BornePage.jsx # Phase B, "/borne" — console machine : Identité, Événements,
+│   │           │                      # Machine, Synchro (ex TechPage.jsx)
 │   │           ├── components/admin/
 │   │           │   ├── AdminLogin.jsx, AdminLayout.jsx
-│   │           │   ├── EventPanel.jsx       # événement actif, création locale, activation, clôture
-│   │           │   ├── PreflightPanel.jsx   # checklist pré-événement (config, caméra, disque, horloge)
+│   │           │   ├── IdentityPanel.jsx    # Phase B : connexion Hub, token de borne masqué + rotation
+│   │           │   ├── EventPanel.jsx       # tous les événements de la borne : activer, clôturer, purger
+│   │           │   ├── PreflightPanel.jsx   # checklist (config, caméra, disque, horloge) + qualité/
+│   │           │   │                        # orientation d'enregistrement (override local, Phase B)
 │   │           │   ├── QuestionManager.jsx  # table + drag-reorder (HTML5 natif)
 │   │           │   ├── VideoList.jsx        # grille, modal de lecture, download, delete
-│   │           │   └── SyncPanel.jsx        # état pull/push, bouton PUSH, progression, purge
+│   │           │   └── SyncPanel.jsx        # état pull/push, bouton PUSH, progression
 │   │           └── styles/app.css           # thème sombre tactile invité / clair admin
 │   └── hub/
 │       ├── server/
@@ -168,7 +182,8 @@ kapsule/
 │       │   └── src/
 │       │       ├── index.js, config.js
 │       │       ├── registry.js              # users, box_tokens, events, event_users, jobs,
-│       │       │                            # sync_log, event_versions, email_logs,
+│       │       │                            # sync_log, event_versions, email_logs, bornes,
+│       │       │                            # borne_events, borne_commands (Phase B),
 │       │       │                            # schema_migrations + runMigrations() versionné
 │       │       ├── eventStore.js            # openEventDb(eventId) avec cache LRU + closeEventDb()
 │       │       ├── versioning.js            # saveVersion(), listVersions(), restoreVersion()
@@ -181,8 +196,9 @@ kapsule/
 │       │       │   │                        # (status/token : owner ; start/stop : superuser)
 │       │       │   ├── questions.js         # CRUD questions (écrit dans la BD de l'événement)
 │       │       │   ├── versions.js          # historique config : list, get, restore
-│       │       │   ├── admin.js             # super-admin : bornes (token affiché une fois),
-│       │       │   │                        # overview (stockage/événement, jobs en erreur, bornes)
+│       │       │   ├── admin.js             # super-admin : comptes clients, tokens d'événement
+│       │       │   │                        # (token affiché une fois), bornes physiques (Phase B —
+│       │       │   │                        # CRUD, assignation d'événements, commandes), overview
 │       │       │   ├── gallery.js           # vidéos : list, stream (Range), download, zip, csv
 │       │       │   ├── designs.js           # CRUD designs, versions, duplication, promotion,
 │       │       │   │                        # assets (§9bis) — monté sur /api/designs
@@ -375,6 +391,40 @@ box_tokens (                                   -- token = ÉVÉNEMENT (§1) : un
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+bornes (                                       -- Phase B : identité MACHINE persistante, distincte
+  id TEXT PRIMARY KEY,                         -- de box_tokens (token = événement, réservé aux bornes
+  name TEXT NOT NULL,                          -- d'essai — provisioner Hub inchangé).
+  location TEXT,
+  token_hash TEXT UNIQUE NOT NULL,
+  token_clear TEXT UNIQUE NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,           -- désactivée = 401 sur toute route sync (sans supprimer)
+  last_seen_at DATETIME,                       -- mis à jour UNIQUEMENT par le heartbeat (pas à chaque
+                                                -- requête, sinon une télémétrie stale écraserait la vraie)
+  agent_version TEXT, disk_free_bytes INTEGER, disk_total_bytes INTEGER,
+  clock_skew_ms INTEGER,                       -- calculé côté HUB (Date.now() - borne_time_ms reçu) :
+                                                -- la borne n'a pas d'horloge de référence fiable sans RTC (§11.16)
+  active_event_id TEXT,                        -- dernier événement actif rapporté par le heartbeat
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+borne_events (                                 -- assignation N-N : une borne peut servir plusieurs
+  borne_id TEXT NOT NULL REFERENCES bornes(id) ON DELETE CASCADE,   -- événements dans le temps ; un
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,   -- événement peut avoir plusieurs
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,                    -- bornes (table de jonction plutôt
+  PRIMARY KEY (borne_id, event_id)                                  -- que events.borne_id).
+);
+
+borne_commands (                               -- file Hub → Borne : la borne n'est jamais joignable
+  id INTEGER PRIMARY KEY AUTOINCREMENT,        -- directement (Wi-Fi événement, pas d'entrée réseau) —
+  borne_id TEXT NOT NULL REFERENCES bornes(id) ON DELETE CASCADE,   -- elle dépose une commande, la
+  type TEXT NOT NULL CHECK(type IN ('pull','activate_event','close_event','purge_event')),
+  payload TEXT,                                -- JSON libre ({event_id, confirm?}, …)
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sent','done','failed')),
+  result TEXT,                                 -- JSON libre — détail de l'échec/succès
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  claimed_at DATETIME, done_at DATETIME
+);                                              -- borne la récupère et l'acquitte au heartbeat suivant.
+
 events (
   id TEXT PRIMARY KEY,                         -- uuid
   owner_id INTEGER NOT NULL REFERENCES users(id),
@@ -444,6 +494,12 @@ push_state (                                   -- permet la reprise d'un push in
   uploaded_at DATETIME,                        -- NULL = pas encore confirmé par le Hub
   PRIMARY KEY (event_id, video_id)
 );
+
+borne_settings (                               -- Phase B : identité persistante de CETTE machine.
+  key TEXT PRIMARY KEY,                        -- Clés : 'borne_token', 'hub_url'. Seedée depuis les
+  value TEXT                                   -- variables d'env (BORNE_TOKEN/HUB_URL) au premier
+);                                              -- démarrage ; ensuite la base fait foi — permet une
+                                                -- rotation de token sans redéployer/éditer le .env.
 ```
 
 ---
@@ -543,13 +599,28 @@ Base `/api`. `GET /api/health`.
 - **Tokens de borne, par événement** (token = événement, §1) :
   - `POST /api/admin/events/:id/tokens` `{ label?, location?, is_preview? }` → génère token (32 octets hex), stocke `sha256(token)` + `token_clear` dans `box_tokens` lié à `:id`, retourne `token_clear` (consultable à tout moment via `GET /api/admin/tokens`).
   - `GET /api/admin/events/:id/tokens` (sans le hash), `DELETE /api/admin/tokens/:tokenId` (révocation), `PUT /api/admin/tokens/:tokenId` `{ label?, location? }`.
+- **Bornes physiques** (Phase B — table `bornes`, identité machine persistante, distincte des tokens ci-dessus) :
+  - `POST /api/admin/bornes` `{ name, location? }` → crée (id `randomUUID()`), génère un token (32 octets hex, même schéma que les tokens de borne), retourne `token_clear`.
+  - `GET /api/admin/bornes` — liste (sans token), avec télémétrie du dernier heartbeat et nombre d'événements assignés.
+  - `GET /api/admin/bornes/:id` — fiche : borne + événements assignés + 20 dernières commandes. Retourne **`token_clear`** (pas `token_hash`) : comme pour `box_tokens` (§11.13), le token en clair reste consultable/copiable à tout moment par un superuser, ce n'est pas un affichage à usage unique.
+  - `PUT /api/admin/bornes/:id` `{ name?, location?, active? }` — même retour que `GET /:id`, `DELETE /api/admin/bornes/:id` (cascade assignations + commandes).
+  - `POST /api/admin/bornes/:id/events` `{ event_id }` — assigne (409 si déjà assigné) ; `DELETE /api/admin/bornes/:id/events/:eventId` — retire.
+  - `POST /api/admin/bornes/:id/commands` `{ type, payload? }` — dépose une commande (`pull`/`activate_event`/`close_event`/`purge_event`), récupérée et exécutée au heartbeat suivant. `purge_event` **exige `payload.confirm` = nom exact de l'événement** — même garde que la purge locale (§11), jamais contournable à distance.
 - `GET /api/admin/overview` — vue d'ensemble : tous les événements (tous clients), espace disque consommé par événement (`du` sur `events/<id>/`), disque libre du volume, jobs `failed` récents, et pour chaque événement ses tokens de borne (label, location, `is_preview`, `last_seen_at`).
 - `GET /api/admin/email-logs` — journal des 100 derniers envois d'emails (onglet « Gestion email ») : `recipient_email`, `type`, `subject`, `status` (`sent`/`failed`/`skipped`), `error`, `created_at`.
 
-**Synchro** (`routes/sync.js`) — `requireBox` (header `X-Box-Token`) résout le token via `box_tokens`, met à jour `box_tokens.last_seen_at`, écrit `sync_log`, et **expose `req.box = { token_id, event_id, is_preview }`** (le token désigne directement l'événement, §1) :
-- `GET /api/sync/event` — l'**unique** événement de ce token s'il est `status IN ('preview','ready','loaded')` : `{ id, name, event_date, status, updated_at, is_preview }`. **404** si l'événement n'est plus pullable (en attente, ou déjà ≥ `live`). Remplace l'ancien `GET /assigned` (liste) — une borne = un événement. Un token `is_preview=1` ne peut puller que si le statut est `preview` ; un token réel ne peut puller qu'en `ready` ou `loaded`.
+**Synchro** (`routes/sync.js`) — `requireBox` (header `X-Box-Token`) résout le token contre **deux** tables (Phase B) et normalise `req.box` :
+- trouvé dans `box_tokens` (token = événement) → `req.box = { kind:'preview', token_id, event_id, is_preview }`, `last_seen_at` mis à jour **à chaque requête** — comportement inchangé depuis 6C.
+- trouvé dans `bornes` (token = machine) → `req.box = { kind:'borne', borne_id, event_ids:[…] }` (401 si `active=0`) ; `last_seen_at`/télémétrie **jamais** touchés ici, uniquement par `POST /sync/borne/heartbeat` (sinon un simple pull nullerait la télémétrie entre deux battements).
+
+L'invariant §11.20 (« un token ne touche que son propre scope ») est porté par une fonction unique `boxHasEventAccess(box, eventId)` : `box.event_id === eventId` (preview) ou `box.event_ids.includes(eventId)` (borne).
+
+- `GET /api/sync/event` — **réservée aux tokens preview** (400 sinon) : l'**unique** événement de ce token s'il est `status IN ('preview','ready','loaded')` : `{ id, name, event_date, status, updated_at, is_preview }`. **404** si l'événement n'est plus pullable (en attente, ou déjà ≥ `live`). Un token `is_preview=1` ne peut puller que si le statut est `preview` ; un token réel ne peut puller qu'en `ready` ou `loaded`.
+- `GET /api/sync/borne/events` — **réservée aux tokens borne** (400 sinon) : liste des événements assignés dont le statut est `ready`/`loaded`. Remplace `GET /event` pour ce cas — une borne physique peut avoir plusieurs événements en jeu.
+- `POST /api/sync/borne/heartbeat` — **réservée aux tokens borne**. Body `{ agent_version?, disk?: {free,total}, borne_time_ms, active_event_id? }` → écrit la télémétrie (`clock_skew_ms` **calculé côté Hub**, `Date.now() - borne_time_ms` — la borne n'a pas d'horloge de référence fiable sans RTC, §11.16) et retourne les commandes en attente `{ commands: [{id, type, payload}] }` (marquées `sent` dans la foulée). Ne touche **jamais** au statut d'un événement — la transition `ready→loaded` reste portée par `bundle`, par événement.
+- `POST /api/sync/borne/commands/:id/result` — **réservée aux tokens borne**. Body `{ status: 'done'|'failed', result? }` — 404 si la commande n'appartient pas à la borne authentifiée.
 - `POST /api/sync/event/login` `{ email, password }` — auth wall preview (§11.24). Protégé par `X-Box-Token`. Vérifie les credentials Hub de l'utilisateur **et** son assignation à l'événement du token avec le rôle `general`. Répond `200 { ok: true }` si les deux conditions sont remplies, `401` si credentials invalides, `403` si l'utilisateur n'est pas assigné `general` ou si l'événement n'est pas en statut `preview`. Rate-limit : 10 essais / 15 min / IP.
-- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […], users: [{email, password_hash, roles}] }`. **403 si `:id` ≠ `req.box.event_id`** (un token ne peut tirer que son propre événement). Passe `ready→loaded` (token réel) ou ne change pas le statut (token preview, qui reste en `preview`), set `pulled_at`. `users` contient les comptes Hub ayant un mot de passe défini et assignés à l'événement **avec le rôle `admin_borne` ou `tech_borne`** — la Borne les stocke dans `event_users` de sa BD événement et les utilise pour l'auth nominative (§6). Les utilisateurs avec le rôle `general` ne sont **pas** inclus dans le bundle : leur auth est proxiée vers le Hub à chaque login (§11.24). Le bundle inclut aussi `requiresLogin: true` si au moins un user `general` est assigné à l'événement.
+- `GET /api/sync/events/:id/bundle` — `{ event: {…}, questions: […], users: [{email, password_hash, roles}] }`. **403 si `!boxHasEventAccess(req.box, :id)`** (token preview hors de son événement, ou token borne sur un événement qui ne lui est pas assigné). Passe `ready→loaded` (token réel) ou ne change pas le statut (token preview, qui reste en `preview`), set `pulled_at`. `users` contient les comptes Hub ayant un mot de passe défini et assignés à l'événement **avec le rôle `admin_borne` ou `tech_borne`** — la Borne les stocke dans `event_users` de sa BD événement et les utilise pour l'auth nominative (§6). Les utilisateurs avec le rôle `general` ne sont **pas** inclus dans le bundle : leur auth est proxiée vers le Hub à chaque login (§11.24). Le bundle inclut aussi `requiresLogin: true` si au moins un user `general` est assigné à l'événement.
 - `POST /api/sync/events/:id/status` `{ status: 'live'|'closed' }` — envoyé par la Borne au moment du push (transitions avant uniquement, jamais de retour en arrière) ; met à jour le statut dans le registre Hub pour déclencher le gel d'édition.
 - `POST /api/sync/events/:id/manifest` — body `{ files: [{ video_id, filename, size, checksum }], db: { size, checksum } }`. Réponse : `{ missing: [video_id…] }` (ceux non encore reçus ou de checksum différent) → **c'est ce qui rend le push reprenable et idempotent**.
 - `PUT /api/sync/events/:id/files/:videoId` — upload multipart d'UN fichier ; le Hub recalcule le sha256, 422 si mismatch (la Borne retentera).
@@ -815,7 +886,7 @@ design.B et design.E), qui font foi pour l'implémentation.
 ## 10. Docker / Nginx / TLS / Environnement
 
 ### docker-compose.borne.yml (déployé sur le Raspberry, arm64)
-- `backend` : build `apps/borne/server`, env `TECH_PASSWORD JWT_SECRET HUB_URL BOX_TOKEN DATA_DIR=/app/data PORT=3001`, volume `borne_data:/app/data`, réseau interne seulement, `restart: unless-stopped`.
+- `backend` : build `apps/borne/server`, env `TECH_PASSWORD JWT_SECRET HUB_URL BOX_TOKEN BORNE_TOKEN PULL_INTERVAL_MS DATA_DIR=/app/data PORT=3001`, **un seul volume** `borne_data:/app/data` (identité machine — `local_events`, `push_state`, `borne_settings` — **et** `events/<id>/` : un split en deux volumes a été envisagé puis abandonné en revue Phase B, un montage imbriqué sur le sous-chemin `events/` masquant silencieusement les données déjà présentes sur une borne existante sans même garantir une purge propre du registre sur un déploiement neuf). La purge RGPD reste exclusivement applicative : `POST /api/sync/purge/:eventId`, §11. Réseau interne seulement, `restart: unless-stopped`.
 - `frontend` : build `apps/borne/web` (multi-stage Vite → `nginx:alpine` + openssl), ports `80:80` `443:443`, `depends_on: backend`, volume `borne_certs:/etc/nginx/certs`.
 - `borne-entrypoint.sh` : génère un cert auto-signé si absent (`openssl req -x509 -nodes -days 730 -newkey rsa:2048`, CN `borne.local`) puis `nginx -g 'daemon off;'`.
 - `borne-nginx.conf` : `client_max_body_size 600M` ; 80 → redirect 443 ; `/api/` → `proxy_pass http://backend:3001` avec headers forwardés, timeouts read/send **600s**, `proxy_request_buffering off` ; `/` → SPA fallback `try_files $uri $uri/ /index.html`.
@@ -885,7 +956,9 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 | `DATA_DIR` | Borne+Hub | `/app/data` | Racine stockage |
 | `PORT` | Borne+Hub | `3001` | Port backend |
 | `HUB_URL` | Borne | _(vide = mode autonome)_ | URL du Hub |
-| `BOX_TOKEN` | Borne | _(vide)_ | Token d'appairage = **événement** (§1) |
+| `BOX_TOKEN` | Borne | _(vide)_ | Token d'appairage = **événement** — réservé aux bornes d'essai (§1) |
+| `BORNE_TOKEN` | Borne | _(vide)_ | **Phase B** — identité de borne **physique** (machine persistante, plusieurs événements assignés). Seed uniquement : après le premier démarrage, `borne_settings` (base) prime — une rotation depuis `/borne` (onglet Identité) survit à un redémarrage sans toucher au `.env` |
+| `PULL_INTERVAL_MS` | Borne | `300000` | **Phase B** — période du pull + heartbeat automatiques d'une borne physique (`BORNE_TOKEN` défini). Sans effet en mode preview/token=événement (pull manuel uniquement) |
 | `MAX_DATA_BYTES` | Borne | _(vide = illimité)_ | Quota disque de l'événement (essai : `1073741824` = 1 Go) ; upload invité → 507 au-delà |
 | `PREVIEW_MODE` | Borne | _(déduit du token `is_preview`)_ | Force le mode démo (bandeau « BORNE D'ESSAI », push interdit). Override optionnel ; normalement déduit du token |
 | `ALLOW_REGISTER` | Hub | `false` | Ouvrir l'inscription publique (indépendant des comptes créés par l'admin) |
@@ -913,14 +986,14 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 10. Le pull ne doit **jamais** écrire si le statut local n'est pas `loaded` (exception : mode preview, où les données sont jetables) — vérifier le statut au moment d'appliquer la réponse, pas au lancement de la requête.
 11. `eventStore` du Hub : cache LRU des handles SQLite (~10 ouverts max), et **fermer le handle avant toute purge `rm -rf` ET avant d'écraser un `db.sqlite` reçu au push** — écrire par-dessus une base ouverte = corruption.
 12. Le push est repris via le manifest (`missing`) — toujours recalculer côté Hub, ne jamais faire confiance au `push_state` local seul.
-13. Le token de borne est stocké **en hash** (`token_hash`, pour l'auth `requireBox`) **et en clair** (`token_clear`, pour la consultation et la copie depuis l'interface admin). `token_clear` n'est jamais exposé aux routes synchro borne ni aux clients — uniquement aux routes `GET /api/admin/tokens` et `GET /api/admin/events/:id/tokens` (admin uniquement). Toute réponse 401 du Hub sur la synchro doit s'afficher clairement dans `SyncPanel` (token révoqué ?).
+13. Le token de borne est stocké **en hash** (`token_hash`, pour l'auth `requireBox`) **et en clair** (`token_clear`, pour la consultation et la copie depuis l'interface admin). `token_clear` n'est jamais exposé aux routes synchro borne ni aux clients — uniquement aux routes superuser `GET /api/admin/tokens`, `GET /api/admin/events/:id/tokens` et, depuis Phase B, `GET/PUT /api/admin/bornes/:id` (même règle pour `bornes` que pour `box_tokens` — consultable à tout moment par un superuser, pas un affichage à usage unique). Toute réponse 401 du Hub sur la synchro doit s'afficher clairement dans `SyncPanel` (token révoqué ?).
 14. Raspberry : monter `DATA_DIR` sur **SSD USB**, pas sur la carte SD (usure + corruption = perte de souvenirs irremplaçables).
 15. Tester chaque phase sur **iPad Safari réel** (caméra, HTTPS auto-signé à faire confiance dans Réglages → Général → VPN et gestion de l'appareil, Range, retry) — pas seulement Chrome desktop.
 16. **Le Raspberry n'a pas d'horloge RTC** : sans Internet, l'heure dérive ou repart du dernier arrêt — or `consent_at` est la **preuve légale RGPD** et tous les timestamps en dépendent. Matériel requis : module **RTC DS3231** (~5 €, I2C) + chrony ; le Préflight vérifie l'écart d'horloge avec l'appareil admin.
 17. Le ZIP d'archive se génère **sans compression** (mode store) : la vidéo est déjà compressée, recompresser brûle du CPU sur le VPS pour 0 % de gain.
 18. Progression d'upload côté kiosque : `fetch` n'expose pas la progression d'envoi — utiliser `XMLHttpRequest` (`xhr.upload.onprogress`).
 19. **Auth Borne à deux niveaux** : `requireAdmin` (rôle `admin_borne`) ≠ `requireTech` (rôle `tech_borne`). Le tech est sur-ensemble : un token `tech_borne` est accepté par `requireAdmin`. Mais un token `admin_borne` doit recevoir **403** sur préflight, clôture et toute la synchro — re-tagger chaque route, ne pas se contenter de cacher l'onglet côté front. En mode autonome (fallback `TECH_PASSWORD`), le JWT contient `roles: ['tech_borne']` — le tech a accès à tout.
-20. **Token = événement** : `requireBox` doit exposer `event_id` et **rejeter (403) toute route `…/events/:id/…` où `:id` ≠ l'événement du token**. Un token ne tire/pousse que son propre événement. `GET /sync/event` (singulier) remplace `/assigned`.
+20. **Token = borne (physique) ou événement (preview), réécrit Phase B** : `requireBox` résout `X-Box-Token` contre **deux** tables et normalise `req.box` — `{kind:'preview', event_id, is_preview}` (token = événement, `box_tokens`, comportement 6C inchangé) ou `{kind:'borne', borne_id, event_ids:[…]}` (token = machine, `bornes`, plusieurs événements assignés). **`boxHasEventAccess(box, eventId)` est le seul point de contrôle** de l'invariant « un token ne touche que son propre scope » — `box.event_id === eventId` (preview) ou `box.event_ids.includes(eventId)` (borne) ; **rejeter (403) toute route `…/events/:id/…`** où ce test échoue. `GET /sync/event` (preview) et `GET /sync/borne/events` (borne, plusieurs) sont deux routes distinctes, chacune 400 si appelée avec le mauvais type de token.
 21. **Borne d'essai** : une borne dont le token est `is_preview=1` (ou `PREVIEW_MODE=true`) **ne doit jamais pouvoir push** (409) — ce sont des données jetables. Quota `MAX_DATA_BYTES` vérifié **avant** d'écrire le fichier d'upload invité (507 si plein), sinon un client peut saturer le disque du VPS via l'aperçu.
 22. **Compte client sans mot de passe** : `users.password_hash` est NULL tant que le client n'a pas suivi le lien d'enregistrement. Le login (argon2) doit gérer ce cas **avant** d'appeler `argon2.verify(null, …)` (sinon exception) ; un compte `active=0` ou sans hash → 401 « identifiants invalides » (ne pas divulguer lequel).
 23. **`event_users` Borne** : les comptes pullés dans `event_users` de la BD événement (`events/<id>/db.sqlite`) ne contiennent que `email`, `password_hash`, `roles` — **RGPD : pas de nom ni d'autre PII** (le nom reste sur le Hub). Ces données sont **écrasées à chaque pull** (DELETE+INSERT en transaction).

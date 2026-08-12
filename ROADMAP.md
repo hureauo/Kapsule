@@ -475,3 +475,94 @@ prop `showcase` qui court-circuite tout `getUserMedia`.
 **Terminé quand** : un seul jeu de composants React rend le parcours invité, utilisé identique en
 production (borne) et dans l'aperçu live du Hub — plus aucune maquette `.dp-*` à maintenir en
 parallèle.
+
+## Phase B — Bornes comme entités de premier plan
+
+Plan complet : `.claude/plans/enumerated-napping-sifakis.md`. Contexte : il n'existait aucune
+entité « Borne » dans Kapsule — une borne n'était matérialisée que par une ligne `box_tokens`
+(couple token/événement, décision 6C). Le Hub ne pouvait ni créer, ni supprimer, ni administrer
+une borne (`BornesTab` = placeholder vide), un Raspberry était figé sur **un** événement par
+`BOX_TOKEN`, et le Hub ne savait rien d'une borne entre deux syncs (pas de heartbeat,
+`PULL_INTERVAL_MS` déclaré mais lu par aucun code).
+
+Décisions actées : un seul couple de containers sur le Raspberry (pas de container par
+événement, pas de `docker.sock` sur le Pi) ; token = **borne** (identité machine persistante)
+pour les bornes physiques, les previews gardent `box_tokens` inchangé (token = événement) ; la
+Borne poll le Hub à intervalle (heartbeat + file de commandes), ressuscitant `PULL_INTERVAL_MS`.
+
+Mêmes règles que les autres phases : un sous-lot backend n'est terminé que **testé** (nominal +
+cas d'erreur), relu par `kapsule-reviewer` (`/verif-spec`), committé en `phase B.X: …`.
+
+- [x] B.1 : Hub — schéma `bornes` / `borne_events` / `borne_commands` (migration 10) + helpers
+  registry (`insertBorne`, `listBornes`, `getBorneByHash`, `updateBorneHeartbeat`,
+  `assignBorneEvent`/`unassignBorneEvent`, `claimPendingCommands`/`completeBorneCommand`, …) +
+  tests (`apps/hub/server/test/registry.test.js`, 47/47 verts en isolation — voir note ⚠️ ci-dessous)
+- [x] B.2 : Hub — routes admin CRUD bornes (`POST/GET/PUT/DELETE /api/admin/bornes[/:id]`,
+  assignation d'événements, dépôt de commandes) + tests (`apps/hub/server/test/admin.test.js`,
+  70/70 verts en isolation)
+- [x] B.3 : Hub — `requireBox` résout `bornes` ET `box_tokens`, `boxHasEventAccess()`
+  factorisant l'invariant §11.20 (remplace les 8 checks manuels de `routes/sync.js`), routes
+  `GET /api/sync/borne/events`, `POST /api/sync/borne/heartbeat`,
+  `POST /api/sync/borne/commands/:id/result` + tests (`apps/hub/server/test/sync.test.js`,
+  non-régression previews incluse — 63/63 verts en isolation, 180/180 avec B.1+B.2)
+- [x] B.4 : Borne — token persistant (`borne_settings` + `resolveBorneIdentity()`, seed
+  depuis `BORNE_TOKEN`/`HUB_URL` env puis la base prime), `pullMyEvents()` multi-événements
+  (`pullEvent()` ne pose plus `active=1` lui-même — activation bootstrap seulement si aucun
+  actif et un seul pull réussi), `sync/commandExecutor.js` (`pull`/`activate_event`/
+  `close_event`/`purge_event`, mêmes gardes que les routes HTTP — **`purge_event` exige
+  toujours la confirmation par nom**, jamais contournable à distance), `heartbeat.js`
+  (ressuscite `PULL_INTERVAL_MS`, `clock_skew_ms` calculé **côté Hub** — la borne n'a pas
+  d'horloge de référence sans RTC, §11.16) + tests (`registry.test.js`, `borneIdentity.test.js`,
+  `sync.pull.test.js`, `sync.commandExecutor.test.js`, `sync.heartbeat.test.js` —
+  284/284 verts sur toute la suite borne-server)
+- [x] B.5 : Borne — console machine `/borne` (`BornePage.jsx`, ex `TechPage.jsx` : Identité
+  nouveau, Événements déplacé, Machine = Preflight + qualité/orientation déplacée depuis Design,
+  Synchro allégé), `/admin` recentré sur l'événement actif (Questions/Vidéos/Design), câblage du
+  bouton clôture (`api.closeEvent` était mort côté front) et de la purge (déplacée dans
+  Événements). Bonus : corrigé un piège d'auth latent (`SyncPanel`/`AdminLayout` sur l'ancien
+  `/admin/tech` appelaient des routes avec `admin_token` au lieu de `tech_token` — invisible tant
+  qu'une même session restait connectée aux deux consoles). Pas de « journal des commandes » local
+  (vit côté Hub, B.6) ; nom/lieu de la borne pas encore remontés dans Identité (nécessiterait un
+  aller-retour Hub dédié, hors périmètre) — build Vite OK, 284/284 tests backend verts
+- [x] B.6 : Hub — onglet Bornes réel (`BornesTab`/`BornePanel`/`CreateBorneForm` remplacent le
+  placeholder, pattern accordéon `ev-row` réutilisé), méthodes `api.*` bornes (`client.js`),
+  section « Bornes physiques » dans l'onglet Synchro d'un événement (`SyncStatus.jsx`,
+  `BorneAssignment`) + `GET /:eventId/sync` étendu (`bornes: listEventBornes(...)`). Bonus :
+  corrigé au passage un bug pré-existant sans rapport avec Phase B — la section « Borne
+  assignée » lisait `info.box`, un champ que l'API n'a jamais renvoyé (seul `tokens`, un
+  tableau, existe) ; remplacée par une vraie section « Tokens de borne ». Dashboard : cartes
+  « Bornes réelles/d'essai » renommées « Tokens événement/d'essai » pour ne plus entrer en
+  collision avec la nouvelle notion de borne physique — build Vite OK, 244/244 tests backend
+- [x] B.7 : Infra — `.env.example` (`BORNE_TOKEN`, `PULL_INTERVAL_MS` documentée) + README §4
+  réécrite (créer la borne au Hub → copier le token → assigner un événement, `/borne` remplace
+  `/admin/tech` dans toute la procédure) + §7 (tableau des variables) — `docker compose config`
+  valide. **Correction post-`/verif-spec`** : la séparation initiale des volumes `borne_data`/
+  `borne_events` a été **abandonnée** — un montage imbriqué sur le sous-chemin `events/` masque
+  silencieusement les données déjà présentes à cet endroit sur une borne existante, et même sur
+  un déploiement neuf ne garantit pas une purge cohérente du registre (`local_events`/
+  `push_state` resteraient orphelins). Un seul volume `borne_data:/app/data` (comme avant Phase
+  B) ; la purge RGPD reste exclusivement `POST /api/sync/purge/:eventId`
+- [x] B.8 : Documentation — PROJET.md (§1 « un seul événement actif à la fois », §5.3 `bornes`/
+  `borne_events`/`borne_commands`, §5.4 `borne_settings`, §7 routes admin bornes + sync borne,
+  §10 `BORNE_TOKEN`/`PULL_INTERVAL_MS`/volumes, §11.20 réécrit autour de `boxHasEventAccess`),
+  ARCHITECTURE.md et ROADMAP.md tenus à jour au fil de chaque sous-lot B.1-B.7 (pas de rattrapage
+  différé). `/sync-doc` (site `docs/`) non lancé — geste manuel séparé, à la demande de
+  l'utilisateur (cf. CLAUDE.md). Note : PROJET.md a une dette de cohérence pré-existante et plus
+  large que Phase B (schéma `users.role` §5.3 encore `'admin'/'client'`, `event_users` absent du
+  schéma documenté, table §12 figée à la phase 7 originale) — déjà trackée comme `6E.2` non cochée
+  dans ce fichier ; non traitée ici, hors périmètre de Phase B
+
+**Terminé quand** : une borne se crée/supprime/administre depuis le Hub, plusieurs événements
+peuvent lui être assignés sans qu'un pull ne bascule le kiosque d'un événement `live`, le Hub
+voit une borne vivre (télémétrie du heartbeat) et peut lui envoyer des commandes (pull, clôturer,
+purger) exécutées au battement suivant.
+
+> ⚠️ **Trouvé pendant B.1, sans rapport avec Phase B** : `npm test -w @kapsule/hub-server`
+> (donc `docker compose run --rm dev ./docker/test.sh -w @kapsule/hub-server`) bloque
+> indéfiniment sur `eventDesign.test.js` (« rafraîchissement de la borne d'essai (design2) »)
+> dans le conteneur `dev` — pas de `docker.sock`/DNS `preview-backend-<slug>` disponibles, et
+> `triggerPreviewPull` (`apps/hub/server/src/routes/previewGallery.js`) n'a aucun timeout
+> réseau explicite (contrairement au proxy galerie du même fichier, qui a un timeout 8s). En
+> attendant un correctif, lancer les fichiers de test individuellement
+> (`docker compose run --rm dev node --test apps/hub/server/test/<fichier>.test.js`) plutôt que
+> la suite complète du workspace Hub.
