@@ -118,12 +118,23 @@ docker compose -f docker-compose.hub.yml up -d --build
 
 La Borne fonctionne **offline** pendant l'événement. Elle se synchronise avec le Hub avant (pull) et après (push).
 
+Une borne physique est une **machine persistante** (Phase B) : son identité (token) est distincte
+d'un événement. Elle peut se voir assigner plusieurs événements dans le temps depuis le Hub — pas
+besoin de régénérer un token ni de retoucher au `.env` entre deux événements, seulement d'assigner
+le nouvel événement à la borne déjà déployée.
+
 ### Étape 1 — Matériel
 
-- **Stockage** : SSD USB (pas la carte SD — risque de corruption). Le volume Docker `borne_data` doit pointer dessus.
+- **Stockage** : SSD USB (pas la carte SD — risque de corruption). Le volume Docker `borne_data`
+  (registre ET données invité) doit pointer dessus.
 - **Horloge** : module RTC DS3231 + `chrony`. Sans Internet l'heure dérive, or `consent_at` est la preuve légale RGPD.
 
-### Étape 2 — Cloner + configurer
+### Étape 2 — Créer la borne côté Hub
+
+Sur `https://votre-domaine.com/admin`, onglet **Bornes** → **« + Nouvelle borne »** (nom + lieu).
+Le token en clair n'est affiché **qu'une seule fois** — copiez-le immédiatement.
+
+### Étape 3 — Cloner + configurer
 
 ```bash
 git clone <url-du-depot> kapsule && cd kapsule
@@ -134,32 +145,28 @@ cp .env.example .env
 JWT_SECRET=une-longue-chaine-aleatoire
 TECH_PASSWORD=mot-de-passe-technicien     # fallback mode autonome (sans Hub) uniquement
 HUB_URL=https://votre-domaine.com
-BOX_TOKEN=                                # rempli après génération côté Hub (étape 4)
+BORNE_TOKEN=<token-copié-à-l'étape-2>
 ```
 
-> **Auth en mode appairé (avec Hub)** : les comptes sont définis côté Hub (onglet Utilisateurs de chaque événement) et pullés dans le bundle. L'admin et le technicien se connectent par email + mot de passe. `TECH_PASSWORD` n'est utilisé qu'en **mode autonome** (sans `HUB_URL`), où il est le seul moyen d'accéder à l'admin Borne.
+> **Auth en mode appairé (avec Hub)** : les comptes sont définis côté Hub (onglet Utilisateurs de chaque événement) et pullés dans le bundle. L'admin et le technicien se connectent par email + mot de passe. `TECH_PASSWORD` n'est utilisé qu'en **mode autonome** (sans `HUB_URL`), où il est le seul moyen d'accéder à la console `/borne`.
 
-### Étape 3 — Construire et démarrer
+### Étape 4 — Construire et démarrer
 
 ```bash
 docker compose -f docker-compose.borne.yml up -d --build
 ```
 
-Le certificat TLS auto-signé (`borne.local`) est généré au premier démarrage.
+Le certificat TLS auto-signé (`borne.local`) est généré au premier démarrage. Le heartbeat démarre
+automatiquement (toutes les `PULL_INTERVAL_MS`, 5 min par défaut) : la borne remonte son état
+(disque, horloge) au Hub et récupère les commandes en attente.
 
-### Étape 4 — Générer le token côté Hub
+### Étape 5 — Assigner un événement
 
-Sur `https://votre-domaine.com/admin`, onglet **Événements** → ouvrez le panneau de votre événement → **« Générer un token »** (option « borne d'essai » décochée). Le token en clair est visible dans le tableau — copiez-le dans le `.env` de la Borne :
+Sur `https://votre-domaine.com/admin`, onglet **Bornes** → dépliez la borne créée → assignez
+l'événement à pousser sur cette machine. Au battement suivant (ou via **Synchro → Pull** depuis
+`/borne` sur la borne), l'événement et ses questions sont chargés.
 
-```ini
-BOX_TOKEN=<token-copié>
-```
-
-Redémarrez la Borne : `docker compose -f docker-compose.borne.yml up -d`.
-
-Le pull automatique démarre (toutes les 5 min par défaut) ; l'événement et ses questions sont chargés.
-
-### Étape 5 — Approuver le certificat sur l'iPad ⚠️
+### Étape 6 — Approuver le certificat sur l'iPad ⚠️
 
 Safari n'autorise la caméra qu'en HTTPS. Le certificat auto-signé doit être approuvé :
 
@@ -168,15 +175,20 @@ Safari n'autorise la caméra qu'en HTTPS. Le certificat auto-signé doit être a
 3. **Réglages → Général → Informations → Réglages des certificats** → activer la confiance totale.
 4. Mode kiosque : **Ajouter à l'écran d'accueil** + activer l'**Accès Guidé**.
 
-### Étape 6 — Préflight
+### Étape 7 — Préflight
 
-Sur `https://<ip-de-la-borne>/admin/tech`, connectez-vous en tant que **technicien** (email + mot de passe si la borne est appairée au Hub, sinon `TECH_PASSWORD`), onglet **Préflight** : vérifiez que tout est au vert (config, caméra, disque, horloge).
+Sur `https://<ip-de-la-borne>/borne`, connectez-vous en tant que **technicien** (email + mot de
+passe si la borne est appairée au Hub, sinon `TECH_PASSWORD`). Onglet **Événements** : activez
+l'événement à jouer (si plusieurs sont assignés). Onglet **Machine** : vérifiez que tout est au
+vert (disque, horloge, caméra).
 
 ### Après l'événement
 
-1. Clôturez l'événement : espace **technicien** `/admin/tech`.
+1. Clôturez l'événement : `/borne` → onglet **Événements** → **Clôturer**.
 2. Poussez les vidéos : onglet **Synchro** → **PUSH**. Le worker Hub génère miniatures + ZIP.
 3. Le client consulte sa galerie sur `https://votre-domaine.com/`.
+4. Pour réutiliser la même borne sur un autre événement : onglet **Bornes** du Hub, assignez le
+   nouvel événement — pas besoin de régénérer un token ni de retoucher au `.env`.
 
 ---
 
@@ -278,8 +290,9 @@ Toutes dans `.env` à la racine (copié depuis `.env.example`). `${VAR:-defaut}`
 | `JWT_SECRET` | `change-me` | Secret JWT — **à changer en prod** |
 | `TECH_PASSWORD` | `tech123` | Fallback technicien **mode autonome seulement** (sans Hub). En mode appairé, les comptes sont pullés depuis le Hub. |
 | `HUB_URL` | _(vide)_ | URL du Hub. **Vide = mode autonome** (pas de synchro) |
-| `BOX_TOKEN` | _(vide)_ | Token de borne généré depuis le Hub |
-| `PULL_INTERVAL_MS` | `300000` | Période du pull automatique (ms) |
+| `BOX_TOKEN` | _(vide)_ | Token d'événement (essai/legacy) — préférer `BORNE_TOKEN` pour une borne physique |
+| `BORNE_TOKEN` | _(vide)_ | Identité de borne physique (Phase B), créée depuis l'onglet Bornes du Hub. Seed uniquement : une rotation depuis `/borne` persiste en base et prime dessus |
+| `PULL_INTERVAL_MS` | `300000` | Période du pull + heartbeat automatiques (ms) — borne physique (`BORNE_TOKEN`) uniquement |
 | `MAX_DATA_BYTES` | _(vide = illimité)_ | Quota disque en octets |
 | `PREVIEW_MODE` | _(déduit du token)_ | Force le mode démo (bandeau + push interdit) |
 
@@ -316,11 +329,11 @@ docker ps --filter "label=com.docker.compose.project.config_files=docker-compose
 
 | Symptôme | Piste |
 |---|---|
-| La caméra ne démarre pas sur iPad | Certificat non approuvé, ou URL en `http://` → voir §4 étape 5 |
+| La caméra ne démarre pas sur iPad | Certificat non approuvé, ou URL en `http://` → voir §4 étape 6 |
 | `502 Bad Gateway` sur `/api/` | Backend pas encore prêt → `docker compose ... logs backend` |
 | Le frontend Hub ne démarre pas | Certificat Let's Encrypt absent ou chemin incorrect dans `hub-nginx.conf` |
 | Push échoue avec `409` | Événement non clôturé, ou borne d'essai (push interdit) |
-| Push échoue avec `401` | `BOX_TOKEN` invalide/révoqué → régénérez un token sur l'événement (§3) |
+| Push échoue avec `401` | `BORNE_TOKEN`/`BOX_TOKEN` invalide/révoqué → régénérez depuis le Hub (onglet Bornes pour une machine, Tokens pour un événement) |
 | Les miniatures/ZIP n'apparaissent pas | Worker arrêté → `docker compose -f docker-compose.hub.yml logs -f worker` |
 | Borne d'essai ne trouve pas le Hub | Vérifiez que le réseau `kapsule_hub_net` existe (`docker network ls`) et que le Hub tourne |
 

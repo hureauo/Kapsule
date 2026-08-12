@@ -17,7 +17,12 @@ cd "$(dirname "$0")/.."
 source docker/smoke-common.sh
 
 COMPOSE="docker compose -f docker-compose.borne.yml -p smoke-borne"
-BASE="https://localhost"          # cert auto-signé → http_code/-k l'accepte
+# Ports non-standards par défaut (surchargeable) : évite tout conflit avec un
+# vrai déploiement (Hub edge ou borne réelle) qui occuperait 80/443 sur la
+# même machine. BORNE_HTTP_PORT/BORNE_HTTPS_PORT paramètrent docker-compose.borne.yml.
+HTTP_PORT="${SMOKE_BORNE_HTTP_PORT:-18080}"
+HTTPS_PORT="${SMOKE_BORNE_HTTPS_PORT:-18443}"
+BASE="https://localhost:${HTTPS_PORT}"   # cert auto-signé → http_code/-k l'accepte
 TECH_PASS="smoke-tech-pass-456"
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
@@ -32,12 +37,13 @@ teardown() {
 }
 trap teardown EXIT
 
-echo "=== SMOKE BORNE (autonome) ==="
+echo "=== SMOKE BORNE (autonome) — ports ${HTTP_PORT}/${HTTPS_PORT} ==="
 echo "→ teardown préalable (stack résiduelle éventuelle)"
 $COMPOSE down -v >/dev/null 2>&1 || true
 echo "→ build & up"
 # Pas de HUB_URL ni BOX_TOKEN → mode autonome. TECH_PASSWORD non-défaut requis.
 TECH_PASSWORD="$TECH_PASS" JWT_SECRET="smoke-secret" \
+  BORNE_HTTP_PORT="$HTTP_PORT" BORNE_HTTPS_PORT="$HTTPS_PORT" \
   $COMPOSE up -d --build >/dev/null
 
 wait_ready "$BASE/api/health" 120

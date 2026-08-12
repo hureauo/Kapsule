@@ -10,10 +10,28 @@ services:
       - JWT_SECRET=${JWT_SECRET:-change-me}
       - HUB_URL=${HUB_URL:-}
       - BOX_TOKEN=${BOX_TOKEN:-}
+      # Phase B : identité de borne physique (machine persistante, plusieurs
+      # événements assignés) — distincte de BOX_TOKEN (token = événement,
+      # réservé aux bornes d'essai). Seed uniquement : une fois en base
+      # (borne_settings), la rotation depuis /borne (onglet Identité) prime.
+      - BORNE_TOKEN=${BORNE_TOKEN:-}
       - DATA_DIR=/app/data
       - PORT=3001
       - PULL_INTERVAL_MS=${PULL_INTERVAL_MS:-300000}
     volumes:
+      # Un seul volume : registry.sqlite (identité machine — local_events,
+      # push_state, borne_settings) ET events/<id>/ (données invité) y
+      # cohabitent, comme avant Phase B. Un split en deux volumes a été
+      # envisagé puis abandonné (revue Phase B) : monter un second volume
+      # nommé sur le sous-chemin events/ MASQUE silencieusement les données
+      # déjà présentes à cet endroit sur une borne existante (elles restent
+      # sur le disque mais deviennent invisibles pour l'app) — et même sur un
+      # déploiement neuf, un simple `docker volume rm` du sous-volume ne
+      # nettoie pas les lignes local_events/push_state du registre : ce
+      # n'aurait jamais été un vrai raccourci de purge. La purge RGPD de
+      # référence reste exclusivement applicative : POST /api/sync/purge/:id
+      # (confirmation par nom), qui ferme le handle SQLite, supprime le
+      # dossier et nettoie le registre de façon cohérente.
       - borne_data:/app/data
     networks:
       - internal
@@ -25,8 +43,11 @@ services:
       context: .
       dockerfile: apps/borne/web/Dockerfile
     ports:
-      - "80:80"
-      - "443:443"
+      # Paramétrables (déf. 80/443) — utile pour faire tourner plusieurs
+      # instances sur la même machine (ex. smoke test à côté d'un déploiement
+      # réel) sans conflit de port.
+      - "${BORNE_HTTP_PORT:-80}:80"
+      - "${BORNE_HTTPS_PORT:-443}:443"
     volumes:
       - borne_certs:/etc/nginx/certs
     depends_on:
