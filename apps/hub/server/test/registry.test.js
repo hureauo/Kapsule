@@ -11,6 +11,9 @@ import {
   insertBoxToken, listBoxTokensByEvent, getBoxTokenByHash, updateBoxTokenSeen, deleteBoxToken,
   upsertEventUser, deleteEventUser, listEventUsers,
   insertSyncLog,
+  insertBorne, listBornes, getBorneById, getBorneByHash, updateBorne, deleteBorne, updateBorneHeartbeat,
+  listBorneEvents, listEventBornes, getBorneEvent, assignBorneEvent, unassignBorneEvent,
+  insertBorneCommand, claimPendingCommands, completeBorneCommand, listBorneCommands,
 } from '../src/registry.js';
 
 let dir;
@@ -40,6 +43,9 @@ describe('openRegistry', () => {
     assert.ok(tables.includes('jobs'));
     assert.ok(tables.includes('sync_log'));
     assert.ok(tables.includes('registration_tokens'));
+    assert.ok(tables.includes('bornes'));
+    assert.ok(tables.includes('borne_events'));
+    assert.ok(tables.includes('borne_commands'));
   });
 });
 
@@ -226,6 +232,151 @@ describe('box_tokens', () => {
     const row = getBoxTokenByHash(db, 'tok-hash-1');
     deleteBoxToken(db, row.id);
     assert.strictEqual(getBoxTokenByHash(db, 'tok-hash-1'), undefined);
+  });
+});
+
+describe('bornes', () => {
+  let evId;
+  let borneId;
+
+  before(() => {
+    insertEvent(db, { id: 'evt-borne-test', name: 'Event pour bornes', event_date: null });
+    evId = 'evt-borne-test';
+  });
+
+  it('insère et retrouve une borne par hash', () => {
+    insertBorne(db, { id: 'borne-1', name: 'Borne Entrée', location: 'Salle A', token_hash: 'borne-hash-1', token_clear: 'borne-clear-1' });
+    borneId = 'borne-1';
+    const row = getBorneByHash(db, 'borne-hash-1');
+    assert.equal(row.id, 'borne-1');
+    assert.equal(row.name, 'Borne Entrée');
+    assert.equal(row.active, 1, 'active par défaut à 1');
+    assert.equal(row.last_seen_at, null);
+  });
+
+  it('getBorneById retourne la ligne complète (avec token_hash)', () => {
+    const row = getBorneById(db, borneId);
+    assert.equal(row.token_hash, 'borne-hash-1');
+  });
+
+  it('getBorneByHash retourne undefined pour un hash inconnu', () => {
+    assert.strictEqual(getBorneByHash(db, 'nope'), undefined);
+  });
+
+  it('listBornes ne fuite ni token_hash ni token_clear', () => {
+    const list = listBornes(db);
+    const row = list.find((b) => b.id === borneId);
+    assert.ok(row);
+    assert.ok(!('token_hash' in row), 'token_hash ne doit pas fuiter');
+    assert.ok(!('token_clear' in row), 'token_clear ne doit pas fuiter dans la vue liste');
+    assert.equal(row.event_count, 0);
+  });
+
+  it('updateBorne modifie name/location/active et ignore le reste', () => {
+    updateBorne(db, borneId, { name: 'Borne Entrée renommée', injected: 'DROP TABLE bornes' });
+    const row = getBorneById(db, borneId);
+    assert.equal(row.name, 'Borne Entrée renommée');
+  });
+
+  it('updateBorneHeartbeat écrit la télémétrie et last_seen_at', () => {
+    updateBorneHeartbeat(db, borneId, {
+      agent_version: '1.0.0', disk_free_bytes: 12345, disk_total_bytes: 999999,
+      clock_skew_ms: 42, active_event_id: evId,
+    });
+    const row = getBorneById(db, borneId);
+    assert.equal(row.agent_version, '1.0.0');
+    assert.equal(row.disk_free_bytes, 12345);
+    assert.equal(row.clock_skew_ms, 42);
+    assert.equal(row.active_event_id, evId);
+    assert.ok(row.last_seen_at !== null);
+  });
+
+  describe('borne_events (assignation N-N)', () => {
+    it('getBorneEvent retourne undefined avant assignation', () => {
+      assert.strictEqual(getBorneEvent(db, { borne_id: borneId, event_id: evId }), undefined);
+    });
+
+    it('assignBorneEvent associe la borne à l\'événement', () => {
+      assignBorneEvent(db, { borne_id: borneId, event_id: evId });
+      assert.ok(getBorneEvent(db, { borne_id: borneId, event_id: evId }));
+    });
+
+    it('refuse une double assignation (PRIMARY KEY)', () => {
+      assert.throws(() => assignBorneEvent(db, { borne_id: borneId, event_id: evId }));
+    });
+
+    it('listBorneEvents liste les événements de la borne avec nom/statut', () => {
+      const list = listBorneEvents(db, borneId);
+      assert.equal(list.length, 1);
+      assert.equal(list[0].id, evId);
+      assert.equal(list[0].name, 'Event pour bornes');
+    });
+
+    it('listEventBornes liste les bornes de l\'événement sans token', () => {
+      const list = listEventBornes(db, evId);
+      assert.equal(list.length, 1);
+      assert.equal(list[0].id, borneId);
+      assert.ok(!('token_hash' in list[0]));
+    });
+
+    it('listBornes reflète le nombre d\'événements assignés', () => {
+      const row = listBornes(db).find((b) => b.id === borneId);
+      assert.equal(row.event_count, 1);
+    });
+
+    it('unassignBorneEvent retire l\'association', () => {
+      unassignBorneEvent(db, { borne_id: borneId, event_id: evId });
+      assert.strictEqual(getBorneEvent(db, { borne_id: borneId, event_id: evId }), undefined);
+    });
+  });
+
+  describe('borne_commands (file Hub → Borne)', () => {
+    before(() => {
+      // ré-assigner : retiré à la fin du bloc précédent, nécessaire pour la cascade testée plus bas
+      assignBorneEvent(db, { borne_id: borneId, event_id: evId });
+    });
+
+    it('insertBorneCommand crée une commande pending', () => {
+      const result = insertBorneCommand(db, { borne_id: borneId, type: 'pull' });
+      assert.ok(result.lastInsertRowid > 0);
+    });
+
+    it('claimPendingCommands renvoie les commandes en attente et les passe à sent', () => {
+      insertBorneCommand(db, { borne_id: borneId, type: 'close_event', payload: { event_id: evId } });
+      const claimed = claimPendingCommands(db, borneId);
+      assert.equal(claimed.length, 2, 'la commande pull précédente + close_event');
+      assert.ok(claimed.every((c) => c.status === 'sent'));
+      assert.ok(claimed.every((c) => c.claimed_at !== null));
+    });
+
+    it('claimPendingCommands ne renvoie rien au second appel (déjà réclamées)', () => {
+      assert.deepEqual(claimPendingCommands(db, borneId), []);
+    });
+
+    it('completeBorneCommand marque done avec un résultat', () => {
+      const target = listBorneCommands(db, borneId).find((c) => c.type === 'pull');
+      completeBorneCommand(db, { id: target.id, status: 'done', result: { ok: true } });
+      const updated = listBorneCommands(db, borneId).find((c) => c.id === target.id);
+      assert.equal(updated.status, 'done');
+      assert.ok(updated.done_at !== null);
+      assert.equal(JSON.parse(updated.result).ok, true);
+    });
+
+    it('listBorneCommands respecte la limite', () => {
+      assert.equal(listBorneCommands(db, borneId, { limit: 1 }).length, 1);
+    });
+
+    it('refuse un type de commande inconnu (CHECK)', () => {
+      assert.throws(() => insertBorneCommand(db, { borne_id: borneId, type: 'reboot' }));
+    });
+  });
+
+  it('deleteBorne cascade sur borne_events et borne_commands', () => {
+    deleteBorne(db, borneId);
+    assert.strictEqual(getBorneById(db, borneId), undefined);
+    assert.equal(listBorneEvents(db, borneId).length, 0);
+    assert.equal(listEventBornes(db, evId).length, 0);
+    assert.equal(listBorneCommands(db, borneId).length, 0);
   });
 });
 

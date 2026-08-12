@@ -140,6 +140,53 @@ export function openRegistry(dataDir) {
                                                   -- l'événement, il ne le casse pas
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    -- Phase B : identité persistante d'une borne physique (Raspberry), distincte
+    -- des box_tokens (token = événement, réservé aux bornes d'essai — provisioner
+    -- Hub inchangé). Ici le token identifie la MACHINE ; borne_events l'associe à
+    -- N événements dans le temps.
+    CREATE TABLE IF NOT EXISTS bornes (
+      id               TEXT PRIMARY KEY,
+      name             TEXT NOT NULL,
+      location         TEXT,
+      token_hash       TEXT UNIQUE NOT NULL,
+      token_clear      TEXT UNIQUE NOT NULL,
+      active           INTEGER NOT NULL DEFAULT 1,
+      last_seen_at     DATETIME,
+      -- Télémétrie du dernier heartbeat — écrasée à chaque battement, pas d'historique.
+      agent_version    TEXT,
+      disk_free_bytes  INTEGER,
+      disk_total_bytes INTEGER,
+      clock_skew_ms    INTEGER,
+      active_event_id  TEXT,
+      created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Assignation N-N : une borne peut servir plusieurs événements dans le temps,
+    -- un événement peut avoir plusieurs bornes (PROJET.md §13). Table de jonction
+    -- plutôt que events.borne_id pour ne pas re-fermer cette possibilité.
+    CREATE TABLE IF NOT EXISTS borne_events (
+      borne_id   TEXT NOT NULL REFERENCES bornes(id) ON DELETE CASCADE,
+      event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (borne_id, event_id)
+    );
+
+    -- File de commandes Hub → Borne. La borne n'est jamais joignable directement
+    -- (Wi-Fi événement, pas d'entrée réseau) : le Hub dépose une commande, la
+    -- borne la récupère et l'acquitte au battement de heartbeat suivant.
+    CREATE TABLE IF NOT EXISTS borne_commands (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      borne_id   TEXT NOT NULL REFERENCES bornes(id) ON DELETE CASCADE,
+      type       TEXT NOT NULL CHECK(type IN ('pull','activate_event','close_event','purge_event')),
+      payload    TEXT,
+      status     TEXT NOT NULL DEFAULT 'pending'
+                 CHECK(status IN ('pending','sent','done','failed')),
+      result     TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      claimed_at DATETIME,
+      done_at    DATETIME
+    );
   `);
 
   runMigrations(db);
@@ -364,6 +411,49 @@ const MIGRATIONS = [
           error           TEXT,
           created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
         )
+      `);
+    },
+  },
+  {
+    version: 10,
+    name: 'phaseB_bornes',
+    // Entité borne persistante (Phase B) — trois tables entières, donc idempotent
+    // via IF NOT EXISTS comme la migration 9 (email_logs) juste au-dessus.
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS bornes (
+          id               TEXT PRIMARY KEY,
+          name             TEXT NOT NULL,
+          location         TEXT,
+          token_hash       TEXT UNIQUE NOT NULL,
+          token_clear      TEXT UNIQUE NOT NULL,
+          active           INTEGER NOT NULL DEFAULT 1,
+          last_seen_at     DATETIME,
+          agent_version    TEXT,
+          disk_free_bytes  INTEGER,
+          disk_total_bytes INTEGER,
+          clock_skew_ms    INTEGER,
+          active_event_id  TEXT,
+          created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS borne_events (
+          borne_id   TEXT NOT NULL REFERENCES bornes(id) ON DELETE CASCADE,
+          event_id   TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (borne_id, event_id)
+        );
+        CREATE TABLE IF NOT EXISTS borne_commands (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          borne_id   TEXT NOT NULL REFERENCES bornes(id) ON DELETE CASCADE,
+          type       TEXT NOT NULL CHECK(type IN ('pull','activate_event','close_event','purge_event')),
+          payload    TEXT,
+          status     TEXT NOT NULL DEFAULT 'pending'
+                     CHECK(status IN ('pending','sent','done','failed')),
+          result     TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          claimed_at DATETIME,
+          done_at    DATETIME
+        );
       `);
     },
   },
@@ -738,6 +828,156 @@ export function listEventsByDesignSource(db, designId) {
     WHERE r.design_id = ?
     ORDER BY e.name
   `).all(designId);
+}
+
+// ── bornes ───────────────────────────────────────────────────────────────────
+// Identité persistante d'une borne physique (Phase B). À ne pas confondre avec
+// box_tokens (token = événement, réservé aux bornes d'essai).
+
+export function insertBorne(db, { id, name, location = null, token_hash, token_clear }) {
+  return db
+    .prepare('INSERT INTO bornes (id, name, location, token_hash, token_clear) VALUES (?, ?, ?, ?, ?)')
+    .run(id, name, location, token_hash, token_clear);
+}
+
+// Sans token_hash ni token_clear — vue liste (onglet Bornes). event_count évite
+// un aller-retour séparé pour afficher le nombre d'événements assignés.
+export function listBornes(db) {
+  return db.prepare(`
+    SELECT b.id, b.name, b.location, b.active, b.last_seen_at,
+           b.agent_version, b.disk_free_bytes, b.disk_total_bytes, b.clock_skew_ms,
+           b.active_event_id, b.created_at,
+           (SELECT COUNT(*) FROM borne_events be WHERE be.borne_id = b.id) AS event_count
+    FROM bornes b
+    ORDER BY b.created_at DESC
+  `).all();
+}
+
+export function getBorneById(db, id) {
+  return db.prepare('SELECT * FROM bornes WHERE id = ?').get(id);
+}
+
+// Utilisé par requireBox (auth borne) — cherche par hash, comme getBoxTokenByHash.
+export function getBorneByHash(db, token_hash) {
+  return db.prepare('SELECT * FROM bornes WHERE token_hash = ?').get(token_hash);
+}
+
+export function updateBorne(db, id, fields) {
+  const allowed = ['name', 'location', 'active'];
+  const keys = Object.keys(fields).filter((k) => allowed.includes(k));
+  if (keys.length === 0) return;
+  // active normalisé en 0/1 : requireBox teste `if (!borne.active)` — une
+  // valeur non booléenne stockée telle quelle (ex. la chaîne "false", venue
+  // d'un JSON.parse laxiste côté appelant) resterait *truthy* et une borne
+  // « désactivée » continuerait de s'authentifier normalement.
+  const values = keys.map((k) => (k === 'active' ? (fields[k] ? 1 : 0) : fields[k]));
+  db.prepare(`UPDATE bornes SET ${keys.map((k) => `${k} = ?`).join(', ')} WHERE id = ?`)
+    .run(...values, id);
+}
+
+export function deleteBorne(db, id) {
+  return db.prepare('DELETE FROM bornes WHERE id = ?').run(id);
+}
+
+// Écrit la télémétrie du battement courant (écrase la précédente, pas d'historique).
+export function updateBorneHeartbeat(db, id, { agent_version = null, disk_free_bytes = null, disk_total_bytes = null, clock_skew_ms = null, active_event_id = null } = {}) {
+  return db.prepare(`
+    UPDATE bornes SET
+      last_seen_at = CURRENT_TIMESTAMP,
+      agent_version = ?, disk_free_bytes = ?, disk_total_bytes = ?,
+      clock_skew_ms = ?, active_event_id = ?
+    WHERE id = ?
+  `).run(agent_version, disk_free_bytes, disk_total_bytes, clock_skew_ms, active_event_id, id);
+}
+
+// ── borne_events (assignation N-N) ──────────────────────────────────────────
+
+// Événements assignés à une borne, avec nom/statut — sert la console borne
+// (liste des événements pullables) et la fiche admin Hub.
+export function listBorneEvents(db, borne_id) {
+  return db.prepare(`
+    SELECT e.id, e.name, e.status, e.pulled_at
+    FROM borne_events be
+    INNER JOIN events e ON e.id = be.event_id
+    WHERE be.borne_id = ?
+    ORDER BY be.created_at DESC
+  `).all(borne_id);
+}
+
+// Bornes assignées à un événement (onglet Synchro de l'événement, sans token_hash).
+export function listEventBornes(db, event_id) {
+  return db.prepare(`
+    SELECT b.id, b.name, b.location, b.active, b.last_seen_at
+    FROM borne_events be
+    INNER JOIN bornes b ON b.id = be.borne_id
+    WHERE be.event_id = ?
+    ORDER BY b.name
+  `).all(event_id);
+}
+
+// Existence d'une assignation — sert la route d'assignation pour renvoyer un
+// 409 propre plutôt que de compter sur l'exception de contrainte PRIMARY KEY.
+export function getBorneEvent(db, { borne_id, event_id }) {
+  return db.prepare('SELECT * FROM borne_events WHERE borne_id = ? AND event_id = ?').get(borne_id, event_id);
+}
+
+export function assignBorneEvent(db, { borne_id, event_id }) {
+  return db.prepare('INSERT INTO borne_events (borne_id, event_id) VALUES (?, ?)').run(borne_id, event_id);
+}
+
+export function unassignBorneEvent(db, { borne_id, event_id }) {
+  return db.prepare('DELETE FROM borne_events WHERE borne_id = ? AND event_id = ?').run(borne_id, event_id);
+}
+
+// ── borne_commands (file Hub → Borne) ───────────────────────────────────────
+
+export function insertBorneCommand(db, { borne_id, type, payload = null }) {
+  return db
+    .prepare('INSERT INTO borne_commands (borne_id, type, payload) VALUES (?, ?, ?)')
+    .run(borne_id, type, payload ? JSON.stringify(payload) : null);
+}
+
+// Récupère les commandes en attente ET les marque 'sent' dans la foulée
+// (transaction) : le heartbeat qui appelle ceci ne doit jamais renvoyer deux
+// fois la même commande à un battement suivant qui chevaucherait un retry réseau.
+//
+// Re-sélectionne après le marquage plutôt que de renvoyer les lignes du SELECT
+// initial : celles-ci sont un instantané capturé AVANT l'UPDATE (better-sqlite3
+// retourne des objets JS, pas des références vivantes) — les renvoyer telles
+// quelles ferait croire à l'appelant que status vaut encore 'pending'.
+export function claimPendingCommands(db, borne_id) {
+  const claim = db.transaction((borne_id) => {
+    const pending = db
+      .prepare("SELECT id FROM borne_commands WHERE borne_id = ? AND status = 'pending' ORDER BY created_at ASC")
+      .all(borne_id);
+    if (pending.length === 0) return [];
+    const mark = db.prepare("UPDATE borne_commands SET status = 'sent', claimed_at = CURRENT_TIMESTAMP WHERE id = ?");
+    for (const { id } of pending) mark.run(id);
+    const ids = pending.map((r) => r.id);
+    return db
+      .prepare(`SELECT * FROM borne_commands WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY created_at ASC`)
+      .all(...ids);
+  });
+  return claim(borne_id);
+}
+
+export function completeBorneCommand(db, { id, status, result = null }) {
+  return db.prepare(`
+    UPDATE borne_commands SET status = ?, result = ?, done_at = CURRENT_TIMESTAMP WHERE id = ?
+  `).run(status, result ? JSON.stringify(result) : null, id);
+}
+
+// 20 dernières commandes (fiche admin Hub) — état le plus récent en premier.
+export function listBorneCommands(db, borne_id, { limit = 20 } = {}) {
+  return db
+    .prepare('SELECT * FROM borne_commands WHERE borne_id = ? ORDER BY created_at DESC, id DESC LIMIT ?')
+    .all(borne_id, limit);
+}
+
+// Utilisé par POST /api/sync/borne/commands/:id/result pour vérifier que la
+// commande acquittée appartient bien à la borne authentifiée avant de la clore.
+export function getBorneCommandById(db, id) {
+  return db.prepare('SELECT * FROM borne_commands WHERE id = ?').get(id);
 }
 
 // ── seed des templates ────────────────────────────────────────────────────────
