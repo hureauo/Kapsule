@@ -378,6 +378,225 @@ describe('PUT /api/admin/tokens/:tokenId', () => {
   });
 });
 
+// ── Bornes (Phase B — identité machine persistante) ────────────────────────────
+
+describe('POST /api/admin/bornes', () => {
+  it('crée une borne et retourne le token en clair (201)', async () => {
+    const res = await request.post('/api/admin/bornes')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Borne Entrée', location: 'Salle A' });
+    assert.equal(res.status, 201);
+    assert.ok(res.body.id);
+    assert.equal(res.body.name, 'Borne Entrée');
+    assert.equal(res.body.location, 'Salle A');
+    assert.ok(res.body.token_clear, 'token_clear doit être présent');
+    assert.equal(res.body.token_clear.length, 64, '32 octets hex = 64 chars');
+  });
+
+  it('retourne 400 si name manquant', async () => {
+    const res = await request.post('/api/admin/bornes')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ location: 'Sans nom' });
+    assert.equal(res.status, 400);
+  });
+
+  it('retourne 403 pour un client', async () => {
+    const res = await request.post('/api/admin/bornes')
+      .set('Authorization', `Bearer ${tokenClient}`)
+      .send({ name: 'Interdite' });
+    assert.equal(res.status, 403);
+  });
+
+  it('retourne 401 sans token', async () => {
+    const res = await request.post('/api/admin/bornes').send({ name: 'Sans auth' });
+    assert.equal(res.status, 401);
+  });
+});
+
+describe('GET /api/admin/bornes', () => {
+  it('liste les bornes sans exposer le token (200)', async () => {
+    const res = await request.get('/api/admin/bornes')
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body));
+    assert.ok(res.body.length >= 1);
+    assert.ok(!('token_hash' in res.body[0]), 'token_hash ne doit pas fuiter');
+    assert.ok(!('token_clear' in res.body[0]), 'token_clear ne doit pas fuiter dans la vue liste');
+    assert.ok('event_count' in res.body[0]);
+  });
+});
+
+describe('GET/PUT/DELETE /api/admin/bornes/:id + assignation événements + commandes', () => {
+  let borneId, eventId;
+
+  before(async () => {
+    const bRes = await request.post('/api/admin/bornes')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Borne Fiche' });
+    borneId = bRes.body.id;
+
+    const evRes = await request.post('/api/events')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Événement pour borne' });
+    eventId = evRes.body.id;
+  });
+
+  it('GET /:id retourne la fiche (events et commands vides), sans token', async () => {
+    const res = await request.get(`/api/admin/bornes/${borneId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.name, 'Borne Fiche');
+    assert.ok(!('token_hash' in res.body));
+    assert.deepEqual(res.body.events, []);
+    assert.deepEqual(res.body.commands, []);
+  });
+
+  it('GET /:id retourne 404 pour une borne inconnue', async () => {
+    const res = await request.get('/api/admin/bornes/no-such-borne')
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 404);
+  });
+
+  it('PUT /:id renomme/déplace la borne (200)', async () => {
+    const res = await request.put(`/api/admin/bornes/${borneId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Borne Renommée', location: 'Salle B' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.name, 'Borne Renommée');
+    assert.equal(res.body.location, 'Salle B');
+    assert.ok(!('token_hash' in res.body));
+  });
+
+  it('PUT /:id retourne 404 pour une borne inconnue', async () => {
+    const res = await request.put('/api/admin/bornes/no-such-borne')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'X' });
+    assert.equal(res.status, 404);
+  });
+
+  it('POST /:id/events assigne un événement (201)', async () => {
+    const res = await request.post(`/api/admin/bornes/${borneId}/events`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ event_id: eventId });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.borne_id, borneId);
+    assert.equal(res.body.event_id, eventId);
+  });
+
+  it('POST /:id/events retourne 409 si déjà assigné', async () => {
+    const res = await request.post(`/api/admin/bornes/${borneId}/events`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ event_id: eventId });
+    assert.equal(res.status, 409);
+  });
+
+  it('POST /:id/events retourne 404 pour un événement inconnu', async () => {
+    const res = await request.post(`/api/admin/bornes/${borneId}/events`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ event_id: 'no-such-event' });
+    assert.equal(res.status, 404);
+  });
+
+  it('GET /:id reflète l\'événement assigné', async () => {
+    const res = await request.get(`/api/admin/bornes/${borneId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.body.events.length, 1);
+    assert.equal(res.body.events[0].id, eventId);
+  });
+
+  it('POST /:id/commands enfile une commande pending (201)', async () => {
+    const res = await request.post(`/api/admin/bornes/${borneId}/commands`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ type: 'pull' });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.type, 'pull');
+    assert.equal(res.body.status, 'pending');
+  });
+
+  it('POST /:id/commands retourne 400 pour un type invalide', async () => {
+    const res = await request.post(`/api/admin/bornes/${borneId}/commands`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ type: 'reboot' });
+    assert.equal(res.status, 400);
+  });
+
+  it('POST /:id/commands retourne 400 sans payload.event_id pour activate_event', async () => {
+    const res = await request.post(`/api/admin/bornes/${borneId}/commands`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ type: 'activate_event' });
+    assert.equal(res.status, 400);
+  });
+
+  it('POST /:id/commands retourne 400 si l\'événement n\'est pas assigné à cette borne', async () => {
+    const evOther = await request.post('/api/events')
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ name: 'Événement non assigné' });
+    const res = await request.post(`/api/admin/bornes/${borneId}/commands`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ type: 'activate_event', payload: { event_id: evOther.body.id } });
+    assert.equal(res.status, 400);
+  });
+
+  it('POST /:id/commands accepte activate_event pour un événement assigné (201)', async () => {
+    const res = await request.post(`/api/admin/bornes/${borneId}/commands`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ type: 'activate_event', payload: { event_id: eventId } });
+    assert.equal(res.status, 201);
+  });
+
+  it('POST /:id/commands retourne 400 pour purge_event sans confirm', async () => {
+    const res = await request.post(`/api/admin/bornes/${borneId}/commands`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ type: 'purge_event', payload: { event_id: eventId } });
+    assert.equal(res.status, 400);
+  });
+
+  it('POST /:id/commands accepte purge_event avec confirm (201)', async () => {
+    const res = await request.post(`/api/admin/bornes/${borneId}/commands`)
+      .set('Authorization', `Bearer ${tokenAdmin}`)
+      .send({ type: 'purge_event', payload: { event_id: eventId, confirm: 'Événement pour borne' } });
+    assert.equal(res.status, 201);
+  });
+
+  it('GET /:id liste les commandes déposées', async () => {
+    const res = await request.get(`/api/admin/bornes/${borneId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    // pull + activate_event + purge_event, déposées par les tests précédents
+    assert.equal(res.body.commands.length, 3);
+    assert.ok(res.body.commands.some((c) => c.type === 'pull'));
+  });
+
+  it('DELETE /:id/events/:eventId retire l\'assignation (204)', async () => {
+    const res = await request.delete(`/api/admin/bornes/${borneId}/events/${eventId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 204);
+  });
+
+  it('DELETE /:id/events/:eventId retourne 404 si déjà retiré', async () => {
+    const res = await request.delete(`/api/admin/bornes/${borneId}/events/${eventId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 404);
+  });
+
+  it('DELETE /:id supprime la borne (204)', async () => {
+    const res = await request.delete(`/api/admin/bornes/${borneId}`)
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 204);
+  });
+
+  it('DELETE /:id retourne 404 pour une borne inconnue', async () => {
+    const res = await request.delete('/api/admin/bornes/no-such-borne')
+      .set('Authorization', `Bearer ${tokenAdmin}`);
+    assert.equal(res.status, 404);
+  });
+
+  it('retourne 403 pour un client', async () => {
+    const res = await request.get('/api/admin/bornes')
+      .set('Authorization', `Bearer ${tokenClient}`);
+    assert.equal(res.status, 403);
+  });
+});
+
 // ── requireBox (via boxAuth.js) ───────────────────────────────────────────────
 
 describe('boxAuth — middleware', () => {

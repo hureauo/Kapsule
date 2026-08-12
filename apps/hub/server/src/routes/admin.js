@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, randomUUID, createHash } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { statfs } from 'node:fs/promises';
@@ -11,6 +11,9 @@ import {
   insertBoxToken, listBoxTokensByEvent, listAllBoxTokens, getBoxTokenById, deleteBoxToken, updateBoxToken,
   getEvent, listEventUsers, upsertEventUser, deleteEventUser,
   countSuperusers, insertEmailLog, listEmailLogs,
+  insertBorne, listBornes, getBorneById, updateBorne, deleteBorne,
+  listBorneEvents, listBorneCommands, getBorneEvent, assignBorneEvent, unassignBorneEvent,
+  insertBorneCommand,
 } from '../registry.js';
 import { config } from '../config.js';
 import { requireUser } from '../middleware/auth.js';
@@ -268,6 +271,115 @@ export function makeAdminRouter(dataDir, { mailer } = {}) {
     const updated = getBoxTokenById(db, req.params.tokenId);
     const { token_hash: _, ...safe } = updated;
     res.json(safe);
+  });
+
+  // ── Bornes (Phase B — identité machine persistante, distincte de box_tokens) ─
+
+  const BORNE_COMMAND_TYPES = ['pull', 'activate_event', 'close_event', 'purge_event'];
+
+  // POST /api/admin/bornes — crée une borne ; token_clear retourné une seule fois
+  router.post('/bornes', (req, res) => {
+    const db = getDb();
+    const { name, location } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'name requis' });
+
+    const id = randomUUID();
+    const token = randomBytes(32).toString('hex');
+    const token_hash = createHash('sha256').update(token).digest('hex');
+    insertBorne(db, { id, name: name.trim(), location: location?.trim() ?? null, token_hash, token_clear: token });
+    res.status(201).json({ id, name: name.trim(), location: location?.trim() ?? null, token_clear: token });
+  });
+
+  // GET /api/admin/bornes — vue liste (onglet Bornes), sans token
+  router.get('/bornes', (req, res) => {
+    res.json(listBornes(getDb()));
+  });
+
+  // GET /api/admin/bornes/:id — fiche : borne + événements assignés + 20 dernières commandes
+  router.get('/bornes/:id', (req, res) => {
+    const db = getDb();
+    const borne = getBorneById(db, req.params.id);
+    if (!borne) return res.status(404).json({ error: 'Borne introuvable' });
+    const { token_hash: _, ...safe } = borne;
+    res.json({
+      ...safe,
+      events: listBorneEvents(db, req.params.id),
+      commands: listBorneCommands(db, req.params.id),
+    });
+  });
+
+  // PUT /api/admin/bornes/:id — renommer / déplacer / désactiver
+  router.put('/bornes/:id', (req, res) => {
+    const db = getDb();
+    const borne = getBorneById(db, req.params.id);
+    if (!borne) return res.status(404).json({ error: 'Borne introuvable' });
+    updateBorne(db, req.params.id, req.body);
+    const updated = getBorneById(db, req.params.id);
+    const { token_hash: _, ...safe } = updated;
+    res.json(safe);
+  });
+
+  // DELETE /api/admin/bornes/:id — cascade assignations + commandes (ON DELETE CASCADE)
+  router.delete('/bornes/:id', (req, res) => {
+    const result = deleteBorne(getDb(), req.params.id);
+    if (result.changes === 0) return res.status(404).json({ error: 'Borne introuvable' });
+    res.status(204).end();
+  });
+
+  // POST /api/admin/bornes/:id/events — assigne un événement à la borne
+  router.post('/bornes/:id/events', (req, res) => {
+    const db = getDb();
+    const borne = getBorneById(db, req.params.id);
+    if (!borne) return res.status(404).json({ error: 'Borne introuvable' });
+
+    const { event_id } = req.body;
+    if (!event_id) return res.status(400).json({ error: 'event_id requis' });
+    const event = getEvent(db, event_id);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable' });
+    if (getBorneEvent(db, { borne_id: req.params.id, event_id })) {
+      return res.status(409).json({ error: 'Événement déjà assigné à cette borne' });
+    }
+
+    assignBorneEvent(db, { borne_id: req.params.id, event_id });
+    res.status(201).json({ borne_id: req.params.id, event_id });
+  });
+
+  // DELETE /api/admin/bornes/:id/events/:eventId — retire l'assignation
+  router.delete('/bornes/:id/events/:eventId', (req, res) => {
+    const result = unassignBorneEvent(getDb(), { borne_id: req.params.id, event_id: req.params.eventId });
+    if (result.changes === 0) return res.status(404).json({ error: 'Association introuvable' });
+    res.status(204).end();
+  });
+
+  // POST /api/admin/bornes/:id/commands — dépose une commande, récupérée au heartbeat suivant
+  router.post('/bornes/:id/commands', (req, res) => {
+    const db = getDb();
+    const borne = getBorneById(db, req.params.id);
+    if (!borne) return res.status(404).json({ error: 'Borne introuvable' });
+
+    const { type, payload } = req.body;
+    if (!BORNE_COMMAND_TYPES.includes(type)) {
+      return res.status(400).json({ error: `type invalide : ${BORNE_COMMAND_TYPES.join(', ')} attendu` });
+    }
+
+    // Validation immédiate (400) plutôt qu'un échec différé au prochain
+    // battement : activate_event/close_event/purge_event portent sur un
+    // événement précis, qui doit être assigné à CETTE borne ; purge_event
+    // exige en plus la confirmation par nom (même garde que la route locale
+    // POST /api/sync/purge/:eventId — jamais contournable à distance).
+    if (type !== 'pull') {
+      const eventId = payload?.event_id;
+      if (!eventId) return res.status(400).json({ error: 'payload.event_id requis pour ce type de commande' });
+      if (!getBorneEvent(db, { borne_id: req.params.id, event_id: eventId })) {
+        return res.status(400).json({ error: "Cet événement n'est pas assigné à cette borne" });
+      }
+      if (type === 'purge_event' && !payload?.confirm) {
+        return res.status(400).json({ error: "payload.confirm (nom exact de l'événement) requis pour purge_event" });
+      }
+    }
+
+    const result = insertBorneCommand(db, { borne_id: req.params.id, type, payload });
+    res.status(201).json({ id: result.lastInsertRowid, borne_id: req.params.id, type, payload: payload ?? null, status: 'pending' });
   });
 
   // ── Utilisateurs par événement (event_users) ────────────────────────────────
