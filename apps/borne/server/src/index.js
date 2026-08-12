@@ -11,7 +11,9 @@ import { makeQuestionsRouter } from './routes/questions.js';
 import { makeSessionsRouter } from './routes/sessions.js';
 import { makeVideosRouter, dirSize } from './routes/videos.js';
 import { makeSyncRouter } from './routes/sync.js';
-import { pullMyEvent } from './sync/pull.js';
+import { pullMyEvent, pullMyEvents } from './sync/pull.js';
+import { resolveBorneIdentity } from './borneIdentity.js';
+import { startHeartbeat } from './sync/heartbeat.js';
 
 export function createApp(dataDir, cfg = config) {
   openRegistry(dataDir);
@@ -90,16 +92,29 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   validateConfig(config, process.env.NODE_ENV);
   mkdirSync(config.dataDir, { recursive: true });
   const app = createApp(config.dataDir);
+  // Après createApp() (qui a ouvert le registre) : lit/sème l'identité persistante
+  // de borne physique — no-op pour une preview ou en mode autonome.
+  resolveBorneIdentity();
+
   app.listen(config.port, async () => {
     const isPreview = config.previewMode;
+    const isBornePhysique = Boolean(config.hubUrl && config.borneToken);
     const hostPort = config.hostPort ?? config.port;
     const w = 52;
     const line = (s = '') => console.log(`│ ${s.padEnd(w - 2)} │`);
 
-    // Pull one-shot au démarrage — bootstrappe l'événement si aucun n'est présent.
-    // Les pulls suivants sont déclenchés manuellement depuis /admin/tech.
+    // Pull one-shot au démarrage — bootstrappe le(s) événement(s) si aucun n'est
+    // présent. Les pulls suivants sont déclenchés manuellement depuis /borne
+    // (preview / token=événement) ou automatiquement par le heartbeat (borne
+    // physique, PULL_INTERVAL_MS).
     let pullResult = null;
-    if (config.hubUrl && config.boxToken) {
+    if (isBornePhysique) {
+      console.log('[borne] connexion au Hub (identité borne)…');
+      pullResult = await pullMyEvents(config.dataDir)
+        .then(({ pulled }) => ({ pulled: pulled > 0 }))
+        .catch(err => ({ error: err.message }));
+      startHeartbeat(config.dataDir);
+    } else if (config.hubUrl && config.boxToken) {
       console.log('[borne] connexion au Hub…');
       pullResult = await pullMyEvent(config.dataDir).then(n => ({ pulled: n > 0 })).catch(err => ({ error: err.message }));
     }
@@ -119,7 +134,18 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
     }
     line(`  Health check   : http://localhost:${config.port}/api/health`);
     console.log(`├${'─'.repeat(w)}┤`);
-    if (config.hubUrl && config.boxToken) {
+    if (isBornePhysique) {
+      line(`  Hub URL        : ${config.hubUrl}`);
+      line(`  Borne token    : ${config.borneToken.slice(0, 8)}…`);
+      line(`  Heartbeat      : toutes les ${Math.round(config.pullIntervalMs / 1000)}s`);
+      if (pullResult?.error) {
+        line(`  Synchro Hub    : ✗ erreur — ${pullResult.error.slice(0, 30)}`);
+      } else if (pullResult?.pulled) {
+        line(`  Synchro Hub    : ✓ pull réussi`);
+      } else {
+        line(`  Synchro Hub    : — aucun événement pullable`);
+      }
+    } else if (config.hubUrl && config.boxToken) {
       line(`  Hub URL        : ${config.hubUrl}`);
       line(`  Box token      : ${config.boxToken.slice(0, 8)}…`);
       if (pullResult?.error) {

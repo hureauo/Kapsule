@@ -35,6 +35,14 @@ export function openRegistry(dataDir) {
       uploaded_at DATETIME,
       PRIMARY KEY (event_id, video_id)
     );
+
+    -- Phase B : identité persistante de CETTE machine (token/URL Hub). Seedée
+    -- depuis l'env (BORNE_TOKEN/HUB_URL) au premier démarrage ; ensuite la base
+    -- fait foi — permet une rotation de token sans toucher au .env/redéployer.
+    CREATE TABLE IF NOT EXISTS borne_settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT
+    );
   `);
 
   // Migrations douces
@@ -100,4 +108,18 @@ export function listStalePreviewEvents(keepId) {
 
 export function deleteEvent(id) {
   getRegistry().prepare('DELETE FROM local_events WHERE id = ?').run(id);
+}
+
+// ── borne_settings (identité persistante, Phase B) ──────────────────────────
+
+export function getSetting(key) {
+  const row = getRegistry().prepare('SELECT value FROM borne_settings WHERE key = ?').get(key);
+  return row?.value ?? null;
+}
+
+export function setSetting(key, value) {
+  getRegistry().prepare(`
+    INSERT INTO borne_settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `).run(key, value);
 }

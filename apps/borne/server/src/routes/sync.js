@@ -3,9 +3,9 @@ import { rmSync, existsSync, unlink } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { config } from '../config.js';
-import { getRegistry, getActiveEvent, updateEventStatus } from '../registry.js';
+import { getRegistry, getActiveEvent, updateEventStatus, setSetting } from '../registry.js';
 import { closeEventDb, getActiveEventDb } from '../eventDb.js';
-import { getLastPull, pullMyEvent } from '../sync/pull.js';
+import { getLastPull, pullMyEvent, pullMyEvents } from '../sync/pull.js';
 import { pushEvent, pushConfig, getPushState } from '../sync/push.js';
 import { hubFetchJson } from '../sync/hubClient.js';
 
@@ -47,7 +47,12 @@ export function makeSyncRouter(dataDir, cfg) {
   // Retourne connexion Hub, token masqué, config locale, état du push en cours.
   router.get('/sync/status', auth, (req, res) => {
     const hubUrl = cfg.hubUrl || config.hubUrl || null;
-    const boxToken = cfg.boxToken || config.boxToken || null;
+    // Phase B : une identité de borne physique prime sur le token d'événement
+    // (boxToken) — les deux ne sont normalement jamais renseignés en même temps.
+    const isBornePhysique = Boolean(cfg.borneToken || config.borneToken);
+    const rawToken = isBornePhysique
+      ? (cfg.borneToken || config.borneToken)
+      : (cfg.boxToken || config.boxToken || null);
 
     // requiresLogin depuis event_meta (stocké au pull, §11.24)
     let requiresLogin = false;
@@ -63,7 +68,11 @@ export function makeSyncRouter(dataDir, cfg) {
     res.json({
       online: !!hubUrl,
       hubUrl,
-      token: boxToken ? `${boxToken.slice(0, 8)}…` : null,
+      token: rawToken ? `${rawToken.slice(0, 8)}…` : null,
+      // 'borne' = identité machine persistante (Phase B) ; 'event' = token
+      // d'événement (preview, ou legacy token=événement) — l'onglet Identité
+      // s'en sert pour adapter son libellé.
+      tokenKind: isBornePhysique ? 'borne' : 'event',
       isPreview: isPreviewMode(cfg),
       requiresLogin,
       lastPull: getLastPull(),
@@ -88,17 +97,53 @@ export function makeSyncRouter(dataDir, cfg) {
   });
 
   // ── POST /api/sync/token ──────────────────────────────────────────────────────
-  // Change le BOX_TOKEN à chaud (sans redémarrer). Déclenche un pull immédiat.
+  // Change le token à chaud (sans redémarrer). Déclenche un pull immédiat.
+  // Phase B : pour une identité de borne physique, la rotation est PERSISTÉE
+  // (borne_settings) — sinon elle serait perdue au prochain redémarrage du
+  // container, contrairement au boxToken (preview) qui n'a jamais eu besoin
+  // de survivre à un restart (le provisioner le réinjecte via l'env à chaque
+  // (re)création du container).
+  //
+  // Détection du TYPE de token (borne physique vs preview/événement) : on ne
+  // peut pas se fier à `config.borneToken` déjà renseigné — ça exclurait
+  // l'appairage INITIAL d'une borne physique (aucun BORNE_TOKEN au premier
+  // démarrage, token collé depuis /borne → onglet Identité). On interroge
+  // directement le Hub sur la route réservée aux bornes physiques : 400 = le
+  // Hub a résolu le token comme un token d'événement (box_tokens) → bascule
+  // sur l'ancien chemin ; tout le reste (200, ou une erreur qui n'est pas ce
+  // 400 précis) = token borne, persisté.
   router.post('/sync/token', auth, async (req, res, next) => {
     try {
       const { token } = req.body ?? {};
       if (!token || typeof token !== 'string' || token.trim().length === 0) {
         return res.status(400).json({ error: 'token requis' });
       }
-      config.boxToken = token.trim();
-      cfg.boxToken = token.trim();
-      // Pull immédiat pour charger l'événement associé au nouveau token
-      await pullMyEvent(dataDir).catch(() => {});
+      const trimmed = token.trim();
+
+      const previousBorneToken = config.borneToken;
+      config.borneToken = trimmed;
+      cfg.borneToken = trimmed;
+
+      let isBorneToken = true;
+      try {
+        await hubFetchJson('/api/sync/borne/events');
+      } catch (err) {
+        if (err.status === 400) isBorneToken = false;
+        // autres statuts (401 token invalide, réseau…) : ne renseignent pas
+        // sur le TYPE, on suppose borne physique et on laisse le pull échouer
+        // normalement ci-dessous (l'utilisateur verra l'erreur au prochain sync).
+      }
+
+      if (isBorneToken) {
+        setSetting('borne_token', trimmed);
+        await pullMyEvents(dataDir).catch(() => {});
+      } else {
+        config.borneToken = previousBorneToken;
+        cfg.borneToken = previousBorneToken;
+        config.boxToken = trimmed;
+        cfg.boxToken = trimmed;
+        await pullMyEvent(dataDir).catch(() => {});
+      }
       res.json({ ok: true });
     } catch (err) {
       next(err);

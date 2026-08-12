@@ -6,13 +6,13 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 
-import { openRegistry, closeRegistry, getRegistry, insertEvent } from '../src/registry.js';
+import { openRegistry, closeRegistry, getRegistry, insertEvent, getActiveEvent, setActiveEvent } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 import { config } from '../src/config.js';
 
 // Importer les modules sous test au top-level (ESM cache stable)
 import { hubFetch, hubFetchJson } from '../src/sync/hubClient.js';
-import { pullEvent, pullMyEvent } from '../src/sync/pull.js';
+import { pullEvent, pullMyEvent, pullMyEvents } from '../src/sync/pull.js';
 
 // ── hubClient ──────────────────────────────────────────────────────────────────
 
@@ -20,6 +20,7 @@ describe('hubClient — hubFetch / hubFetchJson', () => {
   let savedFetch;
   const origHubUrl = config.hubUrl;
   const origBoxToken = config.boxToken;
+  const origBorneToken = config.borneToken;
 
   before(() => {
     savedFetch = globalThis.fetch;
@@ -31,6 +32,7 @@ describe('hubClient — hubFetch / hubFetchJson', () => {
     globalThis.fetch = savedFetch;
     config.hubUrl = origHubUrl;
     config.boxToken = origBoxToken;
+    config.borneToken = origBorneToken;
   });
 
   it('envoie X-Box-Token dans le header', async () => {
@@ -41,6 +43,21 @@ describe('hubClient — hubFetch / hubFetchJson', () => {
     };
     await hubFetch('/api/sync/assigned');
     assert.equal(capturedHeaders['X-Box-Token'], 'test-token-abc');
+  });
+
+  it('Phase B — préfère config.borneToken à config.boxToken (identité de borne physique)', async () => {
+    config.borneToken = 'physical-borne-token';
+    let capturedHeaders;
+    globalThis.fetch = async (url, opts) => {
+      capturedHeaders = opts?.headers ?? {};
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+    try {
+      await hubFetch('/api/sync/borne/events');
+      assert.equal(capturedHeaders['X-Box-Token'], 'physical-borne-token', 'une borne physique ne doit jamais envoyer un token vide/preview');
+    } finally {
+      config.borneToken = '';
+    }
   });
 
   it('compose l\'URL complète avec hubUrl', async () => {
@@ -329,6 +346,134 @@ describe('pull — pullMyEvent', () => {
     });
     const count = await pullMyEvent(dir);
     assert.equal(count, 0);
+  });
+});
+
+// ── pull.js — pullMyEvents (Phase B — bornes physiques, plusieurs événements) ──
+
+describe('pull — pullMyEvents', () => {
+  let dir;
+  let savedFetch;
+  const origHubUrl = config.hubUrl;
+  const origBorneToken = config.borneToken;
+
+  function bundleFor(id, name = `Event ${id}`) {
+    return { event: { id, name, meta: {} }, questions: [] };
+  }
+
+  before(() => {
+    savedFetch = globalThis.fetch;
+    config.hubUrl = 'https://hub.test';
+    // Phase B : pullMyEvents est le chemin BORNE PHYSIQUE — config.borneToken,
+    // pas config.boxToken (réservé aux previews). Utiliser le mauvais champ ici
+    // masquerait une régression sur l'en-tête envoyé (cf. hubClient.js).
+    config.borneToken = 'physical-borne-tok';
+  });
+
+  after(() => {
+    globalThis.fetch = savedFetch;
+    config.hubUrl = origHubUrl;
+    config.borneToken = origBorneToken;
+  });
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-pull-many-'));
+    openRegistry(dir);
+  });
+
+  afterEach(() => {
+    closeEventDb();
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('pullEvent seul ne pose plus active=1 (Phase B — activation retirée du cœur du pull)', async () => {
+    globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => bundleFor('ev-solo') });
+    await pullEvent('ev-solo', dir);
+    assert.equal(getActiveEvent(), null, 'pullEvent seul ne doit jamais activer un événement');
+  });
+
+  it('pulle plusieurs événements assignés en une passe', async () => {
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/sync/borne/events')) {
+        return { ok: true, status: 200, json: async () => ({ events: [{ id: 'ev-a', status: 'ready' }, { id: 'ev-b', status: 'ready' }] }) };
+      }
+      const id = String(url).includes('ev-a') ? 'ev-a' : 'ev-b';
+      return { ok: true, status: 200, json: async () => bundleFor(id) };
+    };
+
+    const { pulled, results } = await pullMyEvents(dir);
+    assert.equal(pulled, 2);
+    assert.equal(results.filter(r => r.ok).length, 2);
+    assert.ok(getRegistry().prepare('SELECT * FROM local_events WHERE id = ?').get('ev-a'));
+    assert.ok(getRegistry().prepare('SELECT * FROM local_events WHERE id = ?').get('ev-b'));
+  });
+
+  it('active automatiquement le seul événement pullé si aucun n\'était actif (bootstrap)', async () => {
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/sync/borne/events')) {
+        return { ok: true, status: 200, json: async () => ({ events: [{ id: 'ev-unique', status: 'ready' }] }) };
+      }
+      return { ok: true, status: 200, json: async () => bundleFor('ev-unique') };
+    };
+
+    await pullMyEvents(dir);
+    assert.equal(getActiveEvent()?.id, 'ev-unique');
+  });
+
+  it('NE choisit PAS d\'actif si plusieurs événements sont pullés (choix explicite requis)', async () => {
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/sync/borne/events')) {
+        return { ok: true, status: 200, json: async () => ({ events: [{ id: 'ev-a', status: 'ready' }, { id: 'ev-b', status: 'ready' }] }) };
+      }
+      const id = String(url).includes('ev-a') ? 'ev-a' : 'ev-b';
+      return { ok: true, status: 200, json: async () => bundleFor(id) };
+    };
+
+    await pullMyEvents(dir);
+    assert.equal(getActiveEvent(), null, 'ambigu entre 2 événements — reste à un humain de choisir');
+  });
+
+  it('ne bascule jamais un événement déjà actif au profit d\'un nouveau pull (§11.10)', async () => {
+    insertEvent({ id: 'ev-live', name: 'En cours', origin: 'hub', status: 'loaded' });
+    getRegistry().prepare("UPDATE local_events SET status='live' WHERE id='ev-live'").run();
+    setActiveEvent('ev-live');
+
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/sync/borne/events')) {
+        return { ok: true, status: 200, json: async () => ({ events: [{ id: 'ev-live', status: 'loaded' }, { id: 'ev-new', status: 'ready' }] }) };
+      }
+      return { ok: true, status: 200, json: async () => bundleFor('ev-new') };
+    };
+
+    const { pulled, results } = await pullMyEvents(dir);
+    assert.equal(pulled, 1, 'seul ev-new doit être pullé, ev-live est ignoré (déjà live)');
+    assert.ok(results.find(r => r.eventId === 'ev-live')?.skipped);
+    assert.equal(getActiveEvent().id, 'ev-live', 'l\'événement live doit rester actif');
+  });
+
+  it('retourne pulled:0 si la route répond 400 (token preview envoyé par erreur)', async () => {
+    globalThis.fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: 'Route réservée aux bornes physiques' }) });
+    const { pulled, results } = await pullMyEvents(dir);
+    assert.equal(pulled, 0);
+    assert.deepEqual(results, []);
+  });
+
+  it('consigne les échecs individuels sans interrompre les autres pulls', async () => {
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/sync/borne/events')) {
+        return { ok: true, status: 200, json: async () => ({ events: [{ id: 'ev-ok', status: 'ready' }, { id: 'ev-ko', status: 'ready' }] }) };
+      }
+      if (String(url).includes('ev-ko')) {
+        return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
+      }
+      return { ok: true, status: 200, json: async () => bundleFor('ev-ok') };
+    };
+
+    const { pulled, results } = await pullMyEvents(dir);
+    assert.equal(pulled, 1);
+    assert.ok(results.find(r => r.eventId === 'ev-ok')?.ok);
+    assert.equal(results.find(r => r.eventId === 'ev-ko')?.ok, false);
   });
 });
 

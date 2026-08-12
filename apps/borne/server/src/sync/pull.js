@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { sha256File } from '@kapsule/core/src/checksum.js';
 import { isValidAssetFilename } from '@kapsule/core';
-import { getRegistry, insertEvent, setActiveEvent, listStalePreviewEvents, deleteEvent } from '../registry.js';
+import { getRegistry, insertEvent, setActiveEvent, getActiveEvent, listStalePreviewEvents, deleteEvent } from '../registry.js';
 import { hubFetchJson, hubFetchBuffer } from './hubClient.js';
 import { config } from '../config.js';
 
@@ -40,7 +40,10 @@ export async function pullEvent(hubEventId, dataDir) {
   if (!existing) {
     insertEvent({ id: hubEventId, name: bundle.event.name, origin: 'hub', status: 'loaded' });
   }
-  setActiveEvent(hubEventId);
+  // Phase B : PAS d'activation ici — pullEvent() est maintenant appelé pour
+  // plusieurs événements par pullMyEvents() ; puller B ne doit jamais basculer
+  // le kiosque hors de A si A est live. L'activation est portée explicitement
+  // par l'appelant (pullMyEvent pour une preview, un choix humain sinon).
 
   // 4. Met à jour pulled_at dans le registre
   db.prepare(
@@ -191,6 +194,9 @@ export async function pullMyEvent(dataDir) {
     }
 
     await pullEvent(eventInfo.id, dataDir);
+    // Une preview n'a jamais qu'un seul événement en jeu : l'activer immédiatement
+    // préserve le comportement historique (pullEvent ne le fait plus, Phase B).
+    setActiveEvent(eventInfo.id);
     db.prepare('UPDATE local_events SET is_preview = ? WHERE id = ?')
       .run(eventInfo.is_preview ? 1 : 0, eventInfo.id);
     _setLastPull();
@@ -198,4 +204,52 @@ export async function pullMyEvent(dataDir) {
   }
   _setLastPull();
   return 0;
+}
+
+/**
+ * Tire TOUS les événements assignés à ce token borne (Phase B — plusieurs
+ * événements par machine, à la différence de pullMyEvent/token=événement).
+ *
+ * N'active JAMAIS un événement au détriment d'un autre déjà en cours : pullEvent()
+ * ne pose plus active=1 lui-même. Seule exception, pour ne pas laisser une
+ * borne fraîchement provisionnée bloquée sur l'écran de chargement sans
+ * intervention humaine : si aucun événement n'est actif et qu'un seul pull a
+ * réussi, il devient l'actif. Dès que plusieurs événements coexistent,
+ * l'activation redevient un choix explicite (console /borne ou commande Hub
+ * `activate_event`).
+ */
+export async function pullMyEvents(dataDir) {
+  let events;
+  try {
+    const res = await hubFetchJson('/api/sync/borne/events');
+    events = res.events ?? [];
+  } catch (e) {
+    if (e.status === 400) return { pulled: 0, results: [] }; // token preview envoyé par erreur sur cette route
+    throw e;
+  }
+
+  const db = getRegistry();
+  const results = [];
+  for (const eventInfo of events) {
+    const existing = db.prepare('SELECT * FROM local_events WHERE id = ?').get(eventInfo.id);
+    // §11.10 : ne jamais écraser un événement en cours (sessions invités actives).
+    if (existing && existing.status !== 'loaded') {
+      results.push({ eventId: eventInfo.id, skipped: true, reason: `statut local ${existing.status}` });
+      continue;
+    }
+    try {
+      await pullEvent(eventInfo.id, dataDir);
+      results.push({ eventId: eventInfo.id, ok: true });
+    } catch (err) {
+      results.push({ eventId: eventInfo.id, ok: false, error: err.message });
+    }
+  }
+
+  const succeeded = results.filter((r) => r.ok);
+  if (!getActiveEvent() && succeeded.length === 1) {
+    setActiveEvent(succeeded[0].eventId);
+  }
+
+  _setLastPull();
+  return { pulled: succeeded.length, results };
 }

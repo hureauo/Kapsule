@@ -73,7 +73,10 @@ async function uploadFileWithRetry(path, filePath, filename) {
 
       const res = await globalThis.fetch(url, {
         method: 'PUT',
-        headers: { 'X-Box-Token': config.boxToken },
+        // Phase B : une identité de borne physique prime sur le token
+        // d'événement — même règle que hubClient.js (sinon une borne
+        // physique pousserait ses vidéos avec un token vide).
+        headers: { 'X-Box-Token': config.borneToken || config.boxToken },
         body: form,
       });
       if (!res.ok) {

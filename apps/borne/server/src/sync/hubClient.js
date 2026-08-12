@@ -27,8 +27,11 @@ function sleep(ms) {
  */
 export async function hubFetch(path, options = {}) {
   const url = `${config.hubUrl}${path}`;
+  // Phase B : une identité de borne physique (config.borneToken) prime sur le
+  // token d'événement (config.boxToken, réservé aux previews) — les deux ne
+  // sont normalement jamais renseignés en même temps (cf. resolveBorneIdentity).
   const headers = {
-    'X-Box-Token': config.boxToken,
+    'X-Box-Token': config.borneToken || config.boxToken,
     ...options.headers,
   };
 

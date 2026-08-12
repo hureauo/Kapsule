@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   openRegistry, closeRegistry,
   getActiveEvent, listEvents, insertEvent, setActiveEvent, updateEventStatus,
+  getSetting, setSetting,
 } from '../src/registry.js';
 import { getActiveEventDb, closeEventDb } from '../src/eventDb.js';
 
@@ -32,6 +33,7 @@ describe('registry', () => {
       .all().map(r => r.name);
     assert.ok(tables.includes('local_events'));
     assert.ok(tables.includes('push_state'));
+    assert.ok(tables.includes('borne_settings'));
   });
 
   test('openRegistry est idempotent — retourne le même handle', () => {
@@ -76,6 +78,44 @@ describe('registry', () => {
     insertEvent({ id: 'e1', name: 'Un', origin: 'local' });
     insertEvent({ id: 'e2', name: 'Deux', origin: 'hub' });
     assert.equal(listEvents().length, 2);
+  });
+});
+
+// ─── borne_settings (identité persistante, Phase B) ─────────────────────────
+
+describe('registry — borne_settings', () => {
+  let dir;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'borne-settings-'));
+    openRegistry(dir);
+  });
+
+  afterEach(() => {
+    closeRegistry();
+    rmSync(dir, { recursive: true });
+  });
+
+  test('getSetting retourne null pour une clé absente', () => {
+    assert.equal(getSetting('borne_token'), null);
+  });
+
+  test('setSetting puis getSetting retourne la valeur', () => {
+    setSetting('borne_token', 'abc123');
+    assert.equal(getSetting('borne_token'), 'abc123');
+  });
+
+  test('setSetting écrase une valeur existante (upsert)', () => {
+    setSetting('borne_token', 'ancien');
+    setSetting('borne_token', 'nouveau');
+    assert.equal(getSetting('borne_token'), 'nouveau');
+  });
+
+  test('deux clés distinctes ne se marchent pas dessus', () => {
+    setSetting('borne_token', 'tok');
+    setSetting('hub_url', 'https://hub.test');
+    assert.equal(getSetting('borne_token'), 'tok');
+    assert.equal(getSetting('hub_url'), 'https://hub.test');
   });
 });
 
