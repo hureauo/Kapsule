@@ -109,9 +109,6 @@ export const api = {
   health: () => apiFetch('/api/health'), // public, liveness probe
   adminHealth: () => apiFetch('/api/admin/health'), // auth requise — retourne disk, eventName, isPreview
 
-  listEvents: () => apiFetch('/api/events'),
-  activateEvent: (id) =>
-    apiFetch(`/api/events/${id}/activate`, { method: 'PUT' }),
   updateEventSettings: (id, settings) =>
     apiFetch(`/api/events/${id}/settings`, { method: 'PUT', body: JSON.stringify(settings) }),
 
@@ -132,6 +129,16 @@ export const api = {
   listSessions: () => apiFetch('/api/sessions'),
 
   // ── Routes tech admin (requireTech — tech_token) ──────────────────────────
+  // Console /borne (Phase B) : entièrement tech-authentifiée, y compris les
+  // routes événement/santé — qui acceptent admin_borne OU tech_borne côté
+  // serveur (§11.19), mais que le client doit appeler avec tech_token puisque
+  // /borne n'a jamais admin_token en mémoire (deux sessions localStorage
+  // distinctes, cf. TOKEN_KEY/TECH_TOKEN_KEY).
+
+  techAdminHealth: () => techApiFetch('/api/admin/health'),
+  techListEvents: () => techApiFetch('/api/events'),
+  techActivateEvent: (id) =>
+    techApiFetch(`/api/events/${id}/activate`, { method: 'PUT' }),
 
   closeEvent: (id) =>
     techApiFetch(`/api/events/${id}/close`, { method: 'PUT' }),

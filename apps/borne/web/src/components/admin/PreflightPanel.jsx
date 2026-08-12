@@ -1,5 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client.js';
+import {
+  VIDEO_QUALITY, VIDEO_ORIENTATIONS,
+  DEFAULT_VIDEO_QUALITY, DEFAULT_VIDEO_ORIENTATION, mbPerMinFromKey,
+} from '@kapsule/core';
 
 function CheckRow({ label, ok, detail }) {
   return (
@@ -26,6 +30,15 @@ export default function PreflightPanel() {
   const [cameraStream, setCameraStream] = useState(null);
   const videoRef = useRef(null);
 
+  // Qualité/orientation d'enregistrement — override LOCAL à cette borne
+  // (jamais écrasé par le pull, cf. local_overrides). Déplacé depuis
+  // DesignPanel (Phase B) : c'est un réglage machine, pas un réglage
+  // d'événement, et api.setVideoSettings est de toute façon tech-authentifié.
+  const [videoQuality, setVideoQuality] = useState(null);
+  const [videoOrientation, setVideoOrientation] = useState(DEFAULT_VIDEO_ORIENTATION);
+  const [qualitySaving, setQualitySaving] = useState(false);
+  const [qualityError, setQualityError] = useState('');
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -39,7 +52,37 @@ export default function PreflightPanel() {
     }
   }, []);
 
+  const loadVideoSettings = useCallback(async () => {
+    try {
+      const evt = await api.getEvent();
+      setVideoQuality(evt.video_quality ?? DEFAULT_VIDEO_QUALITY);
+      setVideoOrientation(evt.video_orientation ?? DEFAULT_VIDEO_ORIENTATION);
+    } catch { /* pas d'événement actif — la section reste masquée */ }
+  }, []);
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadVideoSettings(); }, [loadVideoSettings]);
+
+  // Qualité et orientation partagent la même route d'override local : un seul
+  // handler optimiste, qui restaure la valeur précédente si l'écriture échoue.
+  async function handleSelectVideoSetting(field, value) {
+    const isQuality = field === 'quality';
+    const previous = isQuality ? videoQuality : videoOrientation;
+    if (!value || value === previous) return;
+    const setLocal = isQuality ? setVideoQuality : setVideoOrientation;
+
+    setLocal(value);
+    setQualitySaving(true);
+    setQualityError('');
+    try {
+      await api.setVideoSettings({ [field]: value });
+    } catch (err) {
+      setLocal(previous);
+      setQualityError(err.message);
+    } finally {
+      setQualitySaving(false);
+    }
+  }
 
   // Nettoyage du flux caméra au démontage
   useEffect(() => {
@@ -135,6 +178,44 @@ export default function PreflightPanel() {
             : cameraError}
         />
       </div>
+
+      {videoQuality && (
+        <section className="panel-section">
+          <h2 className="panel-section__title">
+            Qualité d'enregistrement
+            <span className="panel-section__hint"> — override local à cette borne</span>
+          </h2>
+          <div className="quality-picker">
+            <select
+              value={videoQuality}
+              onChange={(e) => handleSelectVideoSetting('quality', e.target.value)}
+              disabled={qualitySaving}
+              className="admin-input admin-input--select"
+            >
+              {/* Les dimensions listées dépendent de l'orientation courante. */}
+              {Object.entries(VIDEO_QUALITY[videoOrientation] ?? VIDEO_QUALITY[DEFAULT_VIDEO_ORIENTATION]).map(([key, q]) => (
+                <option key={key} value={key}>
+                  {q.label} — {q.width}×{q.height} · ≈{mbPerMinFromKey(key, videoOrientation)} Mo/min
+                </option>
+              ))}
+            </select>
+            <select
+              value={videoOrientation}
+              onChange={(e) => handleSelectVideoSetting('orientation', e.target.value)}
+              disabled={qualitySaving}
+              className="admin-input admin-input--select"
+            >
+              {VIDEO_ORIENTATIONS.map((o) => (
+                <option key={o} value={o}>
+                  {o === 'portrait' ? 'Portrait (vertical)' : 'Paysage (horizontal)'}
+                </option>
+              ))}
+            </select>
+            {qualitySaving && <span className="text--muted" style={{ marginLeft: '0.5rem' }}>Enregistrement…</span>}
+          </div>
+          {qualityError && <p className="text--error">{qualityError}</p>}
+        </section>
+      )}
 
       {/* Aperçu caméra + bouton */}
       <div className="preflight-camera">

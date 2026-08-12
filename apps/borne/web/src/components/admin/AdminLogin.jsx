@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { api } from '../../api/client.js';
 
 // onSuccess(token) : le composant parent décide où stocker le token
-// (admin_token pour /admin, tech_token pour /admin/tech)
+// (admin_token pour /admin, tech_token pour /borne)
 export default function AdminLogin({ onSuccess, title = 'Administration' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

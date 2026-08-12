@@ -20,6 +20,12 @@ function diffConfig(hub, local) {
   return 'equal';
 }
 
+// Onglet Synchro de la console /borne (Phase B). Le token/identité de la
+// machine a été déplacé dans l'onglet Identité, la purge dans l'onglet
+// Événements (regroupée avec activer/clôturer). Pas de « journal des
+// commandes » ici volontairement : les commandes Hub → Borne (§B.3) sont
+// exécutées et acquittées par le heartbeat en tâche de fond, sans trace
+// locale persistée — le journal vit côté Hub (fiche borne, onglet Bornes).
 export default function SyncPanel() {
   const [status, setStatus] = useState(null);
   const [events, setEvents] = useState([]);
@@ -32,19 +38,8 @@ export default function SyncPanel() {
   const [pushConfigMsg, setPushConfigMsg] = useState('');
   const [pushError, setPushError] = useState('');
 
-  // Gestion du token
-  const [tokenEditing, setTokenEditing] = useState(false);
-  const [tokenInput, setTokenInput] = useState('');
-  const [tokenState, setTokenState] = useState(null);  // null | 'loading' | 'ok' | 'error'
-  const [tokenMsg, setTokenMsg] = useState('');
-
   // Refresh
   const [refreshing, setRefreshing] = useState(false);
-
-  // Purge
-  const [purgeEventId, setPurgeEventId] = useState(null);
-  const [purgeConfirm, setPurgeConfirm] = useState('');
-  const [purgeMsg, setPurgeMsg] = useState('');
 
   const loadStatus = useCallback(async () => {
     try {
@@ -54,7 +49,10 @@ export default function SyncPanel() {
   }, []);
 
   const loadEvents = useCallback(async () => {
-    try { setEvents(await api.listEvents()); } catch { /* non bloquant */ }
+    // Console /borne (tech_token) — le cycle de vie complet (activer/clôturer/
+    // purger) vit dans l'onglet Événements (EventPanel) ; ici on ne lit que la
+    // liste pour construire "à pousser" (closed).
+    try { setEvents(await api.techListEvents()); } catch { /* non bloquant */ }
   }, []);
 
   const loadHubConfig = useCallback(async () => {
@@ -108,24 +106,6 @@ export default function SyncPanel() {
     }
   }
 
-  async function handleTokenSave() {
-    if (!tokenInput.trim()) return;
-    setTokenState('loading');
-    setTokenMsg('');
-    try {
-      await api.updateToken(tokenInput.trim());
-      await loadStatus();
-      await loadHubConfig();
-      setTokenState('ok');
-      setTokenMsg('Token mis à jour.');
-      setTokenEditing(false);
-      setTokenInput('');
-    } catch (err) {
-      setTokenState('error');
-      setTokenMsg(err.message);
-    }
-  }
-
   async function handlePush(eventId) {
     setPushError('');
     try {
@@ -136,25 +116,8 @@ export default function SyncPanel() {
     }
   }
 
-  async function handlePurge(e) {
-    e.preventDefault();
-    const ev = events.find(ev => ev.id === purgeEventId);
-    if (!ev) return;
-    setPurgeMsg('');
-    try {
-      await api.purgeEvent(purgeEventId, purgeConfirm);
-      setPurgeEventId(null);
-      setPurgeConfirm('');
-      setPurgeMsg('Événement purgé.');
-      await loadEvents();
-    } catch (err) {
-      setPurgeMsg(`Erreur : ${err.message}`);
-    }
-  }
-
   const push = status?.push ?? { running: false, total: 0, done: 0, currentFile: null };
   const closedEvents = events.filter(ev => ev.status === 'closed');
-  const pushedEvents = events.filter(ev => ev.status === 'pushed');
   const diff = diffConfig(hubConfig, status?.localConfig);
 
   return (
@@ -177,48 +140,9 @@ export default function SyncPanel() {
           )}
         </div>
 
-        <div className="sync-token-row">
-          <span className="text--muted">Token : </span>
-          {tokenEditing ? (
-            <div className="sync-token-edit">
-              <input
-                className="admin-input admin-input--small"
-                type="text"
-                placeholder="Nouveau token…"
-                value={tokenInput}
-                onChange={e => setTokenInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleTokenSave()}
-                autoFocus
-              />
-              <button
-                className="btn btn--primary btn--small"
-                onClick={handleTokenSave}
-                disabled={tokenState === 'loading' || !tokenInput.trim()}
-              >
-                {tokenState === 'loading' ? '…' : 'Sauvegarder'}
-              </button>
-              <button
-                className="btn btn--ghost btn--small"
-                onClick={() => { setTokenEditing(false); setTokenInput(''); setTokenMsg(''); setTokenState(null); }}
-              >
-                Annuler
-              </button>
-            </div>
-          ) : (
-            <div className="sync-token-display">
-              <code className="sync-token-value">{status?.token ?? '—'}</code>
-              <button
-                className="btn btn--ghost btn--small"
-                onClick={() => setTokenEditing(true)}
-              >
-                Changer
-              </button>
-            </div>
-          )}
-        </div>
-        {tokenMsg && (
-          <p className={tokenState === 'error' ? 'error-msg' : 'text--muted'}>{tokenMsg}</p>
-        )}
+        <p className="text--muted" style={{ fontSize: '13px', marginTop: '4px' }}>
+          Identité et token : onglet Identité.
+        </p>
       </section>
 
       {/* ── Section 2 : Config ── */}
@@ -358,57 +282,6 @@ export default function SyncPanel() {
           </>
         )}
       </section>
-
-      {/* ── Section 4 : Purge RGPD ── */}
-      {pushedEvents.length > 0 && (
-        <section className="panel-section">
-          <h3 className="panel-section__title">Purge locale (après push)</h3>
-          {purgeMsg && <p className="text--muted">{purgeMsg}</p>}
-          {purgeEventId === null ? (
-            <ul className="sync-event-list">
-              {pushedEvents.map(ev => (
-                <li key={ev.id} className="sync-event-item">
-                  <span>{ev.name}</span>
-                  <button
-                    className="btn btn--danger btn--small"
-                    onClick={() => { setPurgeEventId(ev.id); setPurgeConfirm(''); setPurgeMsg(''); }}
-                  >
-                    Purger
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <form onSubmit={handlePurge} className="purge-form">
-              <p className="text--warn">
-                Cette action supprime définitivement tous les fichiers locaux de l'événement
-                « {events.find(ev => ev.id === purgeEventId)?.name} ».
-              </p>
-              <label className="field-label">
-                Saisir le nom de l'événement pour confirmer
-                <input
-                  className="admin-input"
-                  type="text"
-                  value={purgeConfirm}
-                  onChange={e => setPurgeConfirm(e.target.value)}
-                  autoFocus
-                />
-              </label>
-              {purgeMsg && <p className="error-msg">{purgeMsg}</p>}
-              <div className="purge-form__actions">
-                <button type="submit" className="btn btn--danger">Confirmer la purge</button>
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={() => { setPurgeEventId(null); setPurgeMsg(''); }}
-                >
-                  Annuler
-                </button>
-              </div>
-            </form>
-          )}
-        </section>
-      )}
     </div>
   );
 }

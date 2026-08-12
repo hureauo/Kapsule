@@ -289,7 +289,7 @@ input, textarea, [contenteditable] {
 }
 
 /* ── Zone technicien ─────────────────────────────────────────────────────────
-   Bandeau ambre + accent sur le header pour distinguer /admin/tech de /admin.
+   Bandeau ambre + accent sur le header pour distinguer /borne de /admin.
    Réutilise les tokens CSS de l'admin (thème clair — pas de nouvelle palette). */
 .admin-banner {
   flex-shrink: 0;
@@ -418,9 +418,9 @@ input, textarea, [contenteditable] {
    Ces classes existent AUSSI, préfixées .kapsule-guest, dans
    @kapsule/guest-ui/guest.css pour le parcours invité (StartScreen, NameInput,
    RecordingScreen, RecapScreen, ThankYouScreen, GuestPage — tous enveloppés
-   dans <div className="kapsule-guest"> par App.jsx). L'admin/tech (AdminLogin,
-   AdminLayout, EventPanel, SyncPanel, QuestionManager, PreflightPanel,
-   DesignPanel, VideoList) est HORS de ce wrapper et a donc besoin de sa propre
+   dans <div className="kapsule-guest"> par App.jsx). L'admin/borne (AdminLogin,
+   AdminLayout, EventPanel, IdentityPanel, SyncPanel, QuestionManager,
+   PreflightPanel, DesignPanel, VideoList) est HORS de ce wrapper et a donc besoin de sa propre
    copie non scopée ici — sans elle, boutons/textes muted/error/formulaires
    admin perdraient tout style (trouvé par kapsule-reviewer, designUI.B). Les
    deux définitions doivent rester identiques au caractère près : en cas de

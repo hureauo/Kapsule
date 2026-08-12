@@ -19,17 +19,20 @@ function DiskIndicator({ freeBytes }) {
 // tabs : [{ id, label }] — définit les onglets affichés
 // clearTokenFn : fonction de déconnexion (clearToken pour client, clearTechToken pour tech)
 // role : 'client' | 'tech' — affiche le bandeau « espace technicien » si 'tech'
+// fetchHealthFn : api.adminHealth (client, admin_token) ou api.techAdminHealth
+//   (tech/borne, tech_token) — /admin et /borne ont deux sessions localStorage
+//   distinctes, l'indicateur disque doit appeler avec le bon token.
 // isPreview : true → bandeau « BORNE D'ESSAI »
-export default function AdminLayout({ activeTab, onTabChange, onLogout, children, tabs, clearTokenFn = clearToken, role = 'client', isPreview = false, eventName = null, currentUser = null }) {
+export default function AdminLayout({ activeTab, onTabChange, onLogout, children, tabs, clearTokenFn = clearToken, fetchHealthFn = api.adminHealth, role = 'client', isPreview = false, eventName = null, currentUser = null }) {
   const [freeBytes, setFreeBytes] = useState(null);
   const intervalRef = useRef(null);
 
   const fetchDisk = useCallback(async () => {
     try {
-      const data = await api.adminHealth();
+      const data = await fetchHealthFn();
       setFreeBytes(data?.disk?.free_bytes ?? null);
     } catch { /* non bloquant */ }
-  }, []);
+  }, [fetchHealthFn]);
 
   useEffect(() => {
     fetchDisk();
@@ -58,6 +61,9 @@ export default function AdminLayout({ activeTab, onTabChange, onLogout, children
         <span className="admin-header__title">Kapsule — Admin{eventName ? ` · ${eventName}` : ''}</span>
         <DiskIndicator freeBytes={freeBytes} />
         {currentUser && <span className="admin-header__user">{currentUser}</span>}
+        <a className="btn btn--ghost btn--small" href={role === 'tech' ? '/admin' : '/borne'}>
+          {role === 'tech' ? 'Espace client →' : '→ Console borne'}
+        </a>
         <button className="btn btn--secondary btn--small" onClick={handleLogout}>
           Déconnexion
         </button>

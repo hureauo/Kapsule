@@ -17,19 +17,25 @@ function StatusBadge({ status }) {
   );
 }
 
-// La clôture d'un événement est une action technicien (requireTech) — elle
-// n'apparaît pas dans le panneau client. Le technicien l'effectue depuis
-// /admin/tech (§11.19, Phase 6A).
+// Console /borne (Phase B — auth tech, cf. §11.19). Regroupe le cycle de vie
+// complet d'un événement local : activer, clôturer, purger. Toutes les
+// requêtes passent par le tech_token (api.tech*) — /borne n'a jamais
+// admin_token en mémoire.
 export default function EventPanel() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Purge (déplacée depuis SyncPanel — regroupée avec le reste du cycle de vie)
+  const [purgeEventId, setPurgeEventId] = useState(null);
+  const [purgeConfirm, setPurgeConfirm] = useState('');
+  const [purgeMsg, setPurgeMsg] = useState('');
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      setEvents(await api.listEvents());
+      setEvents(await api.techListEvents());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -43,10 +49,35 @@ export default function EventPanel() {
 
   async function handleActivate(id) {
     try {
-      await api.activateEvent(id);
+      await api.techActivateEvent(id);
       await load();
     } catch (e) {
       setError(e.message);
+    }
+  }
+
+  async function handleClose(id) {
+    try {
+      await api.closeEvent(id);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function handlePurge(e) {
+    e.preventDefault();
+    const ev = events.find((ev) => ev.id === purgeEventId);
+    if (!ev) return;
+    setPurgeMsg('');
+    try {
+      await api.purgeEvent(purgeEventId, purgeConfirm);
+      setPurgeEventId(null);
+      setPurgeConfirm('');
+      setPurgeMsg('Événement purgé.');
+      await load();
+    } catch (err) {
+      setPurgeMsg(`Erreur : ${err.message}`);
     }
   }
 
@@ -98,6 +129,19 @@ export default function EventPanel() {
                         Activer
                       </button>
                     )}
+                    {ev.status === 'live' && (
+                      <button className="btn btn--small btn--secondary" onClick={() => handleClose(ev.id)}>
+                        Clôturer
+                      </button>
+                    )}
+                    {ev.status === 'pushed' && purgeEventId !== ev.id && (
+                      <button
+                        className="btn btn--small btn--danger"
+                        onClick={() => { setPurgeEventId(ev.id); setPurgeConfirm(''); setPurgeMsg(''); }}
+                      >
+                        Purger
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -106,6 +150,39 @@ export default function EventPanel() {
         )}
       </section>
 
+      {purgeEventId !== null && (
+        <section className="panel-section">
+          <h2 className="panel-section__title">Confirmer la purge</h2>
+          <form onSubmit={handlePurge} className="purge-form">
+            <p className="text--warn">
+              Cette action supprime définitivement tous les fichiers locaux de l'événement
+              « {events.find((ev) => ev.id === purgeEventId)?.name} ».
+            </p>
+            <label className="field-label">
+              Saisir le nom de l'événement pour confirmer
+              <input
+                className="admin-input"
+                type="text"
+                value={purgeConfirm}
+                onChange={(e) => setPurgeConfirm(e.target.value)}
+                autoFocus
+              />
+            </label>
+            {purgeMsg && <p className="error-msg">{purgeMsg}</p>}
+            <div className="purge-form__actions">
+              <button type="submit" className="btn btn--danger">Confirmer la purge</button>
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={() => { setPurgeEventId(null); setPurgeMsg(''); }}
+              >
+                Annuler
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
+      {purgeMsg && purgeEventId === null && <p className="text--muted">{purgeMsg}</p>}
     </div>
   );
 }

@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import GuestPage from './pages/GuestPage.jsx';
 import AdminPage from './pages/AdminPage.jsx';
-import TechPage from './pages/TechPage.jsx';
+import BornePage from './pages/BornePage.jsx';
 
 // Routing manuel : pas de react-router pour les deux zones admin (§6A.3)
 // Navigation entre zones via window.location.href = '...' → rechargement complet.
+// Phase B : /admin/tech devient /borne (console machine — identité, événements,
+// disque/horloge/caméra, synchro), /admin ne porte plus que l'événement actif.
 export default function App() {
   const [isPreview, setIsPreview] = useState(false);
   const [eventName, setEventName] = useState(null);
@@ -20,7 +22,13 @@ export default function App() {
   }, []);
 
   const path = window.location.pathname;
-  if (path.startsWith('/admin/tech')) return <TechPage isPreview={isPreview} eventName={eventName} />;
+  // Signet vers l'ancienne URL (avant Phase B) : redirige plutôt que de laisser
+  // /admin/tech retomber silencieusement sur la console client (startsWith('/admin')).
+  if (path.startsWith('/admin/tech')) {
+    window.location.replace('/borne');
+    return null;
+  }
+  if (path.startsWith('/borne')) return <BornePage isPreview={isPreview} eventName={eventName} />;
   if (path.startsWith('/admin')) return <AdminPage isPreview={isPreview} eventName={eventName} />;
   // .kapsule-guest scope le CSS partagé (@kapsule/guest-ui/guest.css) — l'admin
   // n'est jamais dans ce wrapper, aucun risque de collision avec ses .btn/.modal.
