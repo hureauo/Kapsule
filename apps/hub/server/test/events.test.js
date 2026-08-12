@@ -349,6 +349,8 @@ describe('GET /api/events/:eventId/sync', () => {
     assert.equal(res.status, 200);
     assert.ok('event' in res.body);
     assert.ok('tokens' in res.body, 'tokens (box_tokens liés) doit être présent');
+    assert.ok('bornes' in res.body, 'bornes (Phase B, machines assignées) doit être présent');
+    assert.deepEqual(res.body.bornes, []);
     assert.ok('jobs' in res.body);
     assert.ok('sync_log' in res.body);
     assert.equal(res.body.event.id, eventId);

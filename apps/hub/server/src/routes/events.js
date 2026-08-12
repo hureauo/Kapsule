@@ -9,7 +9,7 @@ import {
 import {
   getDb, listEvents, getEvent, insertEvent, updateEvent, insertSyncLog, upsertEventUser,
   getUserByEmail, insertUser, createRegistrationToken, listUsers, getDesign,
-  setEventDesignRef, deleteEventDesignRef,
+  setEventDesignRef, deleteEventDesignRef, listEventBornes,
 } from '../registry.js';
 import { openEventDb, closeEventDb } from '../eventStore.js';
 import { META_KEYS, applyEventConfig } from '../eventConfig.js';
@@ -334,6 +334,10 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
       'SELECT id, event_id, label, location, is_preview, last_seen_at, created_at FROM box_tokens WHERE event_id = ?'
     ).all(event.id);
 
+    // Bornes physiques assignées (Phase B — identité machine persistante,
+    // distincte des tokens ci-dessus qui sont événement = essai/legacy).
+    const bornes = listEventBornes(db, event.id);
+
     const jobsDone = jobs.filter(j => j.status === 'done').length;
     const jobsFailed = jobs.filter(j => j.status === 'failed').length;
 
@@ -346,6 +350,7 @@ export function makeEventsRouter(dataDir, { docker = dockerCli } = {}) {
         processed_at: event.processed_at,
       },
       tokens,
+      bornes,
       jobs: { total: jobs.length, done: jobsDone, failed: jobsFailed, list: jobs },
       sync_log: logs,
     });

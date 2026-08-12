@@ -64,6 +64,16 @@ export const api = {
   previewStart:  (eventId) => apiFetch(`/events/${eventId}/preview/start`, { method: 'POST' }),
   previewStop:   (eventId) => apiFetch(`/events/${eventId}/preview/stop`,  { method: 'POST' }),
   generatePreviewToken: (eventId, expires_in) => apiFetch(`/events/${eventId}/preview/token`, { method: 'POST', body: { expires_in } }),
+
+  // Bornes physiques (Phase B — identité machine persistante, distincte des tokens ci-dessus)
+  listBornes: () => apiFetch('/admin/bornes'),
+  createBorne: (name, location) => apiFetch('/admin/bornes', { method: 'POST', body: { name, location } }),
+  getBorne: (id) => apiFetch(`/admin/bornes/${id}`),
+  updateBorne: (id, fields) => apiFetch(`/admin/bornes/${id}`, { method: 'PUT', body: fields }),
+  deleteBorne: (id) => apiFetch(`/admin/bornes/${id}`, { method: 'DELETE' }),
+  assignBorneEvent: (borneId, eventId) => apiFetch(`/admin/bornes/${borneId}/events`, { method: 'POST', body: { event_id: eventId } }),
+  unassignBorneEvent: (borneId, eventId) => apiFetch(`/admin/bornes/${borneId}/events/${eventId}`, { method: 'DELETE' }),
+  sendBorneCommand: (borneId, type, payload) => apiFetch(`/admin/bornes/${borneId}/commands`, { method: 'POST', body: { type, payload } }),
   listVersions:   (eventId) => apiFetch(`/events/${eventId}/versions`),
   getVersion:     (eventId, versionId) => apiFetch(`/events/${eventId}/versions/${versionId}`),
   restoreVersion: (eventId, versionId) => apiFetch(`/events/${eventId}/versions/${versionId}/restore`, { method: 'POST' }),

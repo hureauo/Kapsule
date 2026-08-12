@@ -35,11 +35,11 @@ function DashboardTab({ overview }) {
         </div>
         <div className="dash-card">
           <span className="dash-card__value">{activeBoxes}</span>
-          <span className="dash-card__label">Bornes réelles</span>
+          <span className="dash-card__label">Tokens événement</span>
         </div>
         <div className="dash-card">
           <span className="dash-card__value">{previewBoxes}</span>
-          <span className="dash-card__label">Bornes d'essai</span>
+          <span className="dash-card__label">Tokens d'essai</span>
         </div>
         <div className={`dash-card ${failed_jobs.length > 0 ? 'dash-card--alert' : ''}`}>
           <span className="dash-card__value">{failed_jobs.length}</span>
@@ -753,23 +753,295 @@ function EmailLogsTab() {
   );
 }
 
-// ── Onglet Bornes (placeholder) ───────────────────────────────────────────────
+// ── Onglet Bornes (Phase B — identité machine persistante) ─────────────────────
+//
+// Distinct de l'onglet Tokens : un token peut être un token d'ÉVÉNEMENT (borne
+// d'essai, box_tokens) ou une identité de BORNE physique (bornes, plusieurs
+// événements assignés dans le temps). Cet onglet ne gère que les secondes.
+
+// Pas de PULL_INTERVAL_MS connu ici (c'est un réglage de la borne, pas du Hub) —
+// seuil fixe généreux : au-delà de 10 min sans battement, la pastille passe
+// hors ligne (le défaut borne est un battement toutes les 5 min).
+const BORNE_ONLINE_THRESHOLD_MS = 10 * 60 * 1000;
+
+function isBorneOnline(lastSeenAt) {
+  if (!lastSeenAt) return false;
+  return Date.now() - new Date(lastSeenAt).getTime() < BORNE_ONLINE_THRESHOLD_MS;
+}
+
+function CreateBorneForm({ onCreated }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [location, setLocation] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState('');
+  const [created, setCreated] = useState(null); // { id, token_clear } — affiché une fois
+
+  async function handleCreate(e) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    setCreating(true);
+    setError('');
+    try {
+      const borne = await api.createBorne(name.trim(), location.trim() || null);
+      setCreated(borne);
+      setName('');
+      setLocation('');
+      onCreated?.();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  if (created) {
+    const hubUrl = window.location.origin;
+    const dockerCmd = `BORNE_TOKEN=${created.token_clear} HUB_URL=${hubUrl} docker compose -f docker-compose.borne.yml up -d --build`;
+    return (
+      <div className="banner banner--ok" style={{ marginTop: '12px' }}>
+        <p style={{ fontWeight: 600 }}>Borne « {created.name} » créée.</p>
+        <p className="text--muted" style={{ fontSize: '13px' }}>
+          Le token ne sera plus affiché en clair — copiez-le maintenant dans le <code>.env</code> de la borne.
+        </p>
+        <div className="token-cell" style={{ marginTop: '8px' }}>
+          <code className="token-cell__code">{created.token_clear}</code>
+          <CopyButton text={created.token_clear} label="Token" labelDone="✓" />
+          <CopyButton text={dockerCmd} label="Cmd" labelDone="✓ Cmd" />
+        </div>
+        <button className="btn btn--ghost btn--sm" style={{ marginTop: '8px' }} onClick={() => setCreated(null)}>
+          Fermer
+        </button>
+      </div>
+    );
+  }
+
+  if (!open) {
+    return <button className="btn btn--primary btn--sm" onClick={() => setOpen(true)}>+ Nouvelle borne</button>;
+  }
+
+  return (
+    <form onSubmit={handleCreate} className="inline-form">
+      <input
+        className="admin-input" type="text" placeholder="Nom (ex : Borne Entrée)"
+        value={name} onChange={(e) => setName(e.target.value)} autoFocus
+      />
+      <input
+        className="admin-input" type="text" placeholder="Lieu (optionnel)"
+        value={location} onChange={(e) => setLocation(e.target.value)}
+      />
+      <button className="btn btn--primary btn--sm" type="submit" disabled={creating || !name.trim()}>
+        {creating ? '…' : 'Créer'}
+      </button>
+      <button type="button" className="btn btn--ghost btn--sm" onClick={() => setOpen(false)}>Annuler</button>
+      {error && <p className="error-msg">{error}</p>}
+    </form>
+  );
+}
+
+const BORNE_COMMAND_LABEL = { pull: 'Pull', activate_event: 'Activer', close_event: 'Clôturer', purge_event: 'Purger' };
+const BORNE_COMMAND_STATUS_BADGE = { pending: 'status-badge--draft', sent: 'status-badge--waiting', done: 'status-badge--ready', failed: 'status-badge--closed' };
+
+function BornePanel({ borne, onRefresh }) {
+  const [detail, setDetail] = useState(null);
+  const [allEvents, setAllEvents] = useState([]);
+  const [selectedEvent, setSelectedEvent] = useState('');
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      setDetail(await api.getBorne(borne.id));
+    } catch (e) {
+      setError(e.message);
+    }
+  }, [borne.id]);
+
+  useEffect(() => {
+    load();
+    api.listEvents().then(setAllEvents).catch(() => {});
+  }, [load]);
+
+  async function handleAssign(e) {
+    e.preventDefault();
+    if (!selectedEvent) return;
+    try {
+      await api.assignBorneEvent(borne.id, selectedEvent);
+      setSelectedEvent('');
+      await load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function handleUnassign(eventId) {
+    try {
+      await api.unassignBorneEvent(borne.id, eventId);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function handleCommand(type, eventId) {
+    try {
+      await api.sendBorneCommand(borne.id, type, eventId ? { event_id: eventId } : undefined);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function handleDelete() {
+    if (!confirm(`Supprimer la borne « ${borne.name} » ? Le token sera révoqué.`)) return;
+    try {
+      await api.deleteBorne(borne.id);
+      onRefresh?.();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  if (!detail) return <p className="text--muted">Chargement…</p>;
+
+  const assignedIds = new Set(detail.events.map((e) => e.id));
+  const assignable = allEvents.filter((e) => !assignedIds.has(e.id));
+
+  return (
+    <div className="event-panel__section">
+      {error && <p className="error-msg">{error}</p>}
+
+      <div className="event-panel__section">
+        <p className="event-panel__label">Événements assignés</p>
+        {detail.events.length === 0 ? (
+          <p className="text--muted">Aucun événement assigné.</p>
+        ) : (
+          <ul className="sync-event-list">
+            {detail.events.map((ev) => (
+              <li key={ev.id} className="sync-event-item">
+                <span>{ev.name} <span className={`status-badge status-badge--${ev.status}`}>{ev.status}</span></span>
+                <span>
+                  {ev.status === 'live' && (
+                    <button className="btn btn--ghost btn--sm" onClick={() => handleCommand('close_event', ev.id)}>Clôturer</button>
+                  )}
+                  {!['pushed', 'purged'].includes(ev.status) && (
+                    <button className="btn btn--ghost btn--sm" onClick={() => handleCommand('activate_event', ev.id)}>Activer</button>
+                  )}
+                  <button className="btn btn--ghost btn--sm" onClick={() => handleUnassign(ev.id)}>Retirer</button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form onSubmit={handleAssign} className="inline-form" style={{ marginTop: '8px' }}>
+          <select className="admin-input" value={selectedEvent} onChange={(e) => setSelectedEvent(e.target.value)}>
+            <option value="">Assigner un événement…</option>
+            {assignable.map((ev) => <option key={ev.id} value={ev.id}>{ev.name}</option>)}
+          </select>
+          <button className="btn btn--secondary btn--sm" type="submit" disabled={!selectedEvent}>Assigner</button>
+        </form>
+      </div>
+
+      <div className="event-panel__section">
+        <p className="event-panel__label">Commandes</p>
+        <button className="btn btn--secondary btn--sm" onClick={() => handleCommand('pull')}>
+          Déposer un Pull
+        </button>
+        <p className="text--muted" style={{ fontSize: '13px', marginTop: '4px' }}>
+          Exécutée au prochain battement de la borne (heartbeat).
+        </p>
+        {detail.commands.length > 0 && (
+          <div className="table-scroll" style={{ marginTop: '8px' }}>
+            <table className="admin-table responsive-table">
+              <thead><tr><th>Type</th><th>Statut</th><th>Déposée</th><th>Résultat</th></tr></thead>
+              <tbody>
+                {detail.commands.map((c) => (
+                  <tr key={c.id}>
+                    <td data-label="Type">{BORNE_COMMAND_LABEL[c.type] ?? c.type}</td>
+                    <td data-label="Statut">
+                      <span className={`status-badge ${BORNE_COMMAND_STATUS_BADGE[c.status] ?? ''}`}>{c.status}</span>
+                    </td>
+                    <td data-label="Déposée" className="text--muted">{formatDate(c.created_at)}</td>
+                    <td data-label="Résultat" className="text--muted" style={{ maxWidth: 200, wordBreak: 'break-word' }}>
+                      {c.result ? JSON.stringify(JSON.parse(c.result)) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="event-panel__section">
+        <button className="btn btn--danger btn--sm" onClick={handleDelete}>Supprimer la borne</button>
+      </div>
+    </div>
+  );
+}
 
 function BornesTab() {
+  const [bornes, setBornes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [expanded, setExpanded] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      setBornes(await api.listBornes());
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  function toggle(id) {
+    setExpanded((prev) => (prev === id ? null : id));
+  }
+
+  if (loading) return <p className="text--muted">Chargement…</p>;
+
   return (
     <section className="panel-section">
-      <h2 className="panel-section__title">Gestion des bornes</h2>
-      <div className="placeholder-box">
-        <p style={{ fontWeight: 600, marginBottom: '8px' }}>Fonctionnalité à venir</p>
-        <p className="text--muted">
-          Cette section affichera l'état live des Raspberrys connectés : statut de session,
-          dernière synchronisation, consommation disque par borne.
-        </p>
-        <p className="text--muted" style={{ marginTop: '8px' }}>
-          Une console SSH distante est également prévue pour le débogage à distance
-          (xterm.js + WebSocket relayé via le Hub).
-        </p>
+      <div className="panel-section-header">
+        <h2 className="panel-section__title">Bornes ({bornes.length})</h2>
+        <CreateBorneForm onCreated={load} />
       </div>
+      {error && <p className="error-msg">{error}</p>}
+      {bornes.length === 0 ? (
+        <p className="text--muted">Aucune borne. Créez-en une avec le bouton ci-dessus.</p>
+      ) : (
+        <div className="ev-list">
+          {bornes.map((b) => (
+            <div key={b.id} className="ev-row">
+              <div className="ev-row__header" onClick={() => toggle(b.id)}>
+                <div className="ev-row__info">
+                  <span style={{ fontWeight: 600 }}>{b.name}</span>
+                  <span className={`status-badge ${isBorneOnline(b.last_seen_at) ? 'status-badge--ready' : 'status-badge--closed'}`}>
+                    {isBorneOnline(b.last_seen_at) ? 'En ligne' : 'Hors ligne'}
+                  </span>
+                  {b.location && <span className="text--muted" style={{ fontSize: '12px' }}>{b.location}</span>}
+                  <span className="text--muted" style={{ fontSize: '12px' }}>
+                    {b.event_count} événement{b.event_count !== 1 ? 's' : ''}
+                  </span>
+                  {b.disk_free_bytes != null && (
+                    <span className="text--muted" style={{ fontSize: '12px' }}>
+                      💾 {formatBytes(b.disk_free_bytes)} libres
+                    </span>
+                  )}
+                  {b.agent_version && (
+                    <span className="text--muted" style={{ fontSize: '12px' }}>v{b.agent_version}</span>
+                  )}
+                </div>
+                <span className="text--muted ev-row__toggle">{expanded === b.id ? '▲' : '▼'}</span>
+              </div>
+              {expanded === b.id && <BornePanel borne={b} onRefresh={load} />}
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

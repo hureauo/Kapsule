@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { api } from '../api/client.js';
+import { api, getRole } from '../api/client.js';
 
 const STATUS_ORDER = ['preview', 'ready', 'loaded', 'live', 'closed', 'pushed', 'processed', 'waiting'];
 
@@ -52,6 +52,81 @@ function StatusTimeline({ status, pulledAt, pushedAt, processedAt }) {
   );
 }
 
+// Assignation d'une borne physique (Phase B) à cet événement — même logique
+// que BornePanel de l'onglet Bornes (assignable = toutes les bornes moins
+// celles déjà assignées), en miroir depuis la fiche événement.
+//
+// /api/admin/bornes* est réservé superuser (comme la gestion des tokens et
+// preview/start-stop) : un client propriétaire ne doit ni tenter l'appel (403
+// avalé en silence, section vide) ni voir des contrôles qui échoueraient
+// systématiquement. Il garde une vue lecture seule des bornes déjà assignées.
+function BorneAssignment({ eventId, bornes, onChange }) {
+  const isSuperuser = getRole() === 'superuser';
+  const [allBornes, setAllBornes] = useState([]);
+  const [selected, setSelected] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!isSuperuser) return;
+    api.listBornes().then(setAllBornes).catch(() => {});
+  }, [isSuperuser]);
+
+  const assignedIds = new Set(bornes.map((b) => b.id));
+  const assignable = allBornes.filter((b) => !assignedIds.has(b.id));
+
+  async function handleAssign(e) {
+    e.preventDefault();
+    if (!selected) return;
+    setError('');
+    try {
+      await api.assignBorneEvent(selected, eventId);
+      setSelected('');
+      await onChange?.();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleUnassign(borneId) {
+    setError('');
+    try {
+      await api.unassignBorneEvent(borneId, eventId);
+      await onChange?.();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <>
+      {error && <p className="error-msg">{error}</p>}
+      {bornes.length === 0 ? (
+        <p className="text--muted">Aucune borne physique assignée.</p>
+      ) : (
+        <ul className="sync-event-list">
+          {bornes.map((b) => (
+            <li key={b.id} className="sync-event-item">
+              <span>{b.name}{b.location ? ` — ${b.location}` : ''}</span>
+              {isSuperuser && (
+                <button className="btn btn--ghost btn--sm" onClick={() => handleUnassign(b.id)}>Retirer</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {isSuperuser && (
+        <form onSubmit={handleAssign} className="inline-form" style={{ marginTop: '8px' }}>
+          <select className="admin-input" value={selected} onChange={(e) => setSelected(e.target.value)}>
+            <option value="">Assigner une borne…</option>
+            {assignable.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </select>
+          <button className="btn btn--secondary btn--sm" type="submit" disabled={!selected}>Assigner</button>
+        </form>
+      )}
+    </>
+  );
+}
+
 export default function SyncStatus({ event, frozen = false, onStatusChange }) {
   const [info, setInfo] = useState(null);
   const [error, setError] = useState('');
@@ -76,7 +151,7 @@ export default function SyncStatus({ event, frozen = false, onStatusChange }) {
   if (error) return <p className="error-msg">{error}</p>;
   if (!info) return <p className="text--muted">Chargement…</p>;
 
-  const { box, jobs, sync_log } = info;
+  const { tokens, bornes, jobs, sync_log } = info;
   const ev = info.event;
 
   return (
@@ -111,9 +186,10 @@ export default function SyncStatus({ event, frozen = false, onStatusChange }) {
             </p>
             <button
               className="btn btn--primary"
-              onClick={() => {
+              onClick={async () => {
                 if (confirm('Valider la configuration ? Le contenu (questions, design) sera gelé et la borne réelle pourra se connecter.')) {
-                  onStatusChange?.('ready');
+                  await onStatusChange?.('ready');
+                  load();
                 }
               }}
             >
@@ -127,24 +203,45 @@ export default function SyncStatus({ event, frozen = false, onStatusChange }) {
               Configuration gelée. Tant que la borne n'a pas chargé le contenu, vous pouvez
               revenir en preview pour modifier questions et design.
             </p>
-            <button className="btn btn--ghost" onClick={() => onStatusChange?.('preview')}>
+            <button
+              className="btn btn--ghost"
+              onClick={async () => {
+                await onStatusChange?.('preview');
+                load();
+              }}
+            >
               Retour en preview
             </button>
           </div>
         )}
       </section>
 
-      {/* Borne assignée */}
+      {/* Tokens de borne (essai/legacy — token = événement) */}
       <section className="panel-section">
-        <h3 className="panel-section__title">Borne assignée</h3>
-        {box ? (
-          <dl className="sync-info">
-            <dt>Nom</dt><dd>{box.name}</dd>
-            <dt>Dernier contact</dt><dd>{formatDate(box.last_seen_at) ?? '—'}</dd>
-          </dl>
+        <h3 className="panel-section__title">Tokens de borne</h3>
+        {tokens.length === 0 ? (
+          <p className="text--muted">Aucun token généré pour cet événement.</p>
         ) : (
-          <p className="text--muted">Aucune borne assignée.</p>
+          <ul className="sync-event-list">
+            {tokens.map((t) => (
+              <li key={t.id} className="sync-event-item">
+                <span>
+                  {t.label ?? '(sans label)'}
+                  <span className={`status-badge ${t.is_preview ? 'status-badge--draft' : 'status-badge--ready'}`} style={{ marginLeft: '8px' }}>
+                    {t.is_preview ? 'Essai' : 'Réel'}
+                  </span>
+                </span>
+                <span className="text--muted">{formatDate(t.last_seen_at) ?? 'jamais vu'}</span>
+              </li>
+            ))}
+          </ul>
         )}
+      </section>
+
+      {/* Bornes physiques assignées (Phase B — identité machine persistante) */}
+      <section className="panel-section">
+        <h3 className="panel-section__title">Bornes physiques</h3>
+        <BorneAssignment eventId={ev.id} bornes={bornes} onChange={load} />
       </section>
 
       {/* Jobs */}
