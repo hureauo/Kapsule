@@ -24,6 +24,17 @@ describe('validateConfig (hub)', () => {
   test('ne lève pas en production avec un vrai secret', () => {
     assert.doesNotThrow(() => validateConfig(SAFE_CFG, 'production'));
   });
+
+  // Régression : docker-compose.hub.yml a perdu son défaut public 'change-me'
+  // (JWT_SECRET=${JWT_SECRET:-}) — une chaîne vide doit être traitée comme
+  // faible au même titre, sinon elle traverserait cette garde sans même un
+  // warning (pire que l'ancien défaut, qui au moins déclenchait le fail-fast).
+  test('lève une erreur en production avec un secret vide', () => {
+    assert.throws(
+      () => validateConfig({ jwtSecret: '' }, 'production'),
+      /JWT_SECRET/
+    );
+  });
 });
 
 describe('validateConfig (hub) — ADMIN_PASSWORD_HUB', () => {

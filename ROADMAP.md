@@ -219,12 +219,12 @@ committé en `phase 7X.Y: …`.
 
 ### 7E — Nettoyage env + Hub front
 
-- [x] 7E.1 Supprimer `ADMIN_PASSWORD`, `ADMIN_PASSWORD_PREVIEW`, `TECH_PASSWORD_PREVIEW` de `.env.example` et `config.js` borne (garder `TECH_PASSWORD` pour mode autonome)
+- [x] 7E.1 Supprimer `ADMIN_PASSWORD`, `ADMIN_PASSWORD_PREVIEW`, `TECH_PASSWORD_PREVIEW` de `.env.example` et `config.js` borne (garder `TECH_PASSWORD` pour mode autonome — capacité retirée depuis, phase 6E/PROJET.md §11.29 ; `TECH_PASSWORD` a depuis été retiré à son tour, Phase C.1/§11.30 — la fenêtre pré-premier-pull est désormais couverte par `POST /sync/onboarding/pair`, qui émet directement une session `tech_borne` si le pull réussit)
 - [x] 7E.2 Hub front : onglet « Utilisateurs » dans `EventDetailPage` (visible superuser only) — liste des users assignés, ajout (select parmi users Hub), rôles checkboxes, retrait
 - [x] 7E.3 Hub front : `AdminPage` adapté (renommer `admin` → `superuser` dans les labels)
 - [x] 7E.4 PROJET.md : mettre à jour §6 API Borne (auth), §7 API Hub (event_users), §10 env, §11 invariants
 
-**Terminé quand** : un user `general` pullé déclenche un login devant la preview ; `admin_borne`/`tech_borne` se connectent par email+mdp sur borne et preview ; mode autonome fonctionne avec `TECH_PASSWORD` env.
+**Terminé quand** : un user `general` pullé déclenche un login devant la preview ; `admin_borne`/`tech_borne` se connectent par email+mdp sur borne et preview ; `TECH_PASSWORD` env fonctionne comme fallback (mode autonome cité ici a depuis été retiré, PROJET.md §11.29 ; `TECH_PASSWORD` lui-même a depuis été retiré, Phase C.1/§11.30 — remplacé par le PIN partagé + la session auto-émise par `POST /sync/onboarding/pair`).
 
 ## Phase 8 — Durcissement & dette technique (avant exposition Internet)
 
@@ -585,20 +585,188 @@ premier pull) au technicien sur place.
   (rôle le plus élevé) avant `admin_pin` ; bundle (`routes/sync.js` Hub) ne transporte plus aucun
   compte (`assignedUsers`/`superusers` retirés) ; `pull.js` (Borne) n'écrit plus jamais dans
   `event_users` ; `VALID_ROLES` de `/api/admin/events/:id/users` réduit à `['general']`.
-  `TECH_PASSWORD` env reste le seul fallback (pas d'événement actif — mode autonome ou juste
-  après appairage, avant le premier pull). Web : `BornePage.jsx` en mode PIN, `EventDetailPage.jsx`
+  `TECH_PASSWORD` env reste **à ce stade de la phase** le seul fallback (pas d'événement actif
+  avec PIN — juste après appairage, avant le premier pull réussi) — **superseded par C.2**, qui
+  retire `TECH_PASSWORD` entièrement (§11.30) : ce sous-lot C.1 décrit un état intermédiaire, pas
+  le comportement final de la Phase C. Web : `BornePage.jsx` en mode PIN, `EventDetailPage.jsx`
   (champ + régénération tech_pin), `UtilisateursTab` réduit à `general`. Tests : `auth.test.js`
   (Borne), `helpers.js` (PIN au lieu de comptes seed, partagé par 6 suites), `events.test.js`/
   `admin.test.js`/`sync.test.js` (Hub), `sync.pull.test.js` (Borne) mis à jour.
 - [x] C.2 : Écran d'onboarding pré-appairage sur `/borne` — `GET /api/sync/pairing-status`
-  (Borne, **seule route non protégée** de `routes/sync.js`, volontairement) expose
-  `{ hasToken, hubUrl, hasActiveEvent, lastPull, logs }` ; `logs` vient de `initLog.js` (journal
-  en mémoire, ~100 entrées, alimenté par `index.js`/`pull.js`/`heartbeat.js`). Tant qu'aucun
-  token n'est configuré, `BornePage.jsx` affiche `OnboardingScreen` (aucune auth) au lieu du
-  login ; une fois le token détecté mais avant tout événement actif, retombe sur le login
-  `TECH_PASSWORD` (pas encore de `tech_pin` disponible) ; sinon PIN normal. Tests :
-  `sync.routes.test.js` (Borne).
+  (Borne, **seule route non protégée** de `routes/sync.js` avec la suivante, volontairement) :
+  réponse à **deux formes** selon `hasToken`, pour ne jamais divulguer la topologie interne du Hub
+  ni le journal d'init une fois la borne appairée — `hasToken: false` → `{ hasToken, hubUrl,
+  hasActiveEvent: false, lastPull: null, logs }` (`logs` = `initLog.js`, journal en mémoire ~100
+  entrées, alimenté par `index.js`/`pull.js`/`heartbeat.js`) ; `hasToken: true` → `{ hasToken,
+  hasActiveEvent }` seulement. Tant qu'aucun token n'est configuré, `BornePage.jsx` affiche
+  `OnboardingScreen` (aucune auth) au lieu du login. **Livre en réalité plus que prévu par le
+  contexte de cette phase** : `POST /api/sync/onboarding/pair` (également sans auth) remplace le
+  fallback `TECH_PASSWORD` de C.1 plutôt que de le compléter — détecte le type de token (borne vs
+  événement), pull immédiat, et émet **directement** une session `tech_borne` si le pull réussit
+  (la preuve d'autorisation est le round-trip Hub abouti lui-même, §11.30) ; le verrou de
+  re-appairage est initialement `getLastPull() !== null`, durci en un verrou persisté
+  (`borne_settings.paired_at`) hors Phase C (voir les corrections de review associées à ce
+  sous-lot). `TECH_PASSWORD` est donc retiré à l'issue de C.2, pas seulement « pas encore
+  disponible avant le premier pull ». Tests : `sync.routes.test.js` (Borne).
 
 **Terminé quand** : le technicien se connecte à `/borne` et `/admin` avec un code à 6 chiffres
 régénérable depuis le Hub, sans compte à créer ; une borne neuve affiche sa progression
 d'appairage sans qu'aucun mot de passe ne soit demandé avant le premier pull réussi.
+
+## Phase D — Démêler machine et événement (scopes, canal de contact, PIN)
+
+Contexte : Phase B a introduit la borne comme **machine** persistante, mais sans reprendre les
+concessions faites quand « borne » et « événement » étaient synonymes. Trois symptômes,
+constatés dans le code :
+
+1. **`tech_pin` est event-scoped alors qu'il protège une console machine.** Généré à la création
+   d'un *événement* (`routes/events.js`), transporté par le bundle, lu sur la base de l'événement
+   **actif** (`middleware/auth.js`). Donc : une borne à 3 événements a 3 PIN tech selon lequel est
+   actif ; une borne **sans** événement actif n'a aucun PIN et `/borne` devient inaccessible ; et
+   c'est précisément ce trou que `POST /sync/onboarding/pair` bouche en émettant une session
+   `tech_borne` « gratuite » (§11.30) — un contournement qui n'existe que par ce mauvais scope.
+2. **Le canal périodique ne transporte aucune configuration.** Le heartbeat monte de la
+   télémétrie et redescend `{ commands }`, rien d'autre ; le pull ne tourne qu'**au boot** puis
+   sur geste manuel ou commande `pull`. Conséquence : une régénération de PIN, ou toute édition
+   Hub, reste invisible de la borne indéfiniment. Il n'existe aujourd'hui **aucun** « au prochain
+   contact, la borne se met à jour ».
+3. **`PULL_INTERVAL_MS` ne pilote plus aucun pull** — c'est l'intervalle du heartbeat depuis B.4.
+   Nom trompeur, vestige d'avant Phase B.
+
+Décisions actées :
+
+- **La frontière est le scope de la donnée, pas le process.** Pas de conteneur « machine » +
+  conteneur « événement » sur le Raspberry : deux processus à déboguer à distance sur du matériel
+  inaccessible, pour un gain nul (kiosque et admin doivent partager la même origine HTTP, un seul
+  événement est actif à la fois). On garde un seul couple de conteneurs (décision Phase B
+  inchangée) et on range la donnée : `borne_settings` = machine, `event_meta` = événement.
+- **`tech_pin` remonte au niveau machine** (`bornes.tech_pin` Hub ↔ `borne_settings.tech_pin`
+  borne), **`admin_pin` reste au niveau événement** — il protège `/admin`, la console de
+  l'événement en cours, et son cycle de vie est bien celui de l'événement.
+- **Le heartbeat devient déclaratif** : sa réponse porte l'**état désiré** de la machine, la borne
+  converge à chaque battement. Idempotent, donc robuste à une réponse perdue — contrairement à une
+  commande one-shot, qui laisse la borne durablement désynchronisée si elle échoue. Même modèle
+  que `events.preview_desired` (§2 : distinguer état désiré et état réel).
+- **`desired_active_event_id` remplace la commande `activate_event`.** Forcer un événement depuis
+  le Hub devient une **assignation persistante** et non un ordre ponctuel : la borne converge
+  dessus au battement suivant *et* le rejoue à chaque redémarrage — ce qui couvre d'un coup
+  « tout de suite » et « au prochain démarrage ». Fait disparaître l'enchaînement `pull` +
+  `activate_event` (aujourd'hui deux commandes à déposer pour un événement pas encore pullé).
+  `close_event`/`purge_event` **restent des commandes** : ce sont de vraies actions ponctuelles,
+  pas des états désirés (purger deux fois n'a pas de sens, et `purge_event` garde sa confirmation
+  par nom, §11).
+- **Limite acceptée** : « tout de suite » signifie **au prochain battement**, borné par
+  `HEARTBEAT_INTERVAL_MS` (défaut 5 min). Le Hub n'appelle jamais la borne (§2) — aucun push
+  temps réel n'est possible, et ce n'est pas l'objet de cette phase.
+- **Fin du sniffing de type de token** : `applyNewToken` devine aujourd'hui `borne` vs `événement`
+  en appelant `/sync/borne/events` et en lisant un 400. Un préfixe explicite à la génération
+  (`brn_` / `evt_`) rend le type lisible sans aller-retour réseau.
+
+Mêmes règles que les autres phases : un sous-lot backend n'est terminé que **testé** (nominal +
+cas d'erreur), relu par `kapsule-reviewer` (`/verif-spec`), committé en `phase D.X: …`.
+
+- [ ] D.1 : Hub — `bornes.tech_pin` (migration 11), généré à la création d'une borne
+  (`POST /api/admin/bornes`, 6 chiffres, même schéma que les PIN événement) ; exposé en clair aux
+  routes superuser `GET /api/admin/bornes/:id` (même règle que `token_clear`, §11.13) ;
+  `POST /api/admin/bornes/:id/reset-tech-pin` → régénère et retourne le nouveau code.
+  **Backfill par la migration elle-même** (pas « au premier accès admin ») : `tech_pin` généré
+  pour chaque ligne `bornes` existante au moment d'ajouter la colonne, `NOT NULL` dès la création
+  de la colonne — combiné au retrait d'`event_meta.tech_pin` en D.4, une borne dont la fiche Hub
+  n'est jamais ouverte n'aurait sinon plus aucun PIN nulle part. Tests : `registry.test.js`,
+  `admin.test.js`
+- [ ] D.2 : Hub — heartbeat déclaratif. `POST /api/sync/borne/heartbeat` répond
+  `{ commands, borne: { tech_pin, desired_active_event_id }, events: [{ id, config_version }] }`.
+  `bornes.desired_active_event_id` (migration 11 également, vérifié comme `active_event_id` :
+  ignoré s'il n'est pas dans les événements assignés, §11.20). `config_version` = empreinte de la
+  config événement côté Hub (réutiliser la logique de `configHash`, `routes/sync.js` Borne) —
+  c'est ce qui permettra à la borne de savoir *quoi* re-puller sans tout re-puller.
+  `POST /api/admin/bornes/:id/desired-event { event_id | null }`. Le type de commande
+  `activate_event` est retiré du CHECK de `borne_commands`. Tests : `sync.test.js`, `admin.test.js`
+- [ ] D.3 : Borne — convergence sur l'état désiré, dans `heartbeat.js` (une fonction
+  `reconcile(desired)` distincte de `beat()`, testable seule) : persiste `tech_pin` dans
+  `borne_settings` ; active `desired_active_event_id` s'il diffère de l'actif **avec les mêmes
+  gardes que `PUT /events/:id/activate`** (jamais pendant un push, jamais vers un événement
+  `pushed`/`purged` — un ordre distant ne doit pas être moins prudent qu'un geste local, principe
+  déjà posé en B.4) ; pull les événements dont `config_version` a changé ou qui sont inconnus
+  localement — **§11.10 s'applique pleinement ici** : le pull redevient périodique et automatique
+  (jusqu'ici, seulement au boot ou sur geste explicite), donc l'invariant « jamais écrire si le
+  statut local n'est pas `loaded`, vérifié au moment d'appliquer la réponse (pas au lancement de
+  la requête) » porte bien plus qu'avant — un événement passé `live` entre deux battements ne doit
+  jamais être écrasé par une convergence automatique. `commandExecutor.js` perd `activate_event`.
+  Tests : `sync.heartbeat.test.js`, `sync.commandExecutor.test.js`
+- [ ] D.4 : Borne — auth par scope. `requireTech` compare le PIN saisi à `borne_settings.tech_pin`
+  (machine, disponible **sans aucun événement**) ; `requireAdmin` reste sur
+  `event_meta.admin_pin` de l'événement actif, `tech_borne` restant sur-ensemble (§11.19).
+  `event_meta.tech_pin` et sa génération côté Hub sont retirés ; `META_HASH_KEYS`
+  (`routes/sync.js` Borne) perd `tech_pin`. La fenêtre « appairée mais sans PIN » **disparaît**
+  (le PIN machine arrive au premier battement, indépendamment de tout événement) : la session
+  auto-émise par `/sync/onboarding/pair` devient un confort, plus un palliatif. Tests :
+  `auth.test.js`, `helpers.js`, `sync.routes.test.js`
+- [ ] D.4bis : **`event_meta.preview_pin`** — l'auth wall de la borne d'essai passe du compte Hub
+  (`general` : email + mot de passe + assignation, §11.24) à un code à 6 chiffres, même geste que
+  les autres PIN. Motivation : créer un compte Hub par personne devant tester est exactement la
+  lourdeur que la Phase C a supprimée pour `admin_borne`/`tech_borne`.
+  **Valeur distincte d'`admin_pin`, délibérément** — le même événement traverse la preview
+  (Internet-facing, `essai-<slug>.domaine`) *et* la borne réelle (`event_meta` identique via le
+  bundle) ; réutiliser `admin_pin` ferait qu'un code tapé sur une page publique par des testeurs
+  ouvre ensuite `/admin` sur la borne réelle, avec les vraies vidéos d'invités (visionnage,
+  download, CSV, suppression). Le maillon faible en exposition commanderait le maillon fort en
+  sensibilité.
+  Deux conséquences assumées :
+  - **Révocation différée.** Aujourd'hui chaque login est proxié vers le Hub
+    (`POST /api/sync/event/login`), donc retirer un accès est instantané. Avec un PIN transporté
+    par le bundle la vérification devient locale : changer le code ne prend effet qu'au pull
+    suivant — atténué par `triggerPreviewPull()` (le Hub joint une preview immédiatement, elle est
+    sur le même VPS ; c'est déjà le mécanisme du rafraîchissement de design). En contrepartie la
+    preview survit à un Hub indisponible, ce qui n'est pas le cas aujourd'hui.
+  - **Anti-brute-force renforcé.** 10⁶ combinaisons derrière un limiteur par IP (10/15 min) ne
+    tient pas face à une rotation d'IP. Compteur d'échecs **par événement** + verrouillage
+    temporaire, en plus du limiteur existant. (Alternative écartée : porter ce code à 8 chiffres —
+    ne dissuade pas davantage un attaquant patient et casse la cohérence « 6 chiffres partout ».)
+  Le rôle émis reste `general` (aucun droit admin), JWT 8 h en `sessionStorage`, inchangé.
+  **Précision** : « les comptes `general` sont retirés » veut dire retirer le **rôle** (les lignes
+  `event_users` passent à `roles: []`), pas les lignes elles-mêmes — elles portent aussi
+  l'accès Hub à l'événement (`requireOwner`, §11.19), sans lien avec l'auth wall preview. Effet de
+  bord à corriger dans le même sous-lot : `isGeneralOnlyMember`
+  (`apps/hub/server/src/routes/events.js`) teste aujourd'hui `roles.length > 0 && roles.every(r =>
+  r === 'general')` — avec `roles: []` cette garde devient fausse, donc `redactPins` cesse de
+  s'appliquer et `admin_pin`/`tech_pin` redeviendraient visibles de tout membre de l'événement
+  (régression de confidentialité). `isGeneralOnlyMember` doit être adaptée en même temps que le
+  retrait du rôle, pas après. `POST /api/sync/event/login` est retiré une fois la bascule faite.
+  Tests : `sessions.test.js` (Borne), `sync.test.js`/`events.test.js` (Hub, dont
+  `isGeneralOnlyMember`/`redactPins`)
+- [ ] D.5 : Préfixes de token (`brn_` / `evt_`) à la génération Hub ; `applyNewToken` (Borne) lit
+  le préfixe au lieu de sonder le Hub ; `requireBox` (Hub) route sur le préfixe avec repli sur la
+  résolution deux-tables actuelle (les tokens déjà distribués n'ont pas de préfixe et doivent
+  continuer à fonctionner). Tests : `sync.test.js` (Hub), `sync.routes.test.js` (Borne)
+- [ ] D.6 : Infra — `PULL_INTERVAL_MS` → `HEARTBEAT_INTERVAL_MS` (`config.js` lit le nouveau nom,
+  **repli sur l'ancien** pour ne pas casser un `.env` déployé sur un Raspberry inaccessible),
+  `.env.example-rasp`, `docker-compose.borne.yml`. **`docker-compose.preview.yml` ne déclare pas
+  cette variable** (rien à y renommer — la preview n'a pas de heartbeat). Tous les emplacements
+  qui la NOMMENT (à traiter en D.8, pas ici) : `PROJET.md` §4 arborescence, §10 (ligne env
+  `backend` + tableau des variables), `ARCHITECTURE.md` (bootstrap `index.js`, entrée `config.js`
+  du tableau des modules, pastille en ligne/hors ligne `AdminPage.jsx`), `README.md` §4 et son
+  tableau de variables
+- [ ] D.7 : Hub front — onglet Bornes : PIN tech machine (affichage + « Régénérer »), sélecteur
+  « Événement actif désiré » remplaçant le bouton de commande `activate_event`, avec l'indication
+  explicite « appliqué au prochain battement (≤ N min) ». `EventDetailPage` (onglet Design) perd
+  le champ `tech_pin`, garde `admin_pin` et gagne `preview_pin` (D.4bis) ; `UtilisateursTab` perd
+  le rôle `general`, devenu sans objet
+- [ ] D.8 : Documentation — PROJET.md (§2 auth wall preview, §5.3 `bornes.tech_pin`/
+  `desired_active_event_id`, §5.4 `borne_settings` — déjà amendé pour `jwt_secret`/`paired_at`,
+  compléter pour `tech_pin`, §6 bloc auth, §6bis diagramme d'onboarding, §7 heartbeat déclaratif +
+  routes admin, §11.19/§11.24/§11.30 réécrits, nouveau **§11.32** « heartbeat déclaratif : état
+  désiré, pas d'ordre » — §11.31 est pris, ajouté hors-Phase-D pour le fix `trust proxy`) +
+  ARCHITECTURE.md, tous les emplacements `PULL_INTERVAL_MS` listés en D.6, au fil de chaque
+  sous-lot (pas de rattrapage différé)
+- [ ] 🧑 D.9 : vérification sur Raspberry réel — reset du PIN tech depuis le Hub appliqué au
+  battement suivant sans redémarrage ; bascule d'événement depuis le Hub en cours d'exploitation ;
+  `/borne` accessible par PIN sur une borne appairée **sans aucun événement actif** ; auth wall de
+  la borne d'essai franchie au `preview_pin` depuis l'extérieur (et refusée à l'`admin_pin`)
+
+**Terminé quand** : le PIN tech est un secret de la **machine** (un seul code, valable quel que
+soit l'événement chargé, y compris aucun), régénérable depuis le Hub et appliqué au battement
+suivant sans intervention sur place ; forcer un événement depuis le Hub est une assignation
+persistante que la borne rejoue au démarrage comme en cours d'exploitation ; plus aucun compte
+Hub n'est nécessaire pour faire tester une borne d'essai ; et le nom de chaque variable dit ce
+qu'elle fait (`HEARTBEAT_INTERVAL_MS`, préfixes de token).

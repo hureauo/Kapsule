@@ -146,10 +146,6 @@ export async function provisionPreview(eventId, docker = dockerCli, dataDir = nu
   const frontendImage = process.env.PREVIEW_IMAGE         ?? 'kapsule-borne-preview-frontend';
   const hubUrl        = process.env.HUB_URL_INTERNAL      ?? 'http://hub-backend:3001';
   const jwtSecret     = process.env.JWT_SECRET            ?? 'change-me';
-  // Le backend borne refuse de démarrer si TECH_PASSWORD vaut la valeur par défaut.
-  // On le fournit depuis l'env du Hub, sinon on génère un secret jetable (la preview
-  // n'a pas vocation à ce qu'on s'y connecte en technicien).
-  const techPassword  = process.env.TECH_PASSWORD_PREVIEW || randomBytes(16).toString('hex');
 
   // Réseau isolé pour ce binôme (évite toute collision entre previews)
   if (!await docker.networkExists(netName)) {
@@ -201,7 +197,6 @@ export async function provisionPreview(eventId, docker = dockerCli, dataDir = nu
     '--env', 'PREVIEW_MODE=true',
     '--env', `HUB_URL=${hubUrl}`,
     '--env', `JWT_SECRET=${jwtSecret}`,
-    '--env', `TECH_PASSWORD=${techPassword}`,
     '--env', 'DATA_DIR=/app/data',
     '--env', 'PORT=3001',
     backendImage,

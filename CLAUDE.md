@@ -27,8 +27,9 @@ Les commandes ci-dessous sont à lancer via `docker compose run` ou des scripts 
 - `docker compose run --rm dev npm test` — tests bruts TAP (fallback, sans wrapper)
 - `docker compose up dev:borne` / `docker compose up dev:hub` — serveurs en dev
 - `docker compose -f docker-compose.hub.yml run --rm backend npm run create-admin` — crée le premier compte admin Hub (prompt interactif email/mdp)
-- `BOX_TOKEN_PREVIEW=<token> HUB_URL=https://… docker compose -f docker-compose.preview.yml up` — lance la borne d'essai (port interne uniquement, `MAX_DATA_BYTES=1 Go`, push interdit)
+- `BOX_TOKEN_PREVIEW=<token> HUB_URL=https://… JWT_SECRET=$(openssl rand -hex 32) docker compose -f docker-compose.preview.yml up` — lance la borne d'essai (port interne uniquement, `MAX_DATA_BYTES=1 Go`, push interdit). `JWT_SECRET` optionnel (généré/persisté au premier démarrage sinon) mais recommandé pour ne pas invalider les sessions à chaque recréation du volume.
 - `npm run smoke` (`smoke:hub` / `smoke:borne`) — smoke tests end-to-end : démarrent le stack Docker réel et vérifient par `curl` que le SPA est servi et que chaque endpoint répond le bon code (gardes d'auth incluses). **Hors `npm test`** (dépendent de Docker), à lancer manuellement avant un déploiement.
+- `make borne-start` / `make borne-stop` / `make borne-restart` / `make borne-reset` — cycle de vie de `docker-compose.borne.yml` (Raspberry réel ou test local), projet Docker **dédié** (`-p kapsule-borne`, distinct du Hub — ne jamais aligner les deux projets, les services `backend`/`frontend` sont homonymes des deux côtés). `borne-reset` est **destructif** (confirmation `RESET` requise) : voir `make help` pour la liste complète (dont les cibles `vps-*`/`local-*` équivalentes côté Hub).
 
 ## Outils agents (`.claude/`)
 

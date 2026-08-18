@@ -17,7 +17,7 @@ Un système de **borne d'enregistrement de messages vidéo pour événements** (
 - Multi-événements, multi-clients **côté Hub** ; **une Borne (un Raspberry) n'a qu'un seul événement ACTIF à la fois** — mais, depuis la Phase B, une borne est une **machine persistante** (table `bornes`, §5.3) à laquelle le Hub peut assigner plusieurs événements dans le temps (table de jonction `borne_events`) : pas besoin de régénérer un token entre deux événements sur le même Raspberry, seulement de choisir (localement, ou via une commande Hub) lequel activer. Deux mécanismes d'appairage coexistent : le **token de borne** (`bornes.token_hash`) identifie la machine ; le **token d'événement** (`box_tokens`, inchangé depuis 6C) reste réservé aux bornes d'essai — un conteneur preview est provisionné pour un seul événement, sans notion de machine persistante.
 - **RGPD : cloisonnement strict par événement — une base SQLite et un dossier de fichiers indépendants par événement.** Effacer un événement = supprimer son dossier.
 - **RGPD : consentement explicite de l'invité** — case à cocher obligatoire avant tout enregistrement (écran du prénom), texte configurable par événement, acceptation **horodatée en base** (preuve de consentement).
-- La Borne doit être **utilisable seule** (mode autonome : créer un événement localement sans Hub).
+- **La Borne doit fonctionner hors ligne pendant l'événement.** Une fois la configuration **tirée** (pull) depuis le Hub — ce qui nécessite Internet, à ce moment-là seulement — la Borne n'a plus besoin d'aucune connectivité pour dérouler l'événement (enregistrement, admin local, visionnage brut). C'est la contrainte structurante de l'architecture (§2, AVANT/PENDANT/APRÈS) : Internet uniquement avant (pull) et après (push), jamais pendant. Elle vaut pour **toute** Borne appairée — aucun mode « sans Hub du tout » n'est requis pour ça, ni n'existe dans le code (§11.29 : `POST /api/events`, la seule route qui aurait permis de créer un événement local sans jamais impliquer de Hub, a été retirée en phase 6E et jamais restaurée).
 - UI invité en **français**, UI admin/Hub en français aussi.
 - Cible invité : iPad Safari → HTTPS obligatoire pour la caméra, codecs mp4, `playsInline`.
 - L'invité peut **naviguer entre les questions et réenregistrer une réponse déjà confirmée** sans refaire sa session (un invité qui se trompe ne doit jamais avoir à tout recommencer).
@@ -279,7 +279,7 @@ kapsule/
 DATA_DIR/
 ├── registry.sqlite               # la SEULE base transverse — AUCUNE donnée invité dedans
 ├── events/
-│   └── <event-id>/               # event-id = uuid v4, généré par le Hub (ou la Borne en autonome)
+│   └── <event-id>/               # event-id = uuid v4, généré par le Hub
 │       ├── db.sqlite             # questions, sessions, vidéos de CET événement
 │       ├── videos/               # fichiers bruts (<uuid>.<ext>)
 │       ├── derived/              # Hub uniquement : miniatures <video-id>.jpg + archive zip
@@ -500,11 +500,18 @@ push_state (                                   -- permet la reprise d'un push in
   PRIMARY KEY (event_id, video_id)
 );
 
-borne_settings (                               -- Phase B : identité persistante de CETTE machine.
-  key TEXT PRIMARY KEY,                        -- Clés : 'borne_token', 'hub_url'. Seedée depuis les
-  value TEXT                                   -- variables d'env (BORNE_TOKEN/HUB_URL) au premier
-);                                              -- démarrage ; ensuite la base fait foi — permet une
-                                                -- rotation de token sans redéployer/éditer le .env.
+borne_settings (                               -- Phase B/C : secrets locaux de CETTE machine (plus
+  key TEXT PRIMARY KEY,                        -- seulement l'identité). Clés : 'borne_token', 'hub_url'
+  value TEXT                                   -- (seedées depuis BORNE_TOKEN/HUB_URL au premier
+);                                              -- démarrage, ensuite la base fait foi — rotation sans
+                                                -- redéployer/éditer le .env) ; 'jwt_secret' (généré par
+                                                -- resolveJwtSecret() si absent, jamais affiché/saisi —
+                                                -- signe les JWT locaux de cette machine) ; 'paired_at'
+                                                -- (posé au premier pull réussi — verrou PERSISTÉ de
+                                                -- POST /sync/onboarding/pair, §11.30 : à la différence
+                                                -- d'un singleton en mémoire, survit à un redémarrage).
+                                                -- Un `registry.sqlite` copié hors de la borne emporte
+                                                -- donc de quoi forger des sessions admin localement.
 ```
 
 ---
@@ -515,29 +522,66 @@ Base `/api`. JSON partout sauf flux de fichiers. Gestionnaire d'erreurs global �
 
 **Auth admin local** (`middleware/auth.js`) — ni `admin_borne` ni `tech_borne` n'ont de compte
 nominatif (Phase C) : les deux s'authentifient par un code à 6 chiffres partagé, régénérable
-depuis le Hub, plus simple qu'un compte email/mdp pour un usage partagé sur place :
-- `POST /api/admin/login` `{ pin }` ou `{ password }` — deux modes :
-  1. **PIN partagé (mode appairé)** : `pin` comparé à `event_meta.tech_pin` de l'événement actif
-     (rôle le plus élevé, essayé en premier) puis `event_meta.admin_pin` ; JWT
-     `{ roles: ['tech_borne'] }` ou `{ roles: ['admin_borne'] }` selon le code saisi — jamais
-     d'email dans le payload.
-  2. **Fallback TECH_PASSWORD** : actif tant que l'événement actif (s'il y en a un) ne porte
-     **aucun PIN** (`admin_pin` ni `tech_pin` en `event_meta`) — mode autonome, borne fraîchement
-     appairée avant le premier pull, ou événement pullé d'un Hub antérieur à Phase C. `password`
-     comparé à `TECH_PASSWORD` → JWT `{ roles: ['tech_borne'] }`. Dès qu'un PIN existe sur
-     l'événement actif, ce fallback est refusé — sinon il resterait une porte dérobée permanente.
+depuis le Hub, plus simple qu'un compte email/mdp pour un usage partagé sur place. **Plus de
+TECH_PASSWORD (retiré, §11.30)** — un seul chemin :
+- `POST /api/admin/login` `{ pin }` : comparé à `event_meta.tech_pin` de l'événement actif (rôle
+  le plus élevé, essayé en premier) puis `event_meta.admin_pin` ; JWT `{ roles: ['tech_borne'] }`
+  ou `{ roles: ['admin_borne'] }` selon le code saisi — jamais d'email dans le payload. 401 si
+  `pin` absent du corps ou si aucun des deux ne correspond (y compris si aucun événement actif —
+  pas de PIN à comparer).
 - `requireAdmin = requireRole('admin_borne')` — accepte `admin_borne` **ou** `tech_borne` (sur-ensemble). Accepte `Authorization: Bearer` **ou** `?token=` (indispensable pour `<video src>`, downloads, CSV).
 - `requireTech = requireRole('tech_borne')` — réservé préflight, synchro, clôture.
+- **La fenêtre avant le premier PIN** (juste après appairage, avant que le premier pull ait
+  rapatrié un événement) n'a **pas** de mot de passe de secours : elle est couverte directement par
+  `POST /sync/onboarding/pair` (ci-dessous), qui émet lui-même une session `tech_borne` dès que le
+  token borne est validé par le Hub — voir §11.30.
 - `GET /api/sync/pairing-status` — **public, aucune auth** (Phase C), rate-limitée (60/min,
   `skipRateLimits` en test). Réponse à **deux formes** selon `hasToken` — pour ne jamais
   divulguer la topologie interne du Hub ni le journal d'init une fois la borne appairée
   (a fortiori sur une borne d'essai, Internet-facing) :
   - `hasToken: false` (avant appairage) → `{ hasToken, hubUrl, hasActiveEvent: false, lastPull: null, logs }` (`logs` = `initLog.js`, ~100 dernières lignes en mémoire), consommé par l'écran d'onboarding `/borne`.
   - `hasToken: true` (appairée) → `{ hasToken, hasActiveEvent }` uniquement.
+- `POST /api/sync/onboarding/pair` — **public, aucune auth**, même rate-limit que ci-dessus,
+  **refusée (404) en mode preview** (surface Internet-facing — pas de formulaire d'appairage
+  public vers un Hub arbitraire, §11.21). Appairage **initial** depuis l'écran d'onboarding :
+  `{ token, hubUrl? }` → **403** si le token actuel a déjà été **validé** — verrou **persisté**,
+  OU de **trois** signaux (§11.30) : `borne_settings.paired_at !== null` (posé au premier pull
+  réussi) **ou** au moins une ligne `local_events` (couvre une borne mise à niveau depuis une
+  version antérieure à `paired_at`, dont les événements pullés avant cette colonne en sont une
+  preuve tout aussi valable) **ou** `borne_settings.borne_token !== null` (couvre une borne seedée
+  par `BORNE_TOKEN` en `.env` — persisté au boot par `resolveBorneIdentity()` **sans** round-trip
+  Hub, donc sans jamais poser les deux signaux précédents ; ce chemin suppose déjà un accès
+  SSH/`.env`, la correction s'y fait, pas par ce formulaire public). Jamais `getLastPull()` seul,
+  un singleton en mémoire qui reviendrait à `null` après chaque redémarrage — une borne offline
+  pendant l'événement, cas nominal §1, rouvrirait sinon cette route sans auth ; tant qu'aucun des
+  trois signaux n'est vrai, un nouvel essai (token corrigé) écrase le précédent — un token mal
+  recopié ne verrouille jamais la borne. La ligne `local_events` elle-même n'est écrite qu'**après**
+  un pull complet et réussi (questions, `event_meta` **et** assets de design) — jamais avant, sinon
+  un premier appairage dont le pull échoue après ce point verrouillerait définitivement la route
+  (`sync/pull.js`, `pullEvent()`). Un token d'**événement** (`box_tokens`, réservé aux bornes
+  d'essai, §1) est **refusé** ici sur une borne réelle plutôt que silencieusement accepté sans
+  persistance : l'accepter aurait recréé la même classe de cul-de-sac (rien à persister côté
+  `boxToken`, jamais de PIN, verrouillage au premier pull réussi d'un token corrigé ensuite) — voir
+  `applyNewToken()`, `routes/sync.js`. `hubUrl` soumis (le body vient d'une requête **sans auth**)
+  est validé **avant tout usage** — schéma `https:` exigé, `http:` toléré uniquement vers
+  `localhost`/`127.0.0.1` (dev), 400 sinon — pour ne jamais faire de cette route un relais SSRF vers
+  une machine arbitraire du LAN/Internet. Comme le token, il est ensuite mutée en mémoire pour le
+  round-trip Hub mais **persistée seulement si le pull réussit** — sinon une requête non
+  authentifiée réécrirait durablement l'identité de la machine sur un simple essai raté (si fourni,
+  sinon celui déjà préconfiguré par `.env`, non revalidé — 400 si aucun des deux). Détecte le
+  type de token exactement comme `POST /sync/token` (§ci-dessous), lance le pull, et répond
+  `{ ok: true, tokenKind: 'borne'|'event', pull: { ok, pulled?, error? }, hasActiveEvent, token }` —
+  jamais un `{ok:true}` de façade : le token peut être **accepté sans être persisté** si le pull
+  échoue (Hub injoignable) — il reste seulement en mémoire pour ce process, retentable en
+  corrigeant et resoumettant depuis ce même écran, mais **aucun re-essai automatique** en tâche de
+  fond (`startHeartbeat()` n'est déclenché que si `pull.ok`) ; `token` (la session) reste `null`
+  dans ce cas. **`token`** : un JWT `{ roles: ['tech_borne'] }`, émis **si et seulement si**
+  `pull.ok` (le Hub a validé ce token précis) — la preuve d'autorisation est le round-trip Hub
+  abouti lui-même, pas un secret séparé à connaître en plus (§11.30).
+- `POST /api/sync/token` — **authentifiée** (`requireTech`) : rotation d'un token déjà en place, même détection/persistance/pull que ci-dessus, réponse `{ ok: true }` (l'onglet Identité n'a pas besoin du détail du pull).
 
 **Événements locaux** (`routes/events.js`) — admin :
-- `GET /api/events` — liste du registre local.
-- `POST /api/events` `{ name, event_date? }` — création **autonome** (origin `local`) : crée `events/<uuid>/` + `db.sqlite` (table `questions` vide ; aucune question seedée).
+- `GET /api/events` — liste du registre local (tous les événements **pullés depuis le Hub** — aucune route de création locale : retirée en Phase 6E, jamais restaurée, cf. §11.29).
 - `PUT /api/events/:id/activate` — désactive les autres, active celui-ci. Refusé pendant un push en cours.
 - `PUT /api/events/:id/close` — **clôture** (`live → closed`) : le kiosque cesse d'accepter de nouvelles sessions (écran « événement terminé »). Réservé à l'admin local = l'**opérateur** ; le client n'a jamais accès à l'admin Borne. Le Hub apprend la clôture au moment du push.
 - `GET /api/event` — **public** : `{ id, name, status, consent_text, idle_timeout }` de l'événement actif (consommé par le kiosque ; `consent_text` et `idle_timeout` viennent d'`event_meta`, avec défauts génériques). 404 si aucun.
@@ -571,6 +615,108 @@ depuis le Hub, plus simple qu'un compte email/mdp pour un usage partagé sur pla
 - `POST /api/sync/push-config` — pousse questions + `event_meta` de l'événement actif vers le Hub (overwrite). Interdit en mode preview (403) — réservé à la borne réelle ; la config Hub reste la source de vérité.
 - `POST /api/sync/push/:eventId` — **409 si l'événement n'est pas `closed`** (message : « Clôturez l'événement avant le push ») ; sinon lance `push.js` en tâche de fond ; la progression se lit via `GET /api/sync/status`.
 - `POST /api/sync/purge/:eventId` — refusé si `status != 'pushed'` ; demande une confirmation explicite (`{ confirm: name }`).
+
+### 6bis. Premier démarrage d'une borne physique (Phase C)
+
+Objectif : un `.env` non modifié doit suffire à démarrer (`cp .env.example-rasp .env && docker
+compose -f docker-compose.borne.yml up -d --build`) — tout ce qui reste à fournir (le
+`BORNE_TOKEN`) se fait ensuite **depuis le navigateur**, sans SSH ni redémarrage de conteneur, et
+sans aucun mot de passe à connaître nulle part (`TECH_PASSWORD` retiré, §11.30).
+
+```
+Boot du conteneur backend
+┌───────────────────────────────────────────────────────────────────────┐
+│ resolveJwtSecret()      JWT_SECRET : génère + persiste (borne_settings)│
+│                         si absent/valeur d'exemple — jamais affiché,   │
+│                         jamais saisi par un humain                    │
+│ resolveBorneIdentity()  BORNE_TOKEN vide → no-op, pas encore appairée │
+│ validateConfig()        filet de sécurité — ne rejette plus jamais    │
+│                         un déploiement non modifié                   │
+└───────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+     Technicien ouvre https://<ip-borne>/ OU /borne — AUCUN mot de passe
+     (rien de sensible n'existe encore sur la machine à ce stade ; les deux
+      routes affichent le MÊME écran tant que non appairée, cf. App.jsx)
+                                    │
+   ┌────────────────────────────────────────────────────────────────┐
+   │ OnboardingScreen — sonde GET /sync/pairing-status toutes les 4s │
+   │  1. Serveur borne   la réponse elle-même en fait foi            │
+   │  2. Hub             préconfiguré (.env) ou à saisir             │
+   │  3. Token            à coller (Hub → onglet Bornes)             │
+   │  4. Événement        en attente du token                       │
+   └────────────────────────────────────────────────────────────────┘
+                                    │  le technicien colle le token, soumet
+                                    ▼
+        POST /sync/onboarding/pair { token, hubUrl? }
+                                    │
+                    ┌───────────────┴────────────────┐
+                    │ applyNewToken()                 │
+                    │  1. GET Hub /sync/borne/events   │── 400 → token ÉVÉNEMENT (preview/legacy)
+                    │     200/autre → token BORNE      │
+                    │  2. pull (pullMyEvents/Event)    │
+                    │  3. SI pull.ok : persiste         │  ordre inversé vs. avant fix — la
+                    │     (borne_settings) + startHeart-│  persistance ne doit jamais précéder
+                    │     beat() (borne)                │  la preuve (le round-trip Hub abouti)
+                    │     SINON : rien n'est écrit,     │
+                    │     le candidat reste seulement   │
+                    │     en mémoire (retentable)       │
+                    └───────────────┬────────────────┘
+                                    ▼
+   200 { ok, tokenKind, pull:{ok,pulled?,error?}, hasActiveEvent, token }
+                                    │
+   ┌────────────────────────────────────────────────────────────────┐
+   │ OnboardingScreen affiche le résultat CONCRET (pas un ok:true    │
+   │ de façade) :                                                    │
+   │  pull.ok && hasActiveEvent  → événement chargé, prêt — DÉJÀ     │
+   │                                connecté (session tech_borne     │
+   │                                émise dans `token`, sauvegardée) │
+   │  pull.ok && !hasActiveEvent → assignez un événement depuis le   │
+   │                                Hub, onglet Bornes — déjà connecté│
+   │  !pull.ok                   → échec (token invalide, Hub        │
+   │                                injoignable…). PAS de session     │
+   │                                émise, mais PAS de verrou non     │
+   │                                plus (borne_settings.paired_at    │
+   │                                reste nul) : le formulaire        │
+   │                                redevient disponible, corrigez    │
+   │                                et réessayez                     │
+   └────────────────────────────────────────────────────────────────┘
+                                    │  clic « Continuer » (pull.ok uniquement)
+                                    ▼
+              Console /borne — déjà authentifié tech_borne
+              (aucun login à refaire ; le token de session a été
+               sauvegardé dès la réponse de /onboarding/pair)
+```
+
+Le formulaire de l'écran d'onboarding est une **alternative**, pas un remplacement : coller
+`BORNE_TOKEN` dans le `.env` puis redémarrer le conteneur reste possible — mais **pas** par le même
+chemin ni avec les mêmes garanties. Ce chemin passe par `resolveBorneIdentity()` (au boot, avant
+tout appel Hub), qui **persiste le token immédiatement, sans round-trip Hub, sans poser
+`paired_at`** — une confiance implicite dans l'accès `.env`/SSH, à la différence
+d'`applyNewToken()` qui ne persiste qu'après validation. Aucune session auto-ouverte dans ce cas
+(pas de requête HTTP à répondre) : la première connexion se fait par PIN une fois le pull effectué.
+Cette asymétrie est précisément ce qui a nécessité un **troisième** signal au verrou d'appairage
+(§11.30) : une borne dont le `BORNE_TOKEN` d'env n'a encore jamais mené à un pull réussi n'a
+**aucune** ligne `local_events` (le second signal) ni `paired_at` — seul le troisième signal,
+`borne_settings.borne_token !== null` (posé par `resolveBorneIdentity()` elle-même, sans attendre
+de pull), ferme le verrou dans ce cas précis. Sans lui, cette route resterait ouverte sans auth sur
+une machine dont l'identité est pourtant déjà fixée par `.env`.
+
+**Sur l'interopérabilité borne-web / borne-server** : les deux ne sont **jamais versionnés
+indépendamment** — même commit, même `docker compose … --build`, mêmes conteneurs redémarrés
+ensemble. Il n'y a donc pas de scénario où un ancien frontend doit rester compatible avec un
+nouveau backend (ou l'inverse) au sens d'une API publique à versionner, hormis un onglet resté
+ouvert pendant un redéploiement — cas général à toute SPA, pas spécifique à l'onboarding, et sans
+conséquence ici (la fenêtre d'appairage est courte et non répétée). La frontière qui **existe
+réellement** est **Borne ↔ Hub** : un Raspberry déployé une fois peut rester des mois sur un
+ancien build pendant que le Hub (VPS) est redéployé en continu. C'est déjà repéré — `agent_version`
+remonté à chaque battement (§B.3/heartbeat) — mais **à titre informatif uniquement** : aucune
+négociation de version, aucune garantie de compatibilité ascendante de l'API Hub n'est faite
+aujourd'hui. `POST /sync/onboarding/pair` ne fait qu'appeler les endpoints Hub déjà utilisés par
+le pull historique (`/sync/borne/events`, `/sync/events/:id/bundle`) — il n'élargit donc pas cette
+surface, mais ne la résout pas non plus. À traiter le jour où une Borne reste durablement en
+service avec un agent significativement plus vieux que le Hub qu'elle contacte (hors périmètre
+Phase C).
 
 ---
 
@@ -906,7 +1052,7 @@ design.B et design.E), qui font foi pour l'implémentation.
 ## 10. Docker / Nginx / TLS / Environnement
 
 ### docker-compose.borne.yml (déployé sur le Raspberry, arm64)
-- `backend` : build `apps/borne/server`, env `TECH_PASSWORD JWT_SECRET HUB_URL BOX_TOKEN BORNE_TOKEN PULL_INTERVAL_MS DATA_DIR=/app/data PORT=3001`, **un seul volume** `borne_data:/app/data` (identité machine — `local_events`, `push_state`, `borne_settings` — **et** `events/<id>/` : un split en deux volumes a été envisagé puis abandonné en revue Phase B, un montage imbriqué sur le sous-chemin `events/` masquant silencieusement les données déjà présentes sur une borne existante sans même garantir une purge propre du registre sur un déploiement neuf). La purge RGPD reste exclusivement applicative : `POST /api/sync/purge/:eventId`, §11. Réseau interne seulement, `restart: unless-stopped`.
+- `backend` : build `apps/borne/server`, env `JWT_SECRET HUB_URL BOX_TOKEN BORNE_TOKEN PULL_INTERVAL_MS MAX_DATA_BYTES PREVIEW_MODE TRUST_PROXY_HOPS DATA_DIR=/app/data PORT=3001`, **un seul volume** `borne_data:/app/data` (identité machine — `local_events`, `push_state`, `borne_settings` — **et** `events/<id>/` : un split en deux volumes a été envisagé puis abandonné en revue Phase B, un montage imbriqué sur le sous-chemin `events/` masquant silencieusement les données déjà présentes sur une borne existante sans même garantir une purge propre du registre sur un déploiement neuf). La purge RGPD reste exclusivement applicative : `POST /api/sync/purge/:eventId`, §11. Réseau interne seulement, `restart: unless-stopped`.
 - `frontend` : build `apps/borne/web` (multi-stage Vite → `nginx:alpine` + openssl), ports `80:80` `443:443`, `depends_on: backend`, volume `borne_certs:/etc/nginx/certs`.
 - `borne-entrypoint.sh` : génère un cert auto-signé si absent (`openssl req -x509 -nodes -days 730 -newkey rsa:2048`, CN `borne.local`) puis `nginx -g 'daemon off;'`.
 - `borne-nginx.conf` : `client_max_body_size 600M` ; 80 → redirect 443 ; `/api/` → `proxy_pass http://backend:3001` avec headers forwardés, timeouts read/send **600s**, `proxy_request_buffering off` ; `/` → SPA fallback `try_files $uri $uri/ /index.html`.
@@ -971,22 +1117,21 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 
 | Variable | App | Défaut | Rôle |
 |---|---|---|---|
-| `TECH_PASSWORD` | Borne | `tech123` | Fallback **technicien** — actif uniquement si **aucun événement actif** (mode autonome, ou borne fraîchement appairée avant le premier pull) ; refusé dès qu'un événement est actif, seul le PIN (`tech_pin`) fonctionne alors |
-| `JWT_SECRET` | Borne+Hub | `change-me` | Signature JWT |
+| `JWT_SECRET` | Borne+Hub | `change-me` (Hub) / _(vide = généré)_ (Borne) | Signature JWT. **Phase C, Borne uniquement** — `resolveJwtSecret()` génère + persiste (`borne_settings`) au premier démarrage si absent/valeur d'exemple ; côté Hub reste une valeur à fixer manuellement en prod |
 | `DATA_DIR` | Borne+Hub | `/app/data` | Racine stockage |
 | `PORT` | Borne+Hub | `3001` | Port backend |
-| `HUB_URL` | Borne | _(vide = mode autonome)_ | URL du Hub |
+| `HUB_URL` | Borne | _(vide)_ | URL du Hub — laissée vide, la Borne n'a aucune route pour créer un événement local (§11.29) : elle reste sans événement jusqu'à un appairage |
 | `BOX_TOKEN` | Borne | _(vide)_ | Token d'appairage = **événement** — réservé aux bornes d'essai (§1) |
 | `BORNE_TOKEN` | Borne | _(vide)_ | **Phase B** — identité de borne **physique** (machine persistante, plusieurs événements assignés). Seed uniquement : après le premier démarrage, `borne_settings` (base) prime — une rotation depuis `/borne` (onglet Identité) survit à un redémarrage sans toucher au `.env` |
 | `PULL_INTERVAL_MS` | Borne | `300000` | **Phase B** — période du pull + heartbeat automatiques d'une borne physique (`BORNE_TOKEN` défini). Sans effet en mode preview/token=événement (pull manuel uniquement) |
 | `MAX_DATA_BYTES` | Borne | _(vide = illimité)_ | Quota disque de l'événement (essai : `1073741824` = 1 Go) ; upload invité → 507 au-delà |
 | `PREVIEW_MODE` | Borne | _(déduit du token `is_preview`)_ | Force le mode démo (bandeau « BORNE D'ESSAI », push interdit). Override optionnel ; normalement déduit du token |
+| `TRUST_PROXY_HOPS` | Borne | _(déduit de `PREVIEW_MODE`)_ | Nombre de reverse proxies devant le backend, pour `req.ip`/rate-limiting (1 borne réelle, 2 preview — §11.31). Override seulement si la topologie change |
 | `ALLOW_REGISTER` | Hub | `false` | Ouvrir l'inscription publique (indépendant des comptes créés par l'admin) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD_HUB` | Hub | _(vide)_ | Seed du 1er compte superuser au démarrage si absent (évite `create-admin`) |
 | `EDGE_DOMAIN` | Hub | `kapsule.hureau.com` | Domaine principal : routing wildcard de l'edge + URLs preview (`essai-<slug>.<domaine>`) |
 | `PREVIEW_IMAGE` / `PREVIEW_BACKEND_IMAGE` | Hub | `kapsule-borne-preview-frontend` / `-backend` | Images lancées par le provisioner pour chaque preview |
 | `HUB_URL_INTERNAL` | Hub | `http://hub-backend:3001` | URL interne du backend, injectée aux containers preview (réseau `hub_net`) |
-| `TECH_PASSWORD_PREVIEW` | Hub | _(secret jetable généré)_ | `TECH_PASSWORD` injecté aux backends preview (sinon ils refusent de démarrer → 502) |
 
 > **TLS / iPad** : iOS Safari exige HTTPS pour la caméra. Faire confiance au certificat auto-signé sur l'iPad (Réglages → Général → VPN et gestion de l'appareil) ou fournir un vrai cert. Utiliser Accès Guidé + « Ajouter à l'écran d'accueil » pour le mode kiosque.
 
@@ -1012,7 +1157,7 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 16. **Le Raspberry n'a pas d'horloge RTC** : sans Internet, l'heure dérive ou repart du dernier arrêt — or `consent_at` est la **preuve légale RGPD** et tous les timestamps en dépendent. Matériel requis : module **RTC DS3231** (~5 €, I2C) + chrony ; le Préflight vérifie l'écart d'horloge avec l'appareil admin.
 17. Le ZIP d'archive se génère **sans compression** (mode store) : la vidéo est déjà compressée, recompresser brûle du CPU sur le VPS pour 0 % de gain.
 18. Progression d'upload côté kiosque : `fetch` n'expose pas la progression d'envoi — utiliser `XMLHttpRequest` (`xhr.upload.onprogress`).
-19. **Auth Borne à deux niveaux** : `requireAdmin` (rôle `admin_borne`) ≠ `requireTech` (rôle `tech_borne`). Le tech est sur-ensemble : un token `tech_borne` est accepté par `requireAdmin`. Mais un token `admin_borne` doit recevoir **403** sur préflight, clôture et toute la synchro — re-tagger chaque route, ne pas se contenter de cacher l'onglet côté front. En mode autonome (fallback `TECH_PASSWORD`), le JWT contient `roles: ['tech_borne']` — le tech a accès à tout. Depuis Phase C, les deux rôles s'authentifient par PIN partagé (`event_meta.admin_pin`/`tech_pin`) — `POST /api/admin/login { pin }` essaie `tech_pin` avant `admin_pin`.
+19. **Auth Borne à deux niveaux** : `requireAdmin` (rôle `admin_borne`) ≠ `requireTech` (rôle `tech_borne`). Le tech est sur-ensemble : un token `tech_borne` est accepté par `requireAdmin`. Mais un token `admin_borne` doit recevoir **403** sur préflight, clôture et toute la synchro — re-tagger chaque route, ne pas se contenter de cacher l'onglet côté front. Les deux rôles s'authentifient par PIN partagé (`event_meta.admin_pin`/`tech_pin`) — `POST /api/admin/login { pin }` essaie `tech_pin` avant `admin_pin`. La session émise directement par `POST /sync/onboarding/pair` (§6bis, §11.30) contient elle aussi `roles: ['tech_borne']`.
 20. **Token = borne (physique) ou événement (preview), réécrit Phase B** : `requireBox` résout `X-Box-Token` contre **deux** tables et normalise `req.box` — `{kind:'preview', event_id, is_preview}` (token = événement, `box_tokens`, comportement 6C inchangé) ou `{kind:'borne', borne_id, event_ids:[…]}` (token = machine, `bornes`, plusieurs événements assignés). **`boxHasEventAccess(box, eventId)` est le seul point de contrôle** de l'invariant « un token ne touche que son propre scope » — `box.event_id === eventId` (preview) ou `box.event_ids.includes(eventId)` (borne) ; **rejeter (403) toute route `…/events/:id/…`** où ce test échoue. `GET /sync/event` (preview) et `GET /sync/borne/events` (borne, plusieurs) sont deux routes distinctes, chacune 400 si appelée avec le mauvais type de token.
 21. **Borne d'essai** : une borne dont le token est `is_preview=1` (ou `PREVIEW_MODE=true`) **ne doit jamais pouvoir push** (409) — ce sont des données jetables. Quota `MAX_DATA_BYTES` vérifié **avant** d'écrire le fichier d'upload invité (507 si plein), sinon un client peut saturer le disque du VPS via l'aperçu.
 22. **Compte client sans mot de passe** : `users.password_hash` est NULL tant que le client n'a pas suivi le lien d'enregistrement. Le login (argon2) doit gérer ce cas **avant** d'appeler `argon2.verify(null, …)` (sinon exception) ; un compte `active=0` ou sans hash → 401 « identifiants invalides » (ne pas divulguer lequel).
@@ -1022,6 +1167,46 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 26. **Design appliqué = snapshot copié** (§9bis) : `PUT /api/events/:id/design` copie la config JSON et les fichiers assets du design vers `event_meta.design` et `events/<id>/design/` au moment de l'application. La copie est **autonome** : le rendu d'un événement ne dépend jamais, à la lecture (bundle, kiosque), du design source. Une *trace de provenance* (`event_meta.design_source_id` + table registre `event_design_refs`) est conservée, mais ce n'est **pas** une référence vivante — elle sert uniquement à rafraîchir la copie des événements **en statut `preview`** quand le design source est édité (borne d'essai, §9bis « Rafraîchissement de la borne d'essai »). Un événement de tout autre statut (`ready`+) n'est **jamais** modifié par une édition ou une suppression du design source.
 27. **Assets de design vérifiés par checksum au pull** (§9bis) : le bundle expose `design_assets: [{filename, size, checksum}]` ; la Borne calcule le sha256 de chaque fichier téléchargé et compare — **un mismatch est un échec de pull explicite**, jamais un fichier silencieusement corrompu.
 28. **Jamais de SVG ni de valeur CSS libre dans un design** (§9bis) : `validateDesign()` n'accepte que des couleurs hex strictes, des enums fermées (`radius`, `font`, `images.<screen>.mode`), des noms de fichiers `images.<screen>.filename` au format UUID+extension raster (`png`/`jpg`/`webp`), et un unique champ numérique borné `images.<screen>.widthPercent` (entier `[10,100]`, design5, autorisé seulement en mode `centered`, consommé uniquement comme `<n>%` d'une largeur — jamais concaténé dans `url()`/`expression()`) — toute autre valeur est un design invalide, y compris `url(...)`, `expression(...)` ou tout SVG (vecteur = risque XSS via balises `<script>`/`on*` embarquées).
+29. **Pas de création d'événement locale sans Hub** : `POST /api/events` (Borne) a existé (phase 1a.3) puis a été retiré (phase 6E, 18/06) sans être remplacé — tout événement vient désormais exclusivement d'un pull Hub (`origin='hub'` uniquement en pratique ; le schéma tolère encore `'local'` mais plus aucun code n'écrit cette valeur). Ne pas la réintroduire sans une décision explicite : PROJET.md §1 distingue le fonctionnement **hors ligne pendant l'événement** (garanti pour toute Borne appairée, ne dépend pas de cette route) du **mode autonome** (create-sans-Hub — capacité aujourd'hui non fonctionnelle, à ne pas confondre avec le premier).
+30. **Plus de `TECH_PASSWORD`** (retiré) : le seul chemin d'auth Borne est le PIN partagé
+    (`event_meta.admin_pin`/`tech_pin`, §6). La fenêtre avant le premier PIN — juste après
+    appairage, avant que le premier pull ait rapatrié un événement — n'a **pas** de mot de passe
+    de secours : `POST /sync/onboarding/pair` (§6bis) émet lui-même une session `tech_borne`
+    directement, **si et seulement si `pull.ok`** (un round-trip Hub authentifié a abouti avec CE
+    token précis) — c'est la preuve d'autorisation elle-même, pas besoin d'un second secret à
+    connaître en plus du token. Corollaire : le verrou de re-appairage de cette route se base sur
+    l'**OU de trois signaux persistés** — `borne_settings.paired_at !== null` (un pull a **réussi**
+    au moins une fois, posé par `pull.js` au premier succès) **ou** au moins une ligne
+    `local_events` (couvre une borne mise à niveau depuis une version antérieure à `paired_at`)
+    **ou** `borne_settings.borne_token !== null` (couvre une borne seedée par `BORNE_TOKEN` en
+    `.env` — persisté au boot par `resolveBorneIdentity()` **sans** round-trip Hub, donc sans
+    jamais poser les deux signaux précédents ; ce chemin suppose déjà un accès SSH/`.env`, la
+    correction s'y fait, pas par ce formulaire public) — pas sur la simple présence d'un token en
+    config, et surtout **pas** sur `getLastPull()` seul (singleton en mémoire, remis à zéro à
+    chaque redémarrage — insuffisant vu que la borne est censée fonctionner offline pendant
+    l'événement, §1 : un redémarrage sur place ne doit jamais rouvrir cette route sans auth sur une
+    machine qui porte déjà token et vidéos d'invités). La ligne `local_events` n'est écrite qu'
+    **après** un pull entièrement réussi (`pullEvent()`, §11.10 et §11.27) — jamais avant, sinon un
+    premier appairage dont le pull échoue en cours de route (assets de design corrompus, réseau)
+    laisserait une ligne orpheline qui verrouillerait définitivement la route sans qu'aucun PIN
+    n'ait jamais existé. Un token mal recopié (pull échoué, donc rien de persisté) ne verrouille
+    jamais la borne, un nouvel essai avec un token corrigé reste accepté — sauf s'il s'agit d'un
+    token d'**événement** (`box_tokens`), réservé aux bornes d'essai (§1) et **refusé d'emblée**
+    sur une borne réelle (`applyNewToken()`) : l'accepter aurait recréé la même classe de
+    cul-de-sac côté `boxToken`, qui n'est jamais persisté (contrairement à `borne_token`). Cette route
+    est en outre **refusée en mode preview** (§11.21) : Internet-facing, elle ne doit jamais
+    exposer de formulaire « appairez-moi à n'importe quel Hub ». Ce même retrait s'applique côté
+    Hub : le provisioner preview n'injecte plus `TECH_PASSWORD`/`TECH_PASSWORD_PREVIEW` (un
+    événement preview a toujours un `admin_pin`/`tech_pin` généré à sa création, disponible dès le
+    premier pull one-shot au boot du conteneur preview).
+31. **`trust proxy` doit refléter la vraie chaîne de reverse proxies**, pas une valeur fixe : sur
+    une borne réelle, un seul nginx est devant le backend (`borne-nginx → backend`, 1 hop) ; sur
+    une preview, deux (`edge-nginx → preview-nginx → backend`, 2 hops, §2 `docker/edge-nginx.conf.template`).
+    Se tromper dans le sens « trop petit » (ex. figer `1` partout) fait que `req.ip` vaut l'IP d'un
+    nginx interne pour **tous** les visiteurs Internet d'une preview — donc que tous les
+    `express-rate-limit` (login, sessions, uploads, `pairing-status`) partagent un seul seau global,
+    inopérant face à plusieurs visiteurs simultanés. `config.trustProxyHops` (Borne) se déduit de
+    `PREVIEW_MODE` par défaut, surchageable par `TRUST_PROXY_HOPS` si la topologie change.
 
 ---
 
@@ -1030,7 +1215,7 @@ volumes/réseaux — tests uniquement, jamais en prod). Le projet Docker est fix
 | Phase | Contenu | Terminé quand |
 |---|---|---|
 | **0 — Socle** | Monorepo npm workspaces, `@kapsule/core` (schémas + `createEventDb` + checksum) **avec ses tests unitaires (`node:test`)**, squelettes Express des deux serveurs, docker-compose ×2, `.env.example` | `docker compose up` sur chaque fichier → `/api/health` répond ; `npm test` passe |
-| **1 — Borne autonome** | Registre local, création d'événement local, **clôture**, routes questions/sessions/vidéos (avec remplacement), kiosque complet (navigation + réenregistrement + récap + **timeout d'inactivité + reprise de session + barre de progression d'upload**), admin local avec **indicateur disque** et **Préflight** (sans SyncPanel), HTTPS auto-signé | Un événement entier se déroule sur iPad Safari **sans aucun Hub** ; test arm64 sur le Raspberry réel (avec RTC installé) |
+| **1 — Borne autonome** ⚠️ historique, voir note | Registre local, ~~création d'événement local~~ (`POST /api/events` — retirée phase 6E, jamais restaurée, §11.29), **clôture**, routes questions/sessions/vidéos (avec remplacement), kiosque complet (navigation + réenregistrement + récap + **timeout d'inactivité + reprise de session + barre de progression d'upload**), admin local avec **indicateur disque** et **Préflight** (sans SyncPanel), HTTPS auto-signé | *À l'époque* : un événement entier se déroulait sur iPad Safari **sans aucun Hub**. Ce n'est plus le cas aujourd'hui — tout événement vient d'un pull Hub (§1, §11.29). Le reste de la ligne (kiosque, admin local, HTTPS) reste d'actualité. |
 | **2 — Hub minimal** | Registre Hub, `create-admin`, auth argon2/JWT **+ rate limiting**, CRUD événements + questions avec cloisonnement `requireOwner`, frontend (login, events, éditeur questions), règle de gel d'édition (§7) | Deux comptes ne voient que leurs événements respectifs ; questions éditables en ligne |
 | **3 — Synchro** | `box_tokens`, `GET /sync/event` + bundle, pull avec règle `loaded`, push complet (manifest/upload/db/finalize, exige `closed`) avec reprise, `SyncPanel`, onglet Synchro du Hub (avec bandeau « modifs non récupérées »), purge Borne, **tests d'intégration du protocole** (pull → uploads → coupure simulée → reprise → finalize, via supertest) | Scénario manuel complet OK **et les tests d'intégration passent** (reprise incluse) |
 | **4 — Traitement & galerie** | Worker (boucle jobs), `probe` + `thumbnail` + **`archive` (ZIP)** (ffmpeg/archiver), passage `processed`, galerie Hub (miniatures, lecture range, download, **« Tout télécharger »**, CSV), suppression RGPD côté Hub, **page super-admin** (overview stockage/jobs/bornes) | Après un push, le client voit ses vidéos en ligne avec miniatures et télécharge le ZIP complet ; supprimer l'événement efface tout |

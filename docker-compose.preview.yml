@@ -5,7 +5,7 @@
 #   essai-<slug>.kapsule.hureau.com → preview-<slug>:80 sans reload.
 #
 # Usage debug / lancement manuel :
-#   BOX_TOKEN_PREVIEW=<token> PREVIEW_SLUG=monnom \
+#   BOX_TOKEN_PREVIEW=<token> PREVIEW_SLUG=monnom JWT_SECRET=$(openssl rand -hex 32) \
 #   docker compose -f docker-compose.preview.yml -p preview-monnom up -d
 #
 # BOX_TOKEN_PREVIEW : token d'essai généré depuis le Hub (is_preview=1).
@@ -13,6 +13,14 @@
 # HUB_URL           : URL interne ou publique du Hub.
 #                     → En interne (même serveur) : http://hub-backend:3001
 #                     → En externe : https://hub.tondomaine.com
+# JWT_SECRET        : optionnel — vide/non fourni, resolveJwtSecret() en génère et persiste
+#                     un au premier démarrage (Phase C). MAIS à fixer explicitement à LA MÊME
+#                     valeur que le JWT_SECRET du Hub pour tout usage réel : POST
+#                     /api/events/:id/preview/token (Hub) signe les liens "preview_url" partagés
+#                     au client avec le secret du HUB — si la preview en génère un différent,
+#                     la borne rejette ces liens en 401 (pas juste "sessions invalidées", ils ne
+#                     vérifient jamais). Le provisioner de production (provisioner.js) le fait
+#                     déjà automatiquement ; en lancement manuel, le fournir soi-même.
 
 services:
   borne-preview-backend:
@@ -24,8 +32,7 @@ services:
       - MAX_DATA_BYTES=1073741824
       - PREVIEW_MODE=true
       - HUB_URL=${HUB_URL:-http://hub-backend:3001}
-      - TECH_PASSWORD=${TECH_PASSWORD_PREVIEW}
-      - JWT_SECRET=${JWT_SECRET}
+      - JWT_SECRET=${JWT_SECRET:-}
       - DATA_DIR=/app/data
       - PORT=3001
     volumes:

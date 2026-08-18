@@ -4,22 +4,30 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 
 import { createApp } from '../src/index.js';
-import { closeRegistry, getRegistry, insertEvent, updateEventStatus } from '../src/registry.js';
+import { closeRegistry, getRegistry, insertEvent, updateEventStatus, getSetting, setSetting } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { config } from '../src/config.js';
+import { resetLastPull } from '../src/sync/pull.js';
 import { seedAuthUsers, loginAdmin, loginTech, clearSeedEvent } from './helpers.js';
 
 const TEST_CFG = {
-  techPassword: 'tech-test',
   jwtSecret: 'secret-test',
   dataDir: '',
   hubUrl: 'https://hub.test',
   boxToken: 'tok',
   skipRateLimits: true,
 };
+
+// Plus de fallback TECH_PASSWORD (§11.30) : quand un test a besoin d'un token
+// tech_borne SANS événement/PIN seedé (ex. previewMode sans event actif), on
+// signe directement un JWT plutôt que de passer par POST /api/admin/login.
+function signTechToken() {
+  return jwt.sign({ roles: ['tech_borne'] }, TEST_CFG.jwtSecret, { expiresIn: '1h' });
+}
 
 async function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'borne-sync-routes-'));
@@ -110,6 +118,380 @@ describe('GET /api/sync/pairing-status — sans aucun token configuré', () => {
     assert.ok('hubUrl' in res.body);
     assert.ok('lastPull' in res.body);
     assert.ok(Array.isArray(res.body.logs));
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// ── POST /api/sync/onboarding/pair ───────────────────────────────────────────
+// AUCUNE auth (Phase C) : appairage initial depuis l'écran d'onboarding. Se
+// referme dès qu'un token a été VALIDÉ — verrou PERSISTÉ (borne_settings.paired_at
+// OU au moins une ligne local_events, cf. §11.30), pas getLastPull() (singleton
+// en mémoire, insuffisant) — pas dès qu'un token a simplement été saisi.
+
+describe('POST /api/sync/onboarding/pair', () => {
+  const origBorneToken = config.borneToken;
+  const origBoxToken = config.boxToken;
+  const origHubUrl = config.hubUrl;
+
+  beforeEach(() => {
+    // Repart d'un singleton pristine indépendamment de ce qu'un test précédent
+    // (ex. POST /sync/token, plus bas dans ce fichier) a pu y laisser.
+    config.borneToken = '';
+    config.boxToken = '';
+    config.hubUrl = '';
+    // getLastPull() est un singleton module-level (pull.js) sans lien avec
+    // dataDir/app — un pull réussi dans une AUTRE suite (ou un test précédent
+    // de celle-ci) le laisserait non-nul ici, faussant le verrou de
+    // re-appairage testé plus bas.
+    resetLastPull();
+  });
+
+  afterEach(() => {
+    config.borneToken = origBorneToken;
+    config.boxToken = origBoxToken;
+    config.hubUrl = origHubUrl;
+    restoreFetch();
+  });
+
+  function makeUnpairedApp(dir) {
+    return createApp(dir, { ...config, dataDir: dir, hubUrl: '', boxToken: '', borneToken: '', skipRateLimits: true });
+  }
+
+  it('retourne 400 si token absent', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+    const res = await request(app).post('/api/sync/onboarding/pair').send({});
+    assert.equal(res.status, 400);
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('retourne 400 si hubUrl absent et aucun Hub préconfiguré', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+    const res = await request(app).post('/api/sync/onboarding/pair').send({ token: 'abc' });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /hubUrl/);
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // hubUrl vient d'une requête SANS AUTH — sans validation, une borne pourrait
+  // être pointée vers n'importe quelle machine du LAN/Internet (SSRF), avec le
+  // statut/message d'erreur distant réfléchi dans pull.error.
+  it('retourne 400 sur un hubUrl non-https (SSRF) — même vers une IP interne plausible', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+    const res = await request(app)
+      .post('/api/sync/onboarding/pair')
+      .send({ token: 'abc', hubUrl: 'http://169.254.169.254/latest/meta-data' });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /hubUrl/i);
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('accepte http:// vers localhost (dev)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/borne/events')) return { ok: true, status: 200, json: async () => ({ events: [] }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const res = await request(app)
+      .post('/api/sync/onboarding/pair')
+      .send({ token: 'abc', hubUrl: 'http://localhost:3001' });
+    assert.notEqual(res.status, 400);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('appaire un token de borne (200 sur /sync/borne/events) et bascule hasToken à true', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/borne/events')) return { ok: true, status: 200, json: async () => ({ events: [] }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const res = await request(app)
+      .post('/api/sync/onboarding/pair')
+      .send({ token: 'borne-token-abc', hubUrl: 'https://hub.test' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+    // Réponse détaillée : pas juste { ok:true } — l'onboarding doit pouvoir
+    // confirmer concrètement le résultat du pull, pas juste "token accepté".
+    assert.equal(res.body.tokenKind, 'borne');
+    assert.equal(res.body.pull.ok, true);
+    assert.equal('hasActiveEvent' in res.body, true);
+
+    // pull.ok = preuve d'autorisation (le Hub a validé CE token) — une session
+    // tech_borne est émise directement, sans TECH_PASSWORD (retiré, §11.30).
+    // Signée avec config.jwtSecret (singleton LIVE — makeUnpairedApp() passe
+    // une snapshot {...config} à createApp, donc pas nécessairement égal à
+    // TEST_CFG.jwtSecret ici ; seule la production garantit cfg===config).
+    assert.ok(res.body.token);
+    const payload = jwt.verify(res.body.token, config.jwtSecret);
+    assert.deepEqual(payload.roles, ['tech_borne']);
+
+    const statusRes = await request(app).get('/api/sync/pairing-status');
+    assert.equal(statusRes.body.hasToken, true);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Interopérabilité client/serveur : borne-web et borne-server sont TOUJOURS
+  // déployés ensemble (même commit, même `docker compose … --build`), donc pas
+  // de scénario de versions divergentes au sens strict — mais le contrat HTTP
+  // doit rester tolérant à un client qui n'envoie pas tous les champs (ex. un
+  // formulaire où le champ Hub est masqué parce que déjà préconfiguré). Le
+  // serveur ne doit JAMAIS exiger du client qu'il lui redonne une information
+  // qu'il connaît déjà lui-même.
+  it('accepte un client qui n\'envoie pas hubUrl si le Hub est déjà préconfiguré côté serveur (.env)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = createApp(dir, { ...config, dataDir: dir, hubUrl: 'https://hub-preconfigured.test', boxToken: '', borneToken: '', skipRateLimits: true });
+
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/borne/events')) return { ok: true, status: 200, json: async () => ({ events: [] }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const res = await request(app)
+      .post('/api/sync/onboarding/pair')
+      .send({ token: 'borne-token-minimal' }); // pas de hubUrl dans le body
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('token accepté mais pull échoué (Hub joignable, /borne/events répond, /sync/borne/events échoue au pull) — réponse le reflète', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      // isBorneToken=true (200 ici) mais pullMyEvents() échoue ensuite sur ce même endpoint
+      if (url.includes('/sync/borne/events')) return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const res = await request(app)
+      .post('/api/sync/onboarding/pair')
+      .send({ token: 'borne-token-fail', hubUrl: 'https://hub.test' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.ok, true); // la requête elle-même a été traitée — ne dit rien du pull
+    assert.equal(res.body.pull.ok, false);
+    assert.ok(res.body.pull.error);
+    // Pas de session ouverte sans preuve d'un round-trip Hub abouti.
+    assert.equal(res.body.token, null);
+
+    // Rien n'est persisté sur un pull échoué (le candidat reste en mémoire pour
+    // ce process, retentable, mais pairing-status calcule hasToken depuis
+    // l'identité PERSISTÉE — jamais depuis le candidat d'un essai raté, sinon
+    // sawUnpairedRef ne se latcherait plus au rechargement de la page alors
+    // qu'aucun PIN n'existe encore).
+    const statusRes = await request(app).get('/api/sync/pairing-status');
+    assert.equal(statusRes.body.hasToken, false);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('un pull échoué ne verrouille pas l\'appairage — un second essai (token corrigé) est accepté', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+
+    savedFetch = globalThis.fetch;
+    // Distingue les deux essais par le token envoyé (X-Box-Token), pas par un
+    // compteur d'appels : applyNewToken() appelle déjà /sync/borne/events DEUX
+    // fois par tentative (détection du type + pull effectif), un compteur
+    // brut confondrait les deux appels du 1er essai avec le 2e essai.
+    globalThis.fetch = async (url, options) => {
+      if (url.includes('/sync/borne/events')) {
+        const tok = options?.headers?.['X-Box-Token'];
+        return tok === 'token-fautif'
+          ? { ok: false, status: 401, json: async () => ({ error: 'Token borne invalide' }) }
+          : { ok: true, status: 200, json: async () => ({ events: [] }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const first = await request(app)
+      .post('/api/sync/onboarding/pair')
+      .send({ token: 'token-fautif', hubUrl: 'https://hub.test' });
+    assert.equal(first.status, 200);
+    assert.equal(first.body.pull.ok, false);
+    assert.equal(first.body.token, null);
+
+    // Rien n'a jamais réussi (getLastPull() toujours nul) : pas de 403 ici.
+    const second = await request(app)
+      .post('/api/sync/onboarding/pair')
+      .send({ token: 'token-corrige', hubUrl: 'https://hub.test' });
+    assert.equal(second.status, 200);
+    assert.equal(second.body.pull.ok, true);
+    assert.ok(second.body.token);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Un token d'événement (box_tokens) est réservé aux bornes d'essai (§1
+  // PROJET.md) — jamais persisté (à la différence de borne_token), donc
+  // l'accepter sur une borne réelle créait un cul-de-sac au premier
+  // redémarrage (hasToken redevenu false, mais la route déjà verrouillée si un
+  // pull avait entretemps réussi). Refusé clairement maintenant, pour une
+  // borne non-preview — `makeUnpairedApp` en est une.
+  it('refuse un token d\'événement sur une borne réelle (réservé aux bornes d\'essai)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/borne/events')) return { ok: false, status: 400, json: async () => ({ error: 'not a borne token' }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const res = await request(app)
+      .post('/api/sync/onboarding/pair')
+      .send({ token: 'event-token-abc', hubUrl: 'https://hub.test' });
+    assert.equal(res.status, 200); // la requête est traitée — c'est le pull qui est refusé
+    assert.equal(res.body.tokenKind, 'event');
+    assert.equal(res.body.pull.ok, false);
+    assert.match(res.body.pull.error, /événement|borne d'essai/i);
+    assert.equal(res.body.token, null);
+
+    // Ni persisté, ni gardé en mémoire — hasToken reste false.
+    const statusRes = await request(app).get('/api/sync/pairing-status');
+    assert.equal(statusRes.body.hasToken, false);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('retourne 403 sur un second appel une fois appairée', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/borne/events')) return { ok: true, status: 200, json: async () => ({ events: [] }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    await request(app).post('/api/sync/onboarding/pair').send({ token: 'first', hubUrl: 'https://hub.test' });
+    const res = await request(app).post('/api/sync/onboarding/pair').send({ token: 'second', hubUrl: 'https://hub.test' });
+    assert.equal(res.status, 403);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Régression du verrou persisté (borne_settings.paired_at) : avant le fix,
+  // le verrou de re-appairage reposait sur getLastPull(), un singleton EN
+  // MÉMOIRE remis à zéro à chaque redémarrage du process — donc un simple
+  // restart (coupure de courant, mise à jour) rouvrait cette route sans auth
+  // sur une borne déjà appairée. resetLastPull() simule exactement ce
+  // redémarrage : le verrou doit rester fermé malgré lui.
+  it('reste verrouillée (403) même après un redémarrage du process (paired_at survit à resetLastPull)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/borne/events')) return { ok: true, status: 200, json: async () => ({ events: [] }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const first = await request(app).post('/api/sync/onboarding/pair').send({ token: 'first', hubUrl: 'https://hub.test' });
+    assert.equal(first.status, 200);
+
+    resetLastPull(); // simule le redémarrage du process : _lastPull redevient null
+
+    const second = await request(app).post('/api/sync/onboarding/pair').send({ token: 'attacker-token', hubUrl: 'https://attacker.test' });
+    assert.equal(second.status, 403);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Régression : une borne mise à niveau depuis une version antérieure à
+  // `paired_at` (colonne nouvelle) porte déjà des `local_events` — pullés par
+  // un vrai appairage passé — sans que `paired_at` ait jamais été posée. Le
+  // verrou doit se fermer sur CE signal aussi, pas seulement sur `paired_at`,
+  // sinon la route rouvre sans auth le temps d'un pull de plus.
+  it('reste verrouillée (403) si des local_events existent déjà, même sans paired_at', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+
+    insertEvent({ id: 'ev-deja-pulle', name: 'Événement déjà présent', origin: 'hub', status: 'loaded' });
+    assert.equal(getSetting('paired_at'), null); // le signal historique, pas le nouveau
+
+    const res = await request(app).post('/api/sync/onboarding/pair').send({ token: 'attacker-token', hubUrl: 'https://attacker.test' });
+    assert.equal(res.status, 403);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Régression : une borne seedée par BORNE_TOKEN en .env (resolveBorneIdentity()
+  // persiste borne_token au boot, SANS round-trip Hub, §6bis) mais qui n'a
+  // jamais réussi de pull n'a ni paired_at ni local_events — sans ce 3e signal,
+  // un tiers sur le LAN pourrait poster sur cette route non authentifiée alors
+  // même que pairing-status annonce déjà hasToken:true (donc sans formulaire
+  // proposé côté UI, impasse pour l'opérateur légitime).
+  it('reste verrouillée (403) si borne_token est déjà persisté, même sans paired_at ni local_events', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+
+    setSetting('borne_token', 'seedé-depuis-env');
+    assert.equal(getSetting('paired_at'), null);
+    assert.equal(getRegistry().prepare('SELECT 1 FROM local_events LIMIT 1').get(), undefined);
+
+    const res = await request(app).post('/api/sync/onboarding/pair').send({ token: 'attacker-token', hubUrl: 'https://attacker.test' });
+    assert.equal(res.status, 403);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('refuse (404) en mode preview — surface Internet-facing, pas de formulaire d\'appairage public', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = createApp(dir, { ...config, dataDir: dir, hubUrl: '', boxToken: '', borneToken: '', previewMode: true, skipRateLimits: true });
+
+    const res = await request(app).post('/api/sync/onboarding/pair').send({ token: 'abc', hubUrl: 'https://hub.test' });
+    assert.equal(res.status, 404);
+
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('ne persiste pas hub_url si le pull échoue (persistance différée à un round-trip Hub abouti)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'borne-onboard-'));
+    const app = makeUnpairedApp(dir);
+
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/borne/events')) return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const res = await request(app)
+      .post('/api/sync/onboarding/pair')
+      .send({ token: 'borne-token-fail', hubUrl: 'https://hub-jamais-enregistre.test' });
+    assert.equal(res.body.pull.ok, false);
+    assert.equal(getSetting('hub_url'), null);
+
     closeRegistry();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -236,6 +618,66 @@ describe('POST /api/sync/token', () => {
       .post('/api/sync/token')
       .send({ token: 'abc' });
     assert.equal(res.status, 401);
+  });
+
+  // Régression : avant le fix, applyNewToken() ne restaurait config.borneToken
+  // sur échec que dans la branche "token d'événement" — une rotation ratée en
+  // branche borne (faute de frappe, token expiré) écrasait un appairage
+  // fonctionnel en mémoire, récupérable seulement en SSH sur une machine qui
+  // n'en a pas toujours (Raspberry sur le Wi-Fi de l'événement).
+  it('restaure le token de borne précédent en mémoire si la rotation échoue', async () => {
+    const origBorneToken = config.borneToken;
+    config.borneToken = 'borne-token-fonctionnel';
+    restoreFetch();
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/borne/events')) return { ok: false, status: 500, json: async () => ({ error: 'boom' }) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const res = await request(app)
+      .post('/api/sync/token')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ token: 'token-fautif' });
+    // /sync/token répond toujours { ok: true } (ne reflète pas l'échec du pull,
+    // cf. commentaire de la route) — c'est l'état en mémoire qui compte ici.
+    assert.equal(res.status, 200);
+    assert.equal(config.borneToken, 'borne-token-fonctionnel');
+
+    config.borneToken = origBorneToken;
+  });
+
+  // Le refus des tokens d'événement (ci-dessus, POST /sync/onboarding/pair)
+  // est scopé à `!isPreviewMode(cfg)` : une preview a un usage légitime de
+  // POST /sync/token pour faire tourner son propre box token (le provisioner
+  // le réinjecte normalement via l'env à chaque recréation, mais rien
+  // n'empêche une rotation manuelle). Ce test verrouille que ce chemin reste
+  // ouvert — sinon le refus ci-dessus serait un excès de zèle qui casserait un
+  // usage réel.
+  it('accepte toujours un token d\'événement en mode preview (rotation légitime du box token)', async () => {
+    const origBoxToken = config.boxToken;
+    const dir = mkdtempSync(join(tmpdir(), 'borne-preview-token-'));
+    const previewApp = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: true, borneToken: '' });
+    const previewToken = signTechToken();
+
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      if (url.includes('/sync/borne/events')) return { ok: false, status: 400, json: async () => ({ error: 'not a borne token' }) };
+      if (url.includes('/sync/event') && !url.includes('/bundle')) return { ok: false, status: 404, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    };
+
+    const res = await request(previewApp)
+      .post('/api/sync/token')
+      .set('Authorization', `Bearer ${previewToken}`)
+      .send({ token: 'nouveau-box-token' });
+    assert.equal(res.status, 200);
+    assert.equal(config.boxToken, 'nouveau-box-token');
+
+    config.boxToken = origBoxToken;
+    restoreFetch();
+    closeRegistry();
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 
@@ -461,8 +903,7 @@ describe('POST /api/sync/push — mode démo', () => {
   before(async () => {
     dir = mkdtempSync(join(tmpdir(), 'borne-sync-preview-push-'));
     app = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: true });
-    const loginRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
-    token = loginRes.body.token;
+    token = signTechToken();
     makeClosedEvent(dir, 'ev-preview-push');
   });
 
@@ -523,10 +964,9 @@ describe('POST /api/sync/push-config', () => {
     teardown(dir);
     dir = mkdtempSync(join(tmpdir(), 'borne-sync-pushcfg-preview-'));
     const previewApp = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: true });
-    const lr = await request(previewApp).post('/api/admin/login').send({ password: 'tech-test' });
     const res = await request(previewApp)
       .post('/api/sync/push-config')
-      .set('Authorization', `Bearer ${lr.body.token}`);
+      .set('Authorization', `Bearer ${signTechToken()}`);
     assert.equal(res.status, 403);
     assert.match(res.body.error, /interdit.*mode démo/);
   });
@@ -540,8 +980,7 @@ describe('POST /api/sync/reset-preview', () => {
   async function setupPreviewApp() {
     dir = mkdtempSync(join(tmpdir(), 'borne-sync-reset-'));
     app = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: true });
-    const loginRes = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
-    token = loginRes.body.token;
+    token = signTechToken();
   }
 
   afterEach(() => { closeEventDb(); closeRegistry(); rmSync(dir, { recursive: true, force: true }); });
@@ -549,8 +988,7 @@ describe('POST /api/sync/reset-preview', () => {
   it('retourne 403 hors mode démo', async () => {
     dir = mkdtempSync(join(tmpdir(), 'borne-sync-reset-nopreview-'));
     app = createApp(dir, { ...TEST_CFG, dataDir: dir, previewMode: false });
-    const lr = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
-    token = lr.body.token;
+    token = signTechToken();
 
     const res = await request(app)
       .post('/api/sync/reset-preview')

@@ -23,7 +23,6 @@ export default function AdminPage({ isPreview = false, eventName = null }) {
     return (
       <AdminLogin
         title="Administration"
-        mode="pin"
         onSuccess={(token) => {
           if (!hasAdminRoleInToken(token)) return false;
           saveToken(token);

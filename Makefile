@@ -6,14 +6,21 @@
 # Usage : make <cible>  (ex. make vps-up). `make help` liste tout.
 
 # Compose files & projet Docker fixe (les bornes preview joignent hub-backend par
-# nom de container, donc le projet doit être stable : -p kapsule).
+# nom de container, donc le projet Hub↔preview doit être stable : -p kapsule).
+# COMPOSE_BORNE a son PROPRE projet (-p kapsule-borne) : docker-compose.borne.yml
+# et docker-compose.hub.yml déclarent tous deux des services `backend`/`frontend` ;
+# les partager sous -p kapsule ferait que `make borne-start` remappe et détruit les
+# conteneurs Hub (et --remove-orphans supprimerait worker/edge). Sans lien réseau
+# entre les deux (la borne est sur son propre réseau `internal`), aucune raison de
+# partager le projet.
 COMPOSE_HUB     := docker compose -f docker-compose.hub.yml -p kapsule
 COMPOSE_PREVIEW := docker compose -f docker-compose.preview.yml -p kapsule
 COMPOSE_HUB_DEV := docker compose -f docker-compose.hub.yml -f docker-compose.hub.dev.yml -p kapsule
+COMPOSE_BORNE   := docker compose -f docker-compose.borne.yml -p kapsule-borne
 HUB_NET         := kapsule_hub_net
 
 .DEFAULT_GOAL := help
-.PHONY: help vps-build vps-up vps-down vps-restart vps-reset hub-reset local-dev-environment local-build local-up local-down local-restart local-reset
+.PHONY: help vps-build vps-up vps-down vps-restart vps-reset hub-reset local-dev-environment local-build local-up local-down local-restart local-reset borne-start borne-stop borne-restart borne-reset
 
 help: ## Affiche cette aide
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -70,6 +77,41 @@ vps-reset: ## ⚠️  Reset complet du VPS : volumes + réseaux Hub + previews (
 	@docker network ls --filter "name=preview-net-" -q | xargs -r docker network rm 2>/dev/null || true
 	@docker network rm $(HUB_NET) 2>/dev/null || true
 	@echo "✓ volumes et réseaux VPS réinitialisés"
+
+## ── Borne (docker-compose.borne.yml — Raspberry réel ou test local, cf. README §4) ─
+
+borne-start: ## Construit et démarre la Borne (up -d --build)
+	@echo "→ build + up Borne"
+	$(COMPOSE_BORNE) up -d --build --remove-orphans
+	@echo "✓ Borne disponible sur https://localhost (ou BORNE_HTTP_PORT/BORNE_HTTPS_PORT si redéfinis dans .env)"
+
+borne-stop: ## Coupe la Borne SANS perdre les données (down, volumes conservés)
+	@echo "→ down Borne (volumes conservés)"
+	$(COMPOSE_BORNE) down --remove-orphans
+	@echo "✓ Borne arrêtée"
+
+borne-restart: ## Recharge la Borne sans perdre les données (down + rebuild + up)
+	@echo "→ restart Borne"
+	$(COMPOSE_BORNE) down --remove-orphans
+	$(COMPOSE_BORNE) up -d --build --remove-orphans
+	@echo "✓ Borne redémarrée"
+
+borne-reset: ## ⚠️  Reset complet de la Borne : registre + événements locaux + certs (DESTRUCTIF)
+	@echo "⚠️  RESET DESTRUCTIF DES DONNÉES BORNE"
+	@echo "    Le volume borne_data sera supprimé, ce qui efface :"
+	@echo "      · registry.sqlite (identité machine, token, événements locaux actifs)"
+	@echo "      · events/<id>/ — LES VIDÉOS DES INVITÉS et leurs consentements horodatés"
+	@echo "    Ces données sont irrécupérables et constituent la preuve légale RGPD."
+	@echo "    Le volume borne_certs (certificat TLS auto-signé) sera aussi supprimé —"
+	@echo "    un nouveau sera généré au prochain démarrage, à réapprouver sur l'iPad."
+	@printf "    Taper RESET en majuscules pour confirmer : " && read ans && [ "$$ans" = "RESET" ]
+	@echo "→ down Borne avec volumes (-v)"
+	$(COMPOSE_BORNE) down -v --remove-orphans
+	@echo "→ rebuild images Borne"
+	$(COMPOSE_BORNE) build
+	@echo "→ démarrage Borne"
+	$(COMPOSE_BORNE) up -d
+	@echo "✓ Borne réinitialisée — écran d'onboarding sur https://localhost (BORNE_TOKEN à ressaisir)"
 
 ## ── Dev local (TLS via mkcert, domaine kapsule.localhost) ────────────────────
 

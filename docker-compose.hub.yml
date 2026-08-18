@@ -7,7 +7,17 @@ services:
     # depuis le réseau hub_net : http://hub-backend:3001
     container_name: hub-backend
     environment:
-      - JWT_SECRET=${JWT_SECRET:-change-me}
+      # NODE_ENV=production : sans lui, validateConfig() (apps/hub/server/src/config.js)
+      # ne devient jamais strict — un JWT_SECRET absent/faible ne fait que
+      # produire un warning console, jamais un refus de démarrer, même sur un
+      # Hub Internet-facing (l'inverse de docker-compose.borne.yml:7, qui le
+      # pose déjà).
+      - NODE_ENV=production
+      # Vide, PAS "change-me" : un placeholder publiquement connu (visible dans
+      # ce fichier versionné) serait une valeur faible DE PLUS à traiter, et
+      # sans NODE_ENV=production ci-dessus, un JWT_SECRET manquant passait
+      # inaperçu — désormais le démarrage est refusé (validateConfig).
+      - JWT_SECRET=${JWT_SECRET:-}
       - DATA_DIR=/app/data
       - PORT=3001
       - ALLOW_REGISTER=${ALLOW_REGISTER:-false}
@@ -17,15 +27,18 @@ services:
       - PREVIEW_IMAGE=${PREVIEW_IMAGE:-kapsule-borne-preview-frontend}
       - PREVIEW_BACKEND_IMAGE=${PREVIEW_BACKEND_IMAGE:-kapsule-borne-preview-backend}
       - HUB_URL_INTERNAL=${HUB_URL_INTERNAL:-http://hub-backend:3001}
-      - TECH_PASSWORD_PREVIEW=${TECH_PASSWORD_PREVIEW:-}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_SECURE=${SMTP_SECURE:-false}
       - SMTP_USER=${SMTP_USER:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM=${SMTP_FROM:-Kapsule <noreply@kapsule.hureau.com>}
-    ports:
-      - "3001:3001"
+    # Pas de `ports:` ici — le chemin légitime est edge → hub-frontend →
+    # backend:3001, entièrement sur le réseau interne kapsule_hub_net
+    # (README.md le documente déjà comme "interne"). Publier 3001 sur l'hôte
+    # court-circuite l'edge (pas de TLS, ni HSTS/CSP/X-Frame) et, combiné à
+    # `trust proxy: 1` fixe (apps/hub/server/src/index.js), permet à un client
+    # direct de forger X-Forwarded-For pour contourner le rate-limit login.
     volumes:
       - hub_data:/app/data
       # Monté pour l'auto-provisioning des containers preview (Partie C).
@@ -42,7 +55,8 @@ services:
       dockerfile: apps/hub/server/Dockerfile
     command: ["node", "src/worker/index.js"]
     environment:
-      - JWT_SECRET=${JWT_SECRET:-change-me}
+      - NODE_ENV=production
+      - JWT_SECRET=${JWT_SECRET:-}
       - DATA_DIR=/app/data
     volumes:
       - hub_data:/app/data

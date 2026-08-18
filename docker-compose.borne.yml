@@ -5,9 +5,11 @@ services:
       dockerfile: apps/borne/server/Dockerfile
     environment:
       - NODE_ENV=production
-      # Mot de passe admin/tech en mode autonome (login borne sans Hub).
-      - TECH_PASSWORD=${TECH_PASSWORD:-tech123}
-      - JWT_SECRET=${JWT_SECRET:-change-me}
+      # Vide, PAS "change-me" : un placeholder publiquement connu (visible dans
+      # ce fichier versionné) injecté dans le conteneur serait une valeur faible
+      # DE PLUS à traiter — resolveJwtSecret() traite déjà la chaîne vide comme
+      # absente et en génère une au premier démarrage (WEAK_JWT_SECRETS).
+      - JWT_SECRET=${JWT_SECRET:-}
       - HUB_URL=${HUB_URL:-}
       - BOX_TOKEN=${BOX_TOKEN:-}
       # Phase B : identité de borne physique (machine persistante, plusieurs
@@ -18,6 +20,9 @@ services:
       - DATA_DIR=/app/data
       - PORT=3001
       - PULL_INTERVAL_MS=${PULL_INTERVAL_MS:-300000}
+      - MAX_DATA_BYTES=${MAX_DATA_BYTES:-}
+      - PREVIEW_MODE=${PREVIEW_MODE:-}
+      - TRUST_PROXY_HOPS=${TRUST_PROXY_HOPS:-}
     volumes:
       # Un seul volume : registry.sqlite (identité machine — local_events,
       # push_state, borne_settings) ET events/<id>/ (données invité) y

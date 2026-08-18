@@ -98,13 +98,10 @@ export const api = {
 
   // ── Auth ──────────────────────────────────────────────────────────────────
 
-  login: (email, password) =>
-    apiFetch('/api/admin/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    }),
   // admin_borne / tech_borne : code à 6 chiffres partagé (event_meta.admin_pin /
-  // tech_pin), pas de compte nominatif.
+  // tech_pin), pas de compte nominatif. Plus de login par mot de passe
+  // (TECH_PASSWORD retiré, PROJET.md §11.30) — POST /api/admin/login n'accepte
+  // plus que { pin }.
   loginPin: (pin) =>
     apiFetch('/api/admin/login', {
       method: 'POST',
@@ -114,6 +111,15 @@ export const api = {
   // Public, sans auth (Phase C) : état d'appairage + journal d'init pour l'écran
   // d'onboarding affiché tant qu'aucun token n'est configuré sur la borne.
   pairingStatus: () => apiFetch('/api/sync/pairing-status'),
+
+  // Public, sans auth (Phase C) : appairage initial depuis l'écran d'onboarding
+  // (colle le token borne + URL Hub optionnelle) — le serveur refuse (403) dès
+  // qu'un token est déjà configuré, donc inutilisable après le premier appairage.
+  onboardingPair: (token, hubUrl) =>
+    apiFetch('/api/sync/onboarding/pair', {
+      method: 'POST',
+      body: JSON.stringify({ token, hubUrl: hubUrl || undefined }),
+    }),
 
   // Auth wall preview (rôle general, §11.24) : proxy vers le Hub via /api/preview/login,
   // distinct de /api/admin/login (PIN admin_borne/tech_borne).

@@ -12,7 +12,6 @@ import { requireAdmin, requireTech } from '../src/middleware/auth.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 
 const TEST_CONFIG = {
-  techPassword: 'tech-test',
   jwtSecret: 'secret-test',
   dataDir: '',
   skipRateLimits: true,
@@ -100,45 +99,17 @@ describe('POST /api/admin/login — PIN partagé (event_meta.admin_pin / tech_pi
   });
 });
 
-// ── POST /api/admin/login — fallback TECH_PASSWORD (mode autonome) ───────────
+// ── POST /api/admin/login — plus de fallback par mot de passe (§11.30) ───────
+// TECH_PASSWORD a été retiré : le seul chemin d'auth est désormais { pin }.
+// La fenêtre avant le premier PIN (juste après appairage) est couverte par la
+// session ouverte directement par POST /sync/onboarding/pair (sync.routes.test.js).
 
-describe('POST /api/admin/login — fallback TECH_PASSWORD, événement actif SANS aucun PIN', () => {
-  let dir, app;
-
-  afterEach(() => {
-    closeEventDb();
-    closeRegistry();
-    rmSync(dir, { recursive: true });
-  });
-
-  test('un événement actif pullé d\'un Hub pré-Phase C (sans PIN) laisse TECH_PASSWORD fonctionner', async () => {
-    dir = mkdtempSync(join(tmpdir(), 'borne-auth-nopin-'));
-    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
-    seedActiveEventWithPin(dir, {}); // événement actif, aucune clé admin_pin/tech_pin
-
-    const res = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
-    assert.equal(res.status, 200);
-    const payload = jwt.verify(res.body.token, TEST_CONFIG.jwtSecret);
-    assert.deepEqual(payload.roles, ['tech_borne']);
-  });
-
-  test('dès qu\'un PIN existe sur l\'événement actif, TECH_PASSWORD est refusé', async () => {
-    dir = mkdtempSync(join(tmpdir(), 'borne-auth-haspin-'));
-    app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
-    seedActiveEventWithPin(dir, { techPin: '654321' }); // pas d'admin_pin, mais un tech_pin suffit
-
-    const res = await request(app).post('/api/admin/login').send({ password: 'tech-test' });
-    assert.equal(res.status, 401);
-  });
-});
-
-describe('POST /api/admin/login — fallback TECH_PASSWORD (aucun user en base)', () => {
+describe('POST /api/admin/login — sans PIN dans le corps', () => {
   let dir, app;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'borne-auth-fallback-'));
+    dir = mkdtempSync(join(tmpdir(), 'borne-auth-nopin-body-'));
     app = createApp(dir, { ...TEST_CONFIG, dataDir: dir });
-    // Pas d'événement actif → event_users vide → fallback env
   });
 
   afterEach(() => {
@@ -147,24 +118,14 @@ describe('POST /api/admin/login — fallback TECH_PASSWORD (aucun user en base)'
     rmSync(dir, { recursive: true });
   });
 
-  test('login avec TECH_PASSWORD → JWT roles tech_borne', async () => {
+  test('un { password } seul (ancien fallback) est rejeté — 401', async () => {
     const res = await request(app)
       .post('/api/admin/login')
-      .send({ password: 'tech-test' });
-    assert.equal(res.status, 200);
-    assert.ok(res.body.token);
-    const payload = jwt.verify(res.body.token, TEST_CONFIG.jwtSecret);
-    assert.deepEqual(payload.roles, ['tech_borne']);
-  });
-
-  test('retourne 401 si mauvais mot de passe env', async () => {
-    const res = await request(app)
-      .post('/api/admin/login')
-      .send({ password: 'mauvais' });
+      .send({ password: 'nimporte-quoi' });
     assert.equal(res.status, 401);
   });
 
-  test('retourne 401 si corps vide (pas de password)', async () => {
+  test('retourne 401 si corps vide', async () => {
     const res = await request(app).post('/api/admin/login').send({});
     assert.equal(res.status, 401);
   });

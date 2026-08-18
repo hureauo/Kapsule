@@ -769,7 +769,11 @@ input, textarea, [contenteditable] {
 .sync-token-row     { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
 .sync-token-display { display: flex; align-items: center; gap: 0.5rem; }
 .sync-token-edit    { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
-.sync-token-value   { font-family: monospace; font-size: 0.9rem; background: var(--bg-muted, #1a1a1a); padding: 0.15rem 0.4rem; border-radius: 4px; }
+/* color explicite : sans lui le texte hérite de --text (quasi-noir en thème
+   admin clair) sur ce fond quasi-noir — illisible (constaté avec le mot de
+   passe technicien généré, OnboardingScreen). Toujours un fond sombre par
+   design (badge de type "code"), donc un texte clair fixe, indépendant du thème. */
+.sync-token-value   { font-family: monospace; font-size: 0.9rem; background: var(--bg-muted, #1a1a1a); color: #f0f0f0; padding: 0.15rem 0.4rem; border-radius: 4px; }
 .admin-input--small { padding: 0.3rem 0.5rem; font-size: 0.9rem; width: 18rem; }
 
 /* Comparaison config Hub vs local */

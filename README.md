@@ -134,39 +134,48 @@ le nouvel événement à la borne déjà déployée.
 Sur `https://votre-domaine.com/admin`, onglet **Bornes** → **« + Nouvelle borne »** (nom + lieu).
 Le token en clair n'est affiché **qu'une seule fois** — copiez-le immédiatement.
 
-### Étape 3 — Cloner + configurer
+### Étape 3 — Cloner + démarrer
 
 ```bash
 git clone <url-du-depot> kapsule && cd kapsule
 cp .env.example-rasp .env
-```
-
-`HUB_URL` est déjà réglé sur `kapsule.hureau.com` dans `.env.example-rasp` — il ne reste
-normalement qu'à coller le token de l'étape 2 :
-
-```ini
-BORNE_TOKEN=<token-copié-à-l'étape-2>
-```
-
-Changez aussi `JWT_SECRET` et `TECH_PASSWORD` (fallback mode autonome) en prod.
-
-> **Auth en mode appairé (avec Hub)** : l'admin et le technicien se connectent par un code à 6 chiffres partagé (`admin_pin`/`tech_pin`, onglet Design de l'événement côté Hub, régénérable à tout moment) — pas de compte à créer. `TECH_PASSWORD` n'est utilisé que tant qu'**aucun événement n'est actif** (mode autonome sans `HUB_URL`, ou juste après appairage avant le premier pull) ; dès qu'un événement est actif, seul le PIN fonctionne.
-
-### Étape 4 — Construire et démarrer
-
-```bash
 docker compose -f docker-compose.borne.yml up -d --build
 ```
 
-Le certificat TLS auto-signé (`borne.local`) est généré au premier démarrage. Le heartbeat démarre
-automatiquement (toutes les `PULL_INTERVAL_MS`, 5 min par défaut) : la borne remonte son état
-(disque, horloge) au Hub et récupère les commandes en attente.
+Rien à éditer dans `.env` : `HUB_URL` est déjà réglé sur `kapsule.hureau.com`, et `JWT_SECRET` est
+généré automatiquement au premier démarrage (persisté en base — un redémarrage ne le régénère
+pas). Le certificat TLS auto-signé (`borne.local`) est aussi généré au premier démarrage. Aucun
+mot de passe à choisir nulle part.
+
+### Étape 4 — Coller le token depuis l'écran d'onboarding
+
+Ouvrez `https://<ip-de-la-borne>/` **ou** `/borne` (les deux affichent le même écran tant que la
+borne n'est pas appairée) : la console montre un écran d'appairage **sans mot de passe** (rien de
+sensible n'existe encore sur la machine à ce stade) avec :
+- un tracker en 4 étapes (Serveur borne, Hub, Token, Événement) qui se met à jour en direct,
+- un formulaire pour coller le token de l'étape 2 (et l'URL du Hub, déjà préremplie ici),
+- le journal de démarrage (contact du Hub, pulls) pour suivre la progression en détail.
+
+Alternative sans passer par le navigateur : coller le token dans `BORNE_TOKEN=` du `.env` et
+redémarrer le conteneur — **pas un chemin équivalent**, à noter : il persiste le token
+immédiatement, sans vérification auprès du Hub (le formulaire web, lui, ne persiste qu'après un
+pull réussi). Une faute de frappe dans le `.env` ne se rattrape que par le `.env` (SSH) — le
+formulaire web ne la corrigera pas, la borne se croira déjà appairée.
+
+Dès que le token est **validé** par le Hub, vous êtes **déjà connecté** — le serveur ouvre lui-même
+une session technicien (aucun mot de passe à connaître : le token que vous venez de coller en est
+la preuve). Si le pull échoue (token mal recopié, Hub injoignable), rien n'est verrouillé : le
+formulaire reste affiché, corrigez et renvoyez. Le heartbeat démarre automatiquement une fois
+appairée (toutes les `PULL_INTERVAL_MS`, 5 min par défaut) : la borne remonte son état (disque,
+horloge) au Hub et récupère les commandes en attente.
 
 ### Étape 5 — Assigner un événement
 
 Sur `https://votre-domaine.com/admin`, onglet **Bornes** → dépliez la borne créée → assignez
 l'événement à pousser sur cette machine. Au battement suivant (ou via **Synchro → Pull** depuis
 `/borne` sur la borne), l'événement et ses questions sont chargés.
+
+> **Auth en mode appairé (avec Hub)** : l'admin et le technicien se connectent par un code à 6 chiffres partagé (`admin_pin`/`tech_pin`, onglet Design de l'événement côté Hub, régénérable à tout moment) — pas de compte à créer. La toute première connexion technicien se fait automatiquement au moment de l'appairage (étape 4) ; ensuite, c'est le PIN qui prend le relais à chaque nouvelle session.
 
 ### Étape 6 — Approuver le certificat sur l'iPad ⚠️
 
@@ -179,10 +188,9 @@ Safari n'autorise la caméra qu'en HTTPS. Le certificat auto-signé doit être a
 
 ### Étape 7 — Préflight
 
-Sur `https://<ip-de-la-borne>/borne`, connectez-vous en tant que **technicien** (code PIN à 6
-chiffres une fois un événement actif, sinon `TECH_PASSWORD`). Onglet **Événements** : activez
-l'événement à jouer (si plusieurs sont assignés). Onglet **Machine** : vérifiez que tout est au
-vert (disque, horloge, caméra).
+Sur `https://<ip-de-la-borne>/borne` (déjà connecté si vous suivez cet ordre, sinon code PIN une
+fois un événement actif). Onglet **Événements** : activez l'événement à jouer (si plusieurs sont
+assignés). Onglet **Machine** : vérifiez que tout est au vert (disque, horloge, caméra).
 
 ### Après l'événement
 
@@ -264,7 +272,7 @@ Les tests ci-dessus sont des tests unitaires/d'intégration en mémoire. Pour v�
 ```bash
 npm run smoke         # Hub puis Borne
 npm run smoke:hub     # stack docker-compose.hub.yml
-npm run smoke:borne   # stack docker-compose.borne.yml (mode autonome)
+npm run smoke:borne   # stack docker-compose.borne.yml (sans Hub — événement seedé via docker exec)
 ```
 
 Chaque assertion logge `✓`/`✗` ; le script s'arrête sur la première qui casse (code de sortie ≠0) et détruit le stack en sortie (`--keep` pour le conserver). Ces scripts **dépendent de Docker** et sont donc volontairement hors de `npm test` — à lancer manuellement, typiquement avant un déploiement. Le rendu et les interactions React (clics, formulaires, capture caméra) restent une vérification humaine.
@@ -291,11 +299,10 @@ Toutes dans `.env` à la racine, copié depuis `.env.example-hub` (VPS) ou `.env
 
 | Variable | Défaut | Rôle |
 |---|---|---|
-| `JWT_SECRET` | `change-me` | Secret JWT — **à changer en prod** |
-| `TECH_PASSWORD` | `tech123` | Fallback technicien, actif **uniquement tant qu'aucun événement n'est actif** (mode autonome, ou juste après appairage avant le premier pull). Une fois un événement actif, seul le code PIN (`tech_pin`, régénérable depuis le Hub) fonctionne. |
-| `HUB_URL` | _(vide)_ | URL du Hub. **Vide = mode autonome** (pas de synchro) |
+| `JWT_SECRET` | _(vide)_ | Secret JWT. **Laisser vide** : généré et persisté automatiquement au premier démarrage si absent/valeur d'exemple |
+| `HUB_URL` | _(vide)_ | URL du Hub. **Vide = pas de synchro possible** — la Borne n'a aucune route pour créer un événement local, elle reste sans événement jusqu'à un appairage |
 | `BOX_TOKEN` | _(vide)_ | Token d'événement (essai/legacy) — préférer `BORNE_TOKEN` pour une borne physique |
-| `BORNE_TOKEN` | _(vide)_ | Identité de borne physique (Phase B), créée depuis l'onglet Bornes du Hub. Seed uniquement : une rotation depuis `/borne` persiste en base et prime dessus |
+| `BORNE_TOKEN` | _(vide)_ | Identité de borne physique (Phase B), créée depuis l'onglet Bornes du Hub. Peut être laissé vide et collé au premier démarrage depuis l'écran d'onboarding de `/borne` (sans mot de passe tant qu'aucun token n'existe) — **pas équivalent à l'éditer ici** : ce fichier persiste sans vérification Hub, le formulaire web seulement après un pull réussi (§ci-dessus). Seed uniquement : une rotation depuis `/borne` persiste en base et prime dessus |
 | `PULL_INTERVAL_MS` | `300000` | Période du pull + heartbeat automatiques (ms) — borne physique (`BORNE_TOKEN`) uniquement |
 | `MAX_DATA_BYTES` | _(vide = illimité)_ | Quota disque en octets |
 | `PREVIEW_MODE` | _(déduit du token)_ | Force le mode démo (bandeau + push interdit) |

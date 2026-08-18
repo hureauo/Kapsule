@@ -3,13 +3,27 @@ import { join } from 'node:path';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 import { sha256File } from '@kapsule/core/src/checksum.js';
 import { isValidAssetFilename } from '@kapsule/core';
-import { getRegistry, insertEvent, setActiveEvent, getActiveEvent, listStalePreviewEvents, deleteEvent } from '../registry.js';
+import { getRegistry, insertEvent, setActiveEvent, getActiveEvent, listStalePreviewEvents, deleteEvent, getSetting, setSetting } from '../registry.js';
 import { hubFetchJson, hubFetchBuffer } from './hubClient.js';
 import { config } from '../config.js';
 
 let _lastPull = null;
 export function getLastPull() { return _lastPull; }
-function _setLastPull() { _lastPull = new Date().toISOString(); }
+// `paired_at` (borne_settings) est le verrou PERSISTÉ de la route d'appairage
+// (routes/sync.js, POST /sync/onboarding/pair) — à la différence de _lastPull,
+// un singleton en mémoire remis à zéro à chaque redémarrage. Posé une seule
+// fois (premier pull réussi de la vie de cette borne) : un pull réussi plus
+// tard ne doit pas en décaler la date, seule sa présence compte pour le verrou.
+function _setLastPull() {
+  _lastPull = new Date().toISOString();
+  if (getSetting('paired_at') === null) setSetting('paired_at', _lastPull);
+}
+/** Exposé pour les tests : réinitialise le singleton entre les suites (sync.routes.test.js
+ * s'en sert pour simuler un redémarrage du process côté POST /sync/onboarding/pair — le
+ * verrou de re-appairage lit désormais `paired_at`/`local_events`, PERSISTÉS, donc pas
+ * affectés par ce reset ; sans lui, seul `_lastPull` en mémoire contaminerait les suites
+ * suivantes). */
+export function resetLastPull() { _lastPull = null; }
 
 /**
  * Tire un événement spécifique depuis le Hub et l'applique localement.
@@ -32,25 +46,15 @@ export async function pullEvent(hubEventId, dataDir) {
     return { skipped: true, reason: `statut local ${existing.status} — pull ignoré` };
   }
 
-  // 3. Crée/met à jour l'event local
+  // 3. Prépare le dossier de l'event (pur filesystem, sans effet sur le
+  // registre — un dossier orphelin laissé par un échec plus bas est inerte,
+  // à la différence d'une ligne local_events qui, elle, sert de PREUVE
+  // qu'un pull a réellement abouti, cf. étape 6).
   const eventDir = join(dataDir, 'events', hubEventId);
   mkdirSync(eventDir, { recursive: true });
   mkdirSync(join(eventDir, 'videos'), { recursive: true });
 
-  if (!existing) {
-    insertEvent({ id: hubEventId, name: bundle.event.name, origin: 'hub', status: 'loaded' });
-  }
-  // Phase B : PAS d'activation ici — pullEvent() est maintenant appelé pour
-  // plusieurs événements par pullMyEvents() ; puller B ne doit jamais basculer
-  // le kiosque hors de A si A est live. L'activation est portée explicitement
-  // par l'appelant (pullMyEvent pour une preview, un choix humain sinon).
-
-  // 4. Met à jour pulled_at dans le registre
-  db.prepare(
-    'UPDATE local_events SET pulled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-  ).run(hubEventId);
-
-  // 5. Écrit les questions et event_meta dans la BD événement
+  // 4. Écrit les questions et event_meta dans la BD événement
   const edb = createEventDb(join(eventDir, 'db.sqlite'));
   try {
     // Vide les questions existantes et réinsère depuis le Hub (source de vérité)
@@ -90,7 +94,7 @@ export async function pullEvent(hubEventId, dataDir) {
     edb.close();
   }
 
-  // 6. Assets du design (§9bis). Seul contenu binaire du bundle : il ne transite
+  // 5. Assets du design (§9bis). Seul contenu binaire du bundle : il ne transite
   // pas dans le JSON mais via un endpoint dédié, fichier par fichier, chacun
   // vérifié par checksum. Un mismatch fait ÉCHOUER le pull (invariant §11.27) —
   // mieux vaut pas de design du tout qu'un fichier corrompu servi au kiosque.
@@ -104,6 +108,27 @@ export async function pullEvent(hubEventId, dataDir) {
     dropDesignMeta(eventDir);
     throw err;
   }
+
+  // 6. Le registre n'apprend l'existence de cet event qu'ICI — APRÈS que tout
+  // le reste (questions, event_meta, assets) a réussi. Ordre délibéré : une
+  // ligne local_events sert de PREUVE qu'un pull a réellement abouti — c'est
+  // le second signal du verrou de POST /sync/onboarding/pair (routes/sync.js,
+  // §11.30), en plus de borne_settings.paired_at. La poser plus tôt (avant
+  // l'écriture questions/meta ou les assets) laisserait une ligne orpheline
+  // si l'une de ces étapes échoue (réseau, checksum, disque plein) — un
+  // premier appairage dont le pull échoue APRÈS ce point verrouillerait
+  // définitivement la route sans qu'aucun PIN n'ait jamais existé.
+  //
+  // Phase B : PAS d'activation ici — pullEvent() est maintenant appelé pour
+  // plusieurs événements par pullMyEvents() ; puller B ne doit jamais basculer
+  // le kiosque hors de A si A est live. L'activation est portée explicitement
+  // par l'appelant (pullMyEvent pour une preview, un choix humain sinon).
+  if (!existing) {
+    insertEvent({ id: hubEventId, name: bundle.event.name, origin: 'hub', status: 'loaded' });
+  }
+  db.prepare(
+    'UPDATE local_events SET pulled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).run(hubEventId);
 
   return { ok: true, eventId: hubEventId, questions: bundle.questions.length };
 }

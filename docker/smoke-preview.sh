@@ -11,8 +11,8 @@
 #   6. nettoyer (suppression event → deprovision)
 #
 # Le 502 « Bad Gateway » est le symptôme clé : il signifie que le frontend nginx
-# ne joint pas son backend (backend crashé : TECH_PASSWORD manquant, etc.).
-# On vérifie donc explicitement que /api/event répond 200 (et non 502/404).
+# ne joint pas son backend (backend crashé). On vérifie donc explicitement que
+# /api/event répond 200 (et non 502/404).
 #
 # Usage :  docker/smoke-preview.sh [--keep]
 
@@ -76,7 +76,6 @@ docker rm -f hub-backend >/dev/null 2>&1 || true
 
 echo "→ build & up"
 ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD_HUB="$ADMIN_PASS" JWT_SECRET="smoke-secret" \
-  TECH_PASSWORD_PREVIEW="smoke-tech-pass" \
   $COMPOSE up -d --build >/dev/null
 
 wait_ready "$BASE/api/health" 120
@@ -132,7 +131,7 @@ START=$(http_body POST "$BASE/api/events/$CREATED_EID/preview/start" "$TOKEN")
 echo "$START" | grep -q '"up":true' && echo "  ✓ POST /preview/start → up:true" && PASS=$((PASS+1)) \
   || { echo "  ✗ /preview/start KO : $START"; FAIL=$((FAIL+1)); false; }
 
-# Le container backend doit être Up (pas Restarting : symptôme TECH_PASSWORD manquant).
+# Le container backend doit être Up (pas Restarting).
 echo "→ attente backend preview Up (30s max)…"
 i=0
 until [ "$(docker inspect -f '{{.State.Running}}' "preview-backend-$SLUG" 2>/dev/null)" = "true" ]; do

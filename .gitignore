@@ -22,3 +22,6 @@ docker/certs/
 # Divers
 *.log
 .DS_Store
+
+# Éditeur (config locale non partagée — pas dans l'arborescence PROJET.md §4)
+.vscode/

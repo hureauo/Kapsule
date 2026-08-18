@@ -19,7 +19,7 @@ durcissements sont nécessaires**, surtout côté Borne/preview (qui sera servie
 sous-domaine) et sur les protections transverses absentes (headers, rate-limit, taille de body).
 
 **Top priorités avant exposition :**
-1. 🔴 `JWT_SECRET` / `TECH_PASSWORD` avec valeurs par défaut (`change-me`, `tech123`).
+1. 🔴 `JWT_SECRET` / `TECH_PASSWORD` avec valeurs par défaut (`change-me`, `tech123`). — ✅ **`TECH_PASSWORD` résolu** : retiré entièrement (Phase C, PROJET.md §11.30). ✅ **`JWT_SECRET` résolu des deux côtés, par des mécanismes différents** : côté **Borne**, généré/persisté automatiquement s'il est absent ou vaut une valeur d'exemple (`resolveJwtSecret()`, `borneIdentity.js`) — une machine de terrain ne doit jamais refuser de démarrer faute d'opérateur disponible pour éditer un `.env`. Côté **Hub**, à l'inverse, refus explicite de démarrer (`validateConfig()`, `apps/hub/server/src/config.js` + `NODE_ENV=production` dans `docker-compose.hub.yml`) — le Hub est configuré une fois, par un opérateur qui a toujours accès au `.env`, donc pas de justification à générer un secret à sa place.
 2. 🔴 Aucune limite de taille sur `express.json()` (DoS trivial).
 3. 🟠 Aucun en-tête de sécurité (pas de helmet : CSP, X-Frame-Options, HSTS, nosniff).
 4. 🟠 Login Borne sans rate-limit (brute-force du mot de passe / compte).
@@ -68,6 +68,11 @@ Tout le reste du Hub est derrière `requireUser`/`requireBox`. **Bon.**
   `TECH_PASSWORD_PREVIEW:-tech123` (`docker-compose.preview.yml`). Sur une preview publique, c'est
   un accès admin/tech borne en clair dans le repo.
   → **Action : pas de défaut ; échec au démarrage si absent en preview exposée.**
+  → ✅ **Résolu** (Phase C, PROJET.md §11.30) : `TECH_PASSWORD`/`ADMIN_PASSWORD_PREVIEW`/
+  `TECH_PASSWORD_PREVIEW` retirés du code et des composes — plus aucun défaut en clair. Auth
+  Borne entièrement passée au PIN partagé (`event_meta.admin_pin`/`tech_pin`, régénérable
+  depuis le Hub) + session `tech_borne` auto-émise par `POST /sync/onboarding/pair` à la
+  fenêtre pré-premier-pull.
 - **`JWT_SECRET` partagé Hub ↔ Borne** (même variable d'env). C'est **voulu** (le Hub signe les
   tokens preview que la borne vérifie, cf. ARCHITECTURE.md §5). Acceptable, mais à documenter :
   un secret unique compromis casse les deux. Acceptable vu l'archi ; ne pas « corriger » sans réflexion.
@@ -136,7 +141,7 @@ Tout le reste du Hub est derrière `requireUser`/`requireBox`. **Bon.**
 
 - ✅ JWT vérifié avec `algorithms: ['HS256']` explicite (pare l'attaque `alg:none`).
 - ✅ Login Hub : `active` + `password_hash` non-null vérifiés avant `argon2.verify` (§11.22).
-- ✅ argon2id pour le hashage. ✅ `timingSafeEqual` pour le fallback `TECH_PASSWORD`.
+- ✅ argon2id pour le hashage. ✅ `timingSafeEqual` pour le PIN partagé (`TECH_PASSWORD`, cité ici à l'origine, a depuis été retiré — Phase C).
 - 🟠 **Login Borne sans rate-limit** (contrairement au Hub). Brute-force possible sur
   `POST /api/admin/login` (mot de passe tech, ou comptes nominatifs).
   → **Action : appliquer un `rateLimit` comme sur le Hub.**
@@ -148,7 +153,7 @@ Tout le reste du Hub est derrière `requireUser`/`requireBox`. **Bon.**
 | # | Sévérité | Action | Fichier(s) | Dépendance ? |
 |---|----------|--------|-----------|--------------|
 | 1 | 🔴 | Fail-fast si `JWT_SECRET === 'change-me'` en prod | les 2 `config.js` | non |
-| 2 | 🔴 | Supprimer défauts `tech123`/`admin123` ; échec si absent (preview) | `borne/config.js`, compose preview | non |
+| 2 | 🔴 | ✅ Résolu (Phase C) — Supprimer défauts `tech123`/`admin123` ; échec si absent (preview) | `borne/config.js`, compose preview | non |
 | 3 | 🔴 | `express.json({ limit: '1mb' })` | les 2 `index.js` | non |
 | 4 | 🟠 | Rate-limit login Borne | `borne/middleware/auth.js` | express-rate-limit (déjà présent côté hub) |
 | 5 | 🟠 | Rate-limit `POST /sessions` + `POST /videos` (Borne) | routes borne | express-rate-limit |

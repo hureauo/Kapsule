@@ -6,6 +6,7 @@ import {
 } from '@kapsule/guest-ui';
 import { applyDesign } from '../utils/design.js';
 import { uploadVideo, guestVideoUrl } from '../api/client.js';
+import { usePairingStatus } from '../components/admin/OnboardingScreen.jsx';
 
 // ── sessionStorage : reprise après crash/reload (spec §8) ────────────────────
 const SESSION_KEY = 'kapsule_session';
@@ -55,6 +56,33 @@ function ClosedScreen() {
     <div className="screen screen--center">
       <h2 className="screen__title">L'événement est terminé</h2>
       <p className="text--muted">Merci de votre participation.</p>
+    </div>
+  );
+}
+
+// Référence stable (module-level, pas une arrow recréée à chaque rendu) pour
+// usePairingStatus : cet écran doit continuer à sonder au-delà de
+// hasToken=true (déjà vrai à ce stade, cf. commentaire de NotConfiguredScreen)
+// jusqu'à hasActiveEvent — sinon l'écran ne se répare jamais tout seul une
+// fois un événement assigné depuis le Hub.
+const stopAtActiveEvent = (s) => s.hasActiveEvent;
+
+// Affiché à la place du générique ErrorScreen quand GET /api/event répond 404
+// (aucun événement actif). App.jsx intercepte déjà le cas "pas encore
+// appairée" en amont (rendu direct d'OnboardingScreen à la racine) — donc au
+// moment où GuestPage monte, la borne EST appairée (hasToken=true) ; il ne
+// reste qu'un seul cas possible ici : aucun événement ne lui est encore
+// assigné/pullé. Pas de formulaire à proposer (l'assignation se fait depuis
+// le Hub, onglet Bornes) — juste un état, avec mise à jour automatique dès
+// qu'un événement devient actif (cf. l'effet sur pairing.hasActiveEvent).
+function NotConfiguredScreen() {
+  return (
+    <div className="screen screen--center" style={{ maxWidth: '440px', margin: '0 auto' }}>
+      <h2 className="screen__title">En attente d'un événement</h2>
+      <p className="text--muted">
+        Cette borne est appairée mais aucun événement ne lui est assigné pour l'instant.
+        Assignez-en un depuis le Hub (onglet Bornes). Cet écran se mettra à jour automatiquement.
+      </p>
     </div>
   );
 }
@@ -135,6 +163,7 @@ function PreviewLoginScreen({ onSuccess }) {
 
 const S = {
   LOADING: 'loading', ERROR: 'error', CLOSED: 'closed',
+  NOT_CONFIGURED: 'not_configured',
   LOGIN: 'login',
   RESUME: 'resume',
   START: 'start', NAME: 'name', QUESTIONS: 'questions',
@@ -222,12 +251,32 @@ export default function GuestPage({ isPreview = false }) {
         setScreen(S.START);
       }
     } catch (e) {
+      // 404 = pas d'erreur réseau/serveur, juste "aucun événement actif" — la
+      // borne n'est simplement pas (encore) configurée. Un message d'erreur
+      // brut ("Aucun événement actif") n'aide pas l'invité qui tombe dessus ;
+      // NotConfiguredScreen explique où va le technicien pour le résoudre.
+      if (e.status === 404) {
+        setScreen(S.NOT_CONFIGURED);
+        return;
+      }
       setErrorMsg(e.message);
       setScreen(S.ERROR);
     }
   }, []);
 
   useEffect(() => { loadEvent(); }, [loadEvent]);
+
+  // Tant qu'on affiche NotConfiguredScreen, sonder l'appairage (même route
+  // publique que l'onboarding /borne) et relancer loadEvent dès qu'un
+  // événement devient actif — sans ça, un iPad kiosque resterait bloqué sur
+  // cet écran indéfiniment après une configuration réussie ailleurs, sans
+  // personne pour taper "Réessayer" dessus.
+  const pairing = usePairingStatus(screen === S.NOT_CONFIGURED, stopAtActiveEvent);
+  useEffect(() => {
+    if (screen === S.NOT_CONFIGURED && pairing?.hasActiveEvent) {
+      loadEvent(true);
+    }
+  }, [screen, pairing, loadEvent]);
 
   // Réapplique le design à chaque changement d'écran (design3) : une surcharge
   // par écran ne peut prendre effet que si applyDesign est rappelée avec l'écran
@@ -383,10 +432,11 @@ export default function GuestPage({ isPreview = false }) {
 
   // ── Rendu ─────────────────────────────────────────────────────────────────────
 
-  if (screen === S.LOADING) return <LoadingScreen />;
-  if (screen === S.ERROR)   return <ErrorScreen message={errorMsg} onRetry={loadEvent} />;
-  if (screen === S.CLOSED)  return <ClosedScreen />;
-  if (screen === S.LOGIN)   return <PreviewLoginScreen onSuccess={loadEvent} />;
+  if (screen === S.LOADING)        return <LoadingScreen />;
+  if (screen === S.ERROR)          return <ErrorScreen message={errorMsg} onRetry={loadEvent} />;
+  if (screen === S.NOT_CONFIGURED) return <NotConfiguredScreen />;
+  if (screen === S.CLOSED)         return <ClosedScreen />;
+  if (screen === S.LOGIN)          return <PreviewLoginScreen onSuccess={loadEvent} />;
 
   return (
     <>

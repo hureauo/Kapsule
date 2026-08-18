@@ -12,7 +12,7 @@ function extractToken(req) {
   );
 }
 
-// Comparaison à temps constant pour le fallback mot de passe env (§S5.2/L2)
+// Comparaison à temps constant pour le PIN (§S5.2/L2)
 function safeCompare(a, b) {
   const ba = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
@@ -20,50 +20,46 @@ function safeCompare(a, b) {
   return timingSafeEqual(ba, bb);
 }
 
-// Login : deux voies possibles.
-//  1. { pin } — code à 6 chiffres partagé contre event_meta de l'événement actif,
-//     pullé depuis le Hub. Pas de compte nominatif pour admin_borne NI tech_borne
-//     (cf. PROJET.md) : on essaie tech_pin (rôle le plus élevé) avant admin_pin.
-//  2. { password } seul — fallback TECH_PASSWORD env, actif tant que l'événement
-//     (s'il y en a un) ne porte AUCUN PIN (mode autonome, avant le premier pull,
-//     ou événement pullé d'un Hub antérieur à Phase C).
+// Login : { pin } — code à 6 chiffres partagé contre event_meta de l'événement
+// actif, pullé depuis le Hub. Pas de compte nominatif pour admin_borne NI
+// tech_borne (cf. PROJET.md) : on essaie tech_pin (rôle le plus élevé) avant
+// admin_pin. Aucun autre chemin : plus de TECH_PASSWORD (retiré) — la fenêtre
+// avant le premier pull (aucun PIN encore disponible) est couverte par
+// `POST /sync/onboarding/pair`, qui ouvre directement une session tech_borne
+// dès que le token borne est validé par le Hub (cf. routes/sync.js).
+//
+// Angle mort connu (review Phase D, non corrigé ici) : cette route reste
+// joignable sans garde previewMode, donc depuis Internet sur une borne
+// d'essai (`docker/preview-nginx.conf` proxifie tout `/api/`) — avec le même
+// `admin_pin`/`tech_pin` que la borne réelle (transporté tel quel dans le
+// bundle). 6 chiffres derrière un rate-limit par IP a minima redevenu
+// opérant (cf. `trust proxy` correct en preview, config.js), mais reste la
+// seule protection. Bloquer purement et simplement casserait l'usage
+// légitime (le client teste sa borne d'essai à distance) sans rien offrir en
+// échange : la vraie correction est ROADMAP.md Phase D.4bis
+// (`event_meta.preview_pin`, valeur DISTINCTE d'`admin_pin`, pour que ce
+// PIN-là ne donne jamais accès aux vraies vidéos d'invités sur la borne
+// réelle) — pas un patch ponctuel ici.
 export function makeAuthRouter(config, dataDir) {
   return async function loginHandler(req, res, next) {
     try {
-      const { password, pin } = req.body;
+      const { pin } = req.body;
+      if (pin === undefined) return res.status(401).json({ error: 'Identifiants incorrects' });
 
       const activeEvent = getActiveEvent();
       const edb = activeEvent ? getActiveEventDb(dataDir, activeEvent) : null;
 
-      if (pin !== undefined) {
-        const techRow = edb ? edb.prepare("SELECT value FROM event_meta WHERE key = 'tech_pin'").get() : null;
-        if (techRow?.value && safeCompare(String(pin), techRow.value)) {
-          const token = jwt.sign({ roles: ['tech_borne'] }, config.jwtSecret, { expiresIn: '24h' });
-          return res.json({ token });
-        }
-        const adminRow = edb ? edb.prepare("SELECT value FROM event_meta WHERE key = 'admin_pin'").get() : null;
-        if (adminRow?.value && safeCompare(String(pin), adminRow.value)) {
-          const token = jwt.sign({ roles: ['admin_borne'] }, config.jwtSecret, { expiresIn: '24h' });
-          return res.json({ token });
-        }
-        return res.status(401).json({ error: 'Identifiants incorrects' });
+      const techRow = edb ? edb.prepare("SELECT value FROM event_meta WHERE key = 'tech_pin'").get() : null;
+      if (techRow?.value && safeCompare(String(pin), techRow.value)) {
+        const token = jwt.sign({ roles: ['tech_borne'] }, config.jwtSecret, { expiresIn: '24h' });
+        return res.json({ token });
       }
-
-      // Fallback TECH_PASSWORD : réservé au cas où l'événement actif n'a AUCUN PIN
-      // configuré (mode autonome, borne fraîchement appairée avant le premier pull,
-      // ou événement pullé depuis un Hub antérieur à Phase C). Dès qu'un tech_pin OU
-      // un admin_pin existe sur l'événement actif, TECH_PASSWORD est refusé — sinon
-      // il resterait une porte dérobée permanente y compris sur une borne appairée
-      // (et sur une preview, où TECH_PASSWORD_PREVIEW est partagé par toutes les previews).
-      const hasAnyPin = edb
-        ? Boolean(edb.prepare("SELECT 1 FROM event_meta WHERE key IN ('admin_pin', 'tech_pin') LIMIT 1").get())
-        : false;
-      const techPwd = config.techPassword;
-      if (hasAnyPin || !password || !techPwd || !safeCompare(password, techPwd)) {
-        return res.status(401).json({ error: 'Identifiants incorrects' });
+      const adminRow = edb ? edb.prepare("SELECT value FROM event_meta WHERE key = 'admin_pin'").get() : null;
+      if (adminRow?.value && safeCompare(String(pin), adminRow.value)) {
+        const token = jwt.sign({ roles: ['admin_borne'] }, config.jwtSecret, { expiresIn: '24h' });
+        return res.json({ token });
       }
-      const token = jwt.sign({ roles: ['tech_borne'] }, config.jwtSecret, { expiresIn: '24h' });
-      return res.json({ token });
+      return res.status(401).json({ error: 'Identifiants incorrects' });
     } catch (err) {
       next(err);
     }

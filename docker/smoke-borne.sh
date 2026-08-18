@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Smoke test end-to-end de la BORNE en mode autonome (sans Hub) : démarre le
-# stack docker-compose.borne.yml et vérifie, par curl, que le SPA est servi et
-# que la surface API répond (public invité, auth, gardes de rôle, parcours
+# Smoke test end-to-end de la BORNE sans Hub : démarre le stack
+# docker-compose.borne.yml et vérifie, par curl, que le SPA est servi et que
+# la surface API répond (public invité, auth, gardes de rôle, parcours
 # session). Voir smoke-common.sh.
 #
 # La borne n'a pas de route HTTP de création d'événement (un événement vient
 # normalement d'un pull Hub). Pour exercer le parcours invité sans Hub, on seede
-# un événement local DANS le container via le vrai code registry (docker exec),
-# puis on curl le serveur réel.
+# un événement local (avec un tech_pin, pour l'auth) DANS le container via le
+# vrai code registry (docker exec), puis on curl le serveur réel. Plus de
+# TECH_PASSWORD (retiré du code, PROJET.md §11.30) : l'auth de ce smoke test
+# passe par le même PIN que la vraie console /borne.
 #
 # Usage :  docker/smoke-borne.sh [--keep]
 
@@ -23,7 +25,7 @@ COMPOSE="docker compose -f docker-compose.borne.yml -p smoke-borne"
 HTTP_PORT="${SMOKE_BORNE_HTTP_PORT:-18080}"
 HTTPS_PORT="${SMOKE_BORNE_HTTPS_PORT:-18443}"
 BASE="https://localhost:${HTTPS_PORT}"   # cert auto-signé → http_code/-k l'accepte
-TECH_PASS="smoke-tech-pass-456"
+TECH_PIN="654321"
 KEEP=0
 [ "${1:-}" = "--keep" ] && KEEP=1
 
@@ -37,12 +39,11 @@ teardown() {
 }
 trap teardown EXIT
 
-echo "=== SMOKE BORNE (autonome) — ports ${HTTP_PORT}/${HTTPS_PORT} ==="
+echo "=== SMOKE BORNE (sans Hub) — ports ${HTTP_PORT}/${HTTPS_PORT} ==="
 echo "→ teardown préalable (stack résiduelle éventuelle)"
 $COMPOSE down -v >/dev/null 2>&1 || true
 echo "→ build & up"
-# Pas de HUB_URL ni BOX_TOKEN → mode autonome. TECH_PASSWORD non-défaut requis.
-TECH_PASSWORD="$TECH_PASS" JWT_SECRET="smoke-secret" \
+JWT_SECRET="smoke-secret" \
   BORNE_HTTP_PORT="$HTTP_PORT" BORNE_HTTPS_PORT="$HTTPS_PORT" \
   $COMPOSE up -d --build >/dev/null
 
@@ -62,44 +63,46 @@ expect GET "$BASE/admin" 200 "fallback SPA /admin"
 echo "[Public]"
 expect GET "$BASE/api/health" 200 "GET /api/health"
 
-# ── 3. Auth admin (mode autonome → token tech via TECH_PASSWORD) ──────────────
-echo "[Auth]"
-expect POST "$BASE/api/admin/login" 401 "login mauvais mdp" "" '{"password":"WRONG"}'
-LOGIN=$(http_body POST "$BASE/api/admin/login" "" "{\"password\":\"$TECH_PASS\"}")
-TOKEN=$(json_get "$LOGIN" token)
-[ -n "$TOKEN" ] && echo "  ✓ login autonome → JWT (tech)" && PASS=$((PASS+1)) \
-  || { echo "  ✗ login autonome KO : $LOGIN"; FAIL=$((FAIL+1)); false; }
-
-# ── 4. Seed d'un événement local 'live' actif ────────────────────────────────
+# ── 3. Seed d'un événement local 'live' actif, avec tech_pin ─────────────────
 # La borne n'a pas de route de création d'événement (vient d'un pull Hub). On
 # seede via le vrai code registry (docker exec) pour exercer le parcours invité
-# et les routes qui exigent un événement actif. Backend ESM ; WORKDIR container =
-# /app/apps/borne/server (cf. Dockerfile).
+# et les routes qui exigent un événement actif — ainsi qu'un tech_pin dans
+# event_meta, pour pouvoir se logger sans Hub (plus de TECH_PASSWORD). Backend
+# ESM ; WORKDIR container = /app/apps/borne/server (cf. Dockerfile).
 echo "[Seed événement]"
-EID=$($COMPOSE exec -T backend node --input-type=module -e '
-  import { openRegistry, insertEvent, setActiveEvent } from "./src/registry.js";
-  import { getActiveEventDb } from "./src/eventDb.js";
-  import { randomUUID } from "node:crypto";
-  import { mkdirSync } from "node:fs";
-  import { join } from "node:path";
+EID=$($COMPOSE exec -T backend node --input-type=module -e "
+  import { openRegistry, insertEvent, setActiveEvent } from './src/registry.js';
+  import { getActiveEventDb } from './src/eventDb.js';
+  import { randomUUID } from 'node:crypto';
+  import { mkdirSync } from 'node:fs';
+  import { join } from 'node:path';
   const dataDir = process.env.DATA_DIR;
   openRegistry(dataDir);
   const id = randomUUID();
-  insertEvent({ id, name: "Smoke Borne", origin: "local", status: "live" });
+  insertEvent({ id, name: 'Smoke Borne', origin: 'local', status: 'live' });
   setActiveEvent(id);
-  mkdirSync(join(dataDir, "events", id), { recursive: true });
-  getActiveEventDb(dataDir, { id });   // crée db.sqlite + questions par défaut
+  mkdirSync(join(dataDir, 'events', id), { recursive: true });
+  const edb = getActiveEventDb(dataDir, { id });   // crée db.sqlite + questions par défaut
+  edb.prepare(\"INSERT INTO event_meta (key, value) VALUES ('tech_pin', ?)\").run('$TECH_PIN');
   process.stdout.write(id);
-' 2>/dev/null | tr -d '[:space:]')
+" 2>/dev/null | tr -d '[:space:]')
 
 [ -n "$EID" ] && echo "  ✓ événement seedé ($EID)" && PASS=$((PASS+1)) \
   || { echo "  ✗ seed événement KO"; FAIL=$((FAIL+1)); false; }
+
+# ── 4. Auth (PIN partagé — plus de TECH_PASSWORD) ─────────────────────────────
+echo "[Auth]"
+expect POST "$BASE/api/admin/login" 401 "login mauvais PIN" "" '{"pin":"000000"}'
+LOGIN=$(http_body POST "$BASE/api/admin/login" "" "{\"pin\":\"$TECH_PIN\"}")
+TOKEN=$(json_get "$LOGIN" token)
+[ -n "$TOKEN" ] && echo "  ✓ login PIN → JWT (tech)" && PASS=$((PASS+1)) \
+  || { echo "  ✗ login PIN KO : $LOGIN"; FAIL=$((FAIL+1)); false; }
 
 # ── 5. Gardes d'auth (événement actif présent) ────────────────────────────────
 echo "[Gardes]"
 expect GET "$BASE/api/videos" 401 "videos sans token"
 expect GET "$BASE/api/videos" 200 "videos avec token" "$TOKEN"
-# Routes tech : le token autonome porte tech_borne (sur-ensemble) → 200.
+# Routes tech : le token PIN porte tech_borne (sur-ensemble) → 200.
 expect GET "$BASE/api/sync/status" 200 "sync/status (tech)" "$TOKEN"
 echo "  ℹ distinction admin_borne/tech_borne couverte par supertest (auth/sessions.test.js)"
 

@@ -5,7 +5,6 @@ import { insertEvent, setActiveEvent, getRegistry } from '../src/registry.js';
 import { createEventDb } from '@kapsule/core/src/eventDbSchema.js';
 
 export const TEST_CFG = {
-  techPassword: 'tech-test',
   jwtSecret: 'secret-test',
   dataDir: '',
   skipRateLimits: true,

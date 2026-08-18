@@ -1,97 +1,42 @@
 ---
-status: tests-failed
-base_commit: 4787055a08cf855a2105807ac3196d09ce837456
-workspaces: [@kapsule/borne-server, @kapsule/borne-web, @kapsule/hub-server, @kapsule/hub-web]
-generated_at: 2026-08-12T21:15:08Z
-verdict: COMMIT OK
-tested_at: 2026-08-12T21:22:19Z
-tested_commit: 4787055a08cf855a2105807ac3196d09ce837456
-commits_since_review: 0
+status: tests-pending
+base_commit: f3985f60a4074fddf0feaa86cbfbfa56161c8acd
+workspaces: [@kapsule/borne-server, @kapsule/borne-web, @kapsule/hub-server]
+generated_at: 2026-08-16T23:14:43Z
+verdict: COMMIT À CORRIGER
 ---
 
 # Relais de review → tests
 
-Sous-lot Phase C (4ᵉ passe) : auth PIN admin_borne/tech_borne partagé, onboarding
-pré-appairage, split `.env.example` → `.env.example-hub`/`.env.example-rasp`,
-durcissement des gardes de config (TECH_PASSWORD / ADMIN_PASSWORD_HUB = `change-me`).
-
 Workspaces à tester :
-- @kapsule/borne-server (raison : middleware/auth.js login PIN, config.js garde change-me, routes/sync.js pairing-status, sync/pull.js purge event_users, initLog.js)
-- @kapsule/borne-web (raison : AdminLogin.jsx, BornePage.jsx, OnboardingScreen.jsx, api/client.js, GuestPage.jsx)
-- @kapsule/hub-server (raison : routes/events.js ensurePins/redactPins/roles, eventConfig.js META_KEYS, routes/admin.js VALID_ROLES, routes/sync.js bundle sans users, config.js garde change-me)
-- @kapsule/hub-web (raison : AdminPage.jsx, EventDetailPage.jsx)
+- @kapsule/borne-server (raison : `routes/sync.js`, `sync/pull.js`, `index.js`, `config.js`, `borneIdentity.js`, `middleware/auth.js` modifiés — verrou d'appairage à 3 signaux, réordonnancement de `pullEvent`, `routerCfg` par `Object.create`)
+- @kapsule/borne-web (raison : `OnboardingScreen.jsx` (`stopWhen`), `App.jsx`, `GuestPage.jsx`, `BornePage.jsx`, `AdminLogin.jsx`, `api/client.js` modifiés)
+- @kapsule/hub-server (raison : `preview/provisioner.js` — retrait de `TECH_PASSWORD` injecté aux conteneurs preview)
 
-Infra touchée (docker-compose.hub.yml : PREVIEW_BACKEND_IMAGE, HUB_URL_INTERNAL,
-TECH_PASSWORD_PREVIEW) → lancer aussi les smoke tests (`npm run smoke`) avant déploiement.
+Smoke à relancer (infra touchée) : `npm run smoke:borne` (réécrit — auth par PIN au lieu de `TECH_PASSWORD`, seed d'un `tech_pin`) et `npm run smoke:preview` (retrait de `TECH_PASSWORD_PREVIEW`).
 
-Points d'attention pour les tests (à confirmer) :
-- Login borne : `{ pin }` doit essayer `tech_pin` AVANT `admin_pin` ; fallback `{ password }`
-  refusé (401) dès qu'un `admin_pin` OU `tech_pin` existe sur l'événement actif.
-- `GET /api/sync/pairing-status` : réponse complète (hubUrl + logs) UNIQUEMENT si `hasToken=false` ;
-  réponse minimale `{hasToken:true, hasActiveEvent}` une fois appairée (pas de fuite topologie/logs).
-- `GET /api/event` (borne, public/Internet-facing preview) ne doit JAMAIS exposer `admin_pin`/`tech_pin`
-  (whitelist de champs explicite — vérifié en revue, mais un test de non-régression serait utile).
-- Hub : un membre `event_users` à rôle `general` seul (auth wall preview) doit recevoir un événement
-  SANS `admin_pin`/`tech_pin` (redactPins) et un 403 s'il tente de les modifier.
-- `pull.js` : `DELETE FROM event_users` inconditionnel à chaque pull (purge résidu pré-Phase C) ;
-  le bundle ne transporte plus `users`.
+Points d'attention pour les tests (findings du reviewer à confirmer par les tests) :
+- Verrou `POST /sync/onboarding/pair` : le 3ᵉ signal (`getSetting('borne_token') !== null`) rend 403 toute borne seedée par `BORNE_TOKEN` en `.env` **avant** tout pull. Vérifier qu'aucune suite existante n'appairait par ce chemin.
+- Branche **token d'événement** : après un appairage réussi, rien n'est persisté. Un test de redémarrage simulé (nouvelle `createApp` sur le même `dataDir`, `config.boxToken = ''`) doit montrer `hasToken:false` **et** `POST /sync/onboarding/pair` → 403 (cul-de-sac ⚠️ n°3 du rapport).
+- Symétrique : une borne réelle avec `BOX_TOKEN` configuré et aucun pull abouti → `hasToken:true` mais `POST /sync/onboarding/pair` → **200** (trou ⚠️ n°4). À couvrir par un test.
+- `routerCfg = Object.create(cfg)` : vérifier que `routes/sessions.js` (auth wall preview, `cfg.jwtSecret`) signe/vérifie bien avec la valeur **live** après `resolveJwtSecret()`, et qu'aucun test ne s'appuyait sur `routerCfg` énumérable/spreadable.
+- `pullEvent()` réordonné : `sync.pull.test.js` doit vérifier qu'aucune ligne `local_events` ne subsiste après un échec **d'assets** ET que le cas nominal pose bien `pulled_at`. Attention aussi au cas « événement déjà existant en `loaded` » (l'`UPDATE pulled_at` en fin de fonction).
+- `resolveTrustProxyHops('')` → 1 / 2 selon `PREVIEW_MODE` (nouveaux tests `config.test.js`).
+- `@kapsule/borne-web` : échecs **pré-existants** connus sur `design.test.js` (`@kapsule/guest-ui` non lié dans l'image `dev` → `docker compose build dev` requis). Ne pas les imputer à ce lot ; en revanche vérifier qu'ils ne masquent pas un échec réel sur `roles.test.js`/`format.test.js`.
 
 ## Corrections demandées
 
-Aucune correction requise.
+> Cette section est lue par l'agent principal pour implémenter les corrections.
+> Chaque item est coché par l'agent principal une fois corrigé.
 
-> Un point mineur (💡, non bloquant) subsiste, laissé à l'appréciation de l'agent principal :
-> `.env.example-hub:74` — le commentaire dit que le backend borne refuse de démarrer si
-> `TECH_PASSWORD` vaut `"tech123"` ; la garde rejette désormais AUSSI `"change-me"`. Reformuler
-> « vaut le défaut "tech123" » en « vaut une valeur d'exemple ("tech123"/"change-me") ».
-
-## Verdict tests (kapsule-tester)
-
-`base_commit` vérifié : existe, ancêtre de HEAD. `git rev-list --count base_commit..HEAD` = 0
-(uniquement des changements non commités dans le working tree, cohérent avec la correction
-mineure `.env.example-hub` mentionnée par le reviewer). `git diff base_commit --stat` confirme
-les 4 workspaces listés + `apps/borne/server/src/config.js` et `apps/hub/server/src/config.js`
-(couverts par les runs de workspace complets ci-dessous, pas de fichier testable non couvert).
-
-Tests unitaires (par workspace, séquentiel) :
-- @kapsule/borne-server : 293 tests, 293 ok, 0 échec
-- @kapsule/borne-web : 28 tests, 28 ok, 0 échec
-- @kapsule/hub-server : 510 tests, 510 ok, 0 échec (run complet du workspace, pas seulement
-  les fichiers listés dans le relais)
-- @kapsule/hub-web : 29 tests, 29 ok, 0 échec
-
-Smoke tests (`npm run smoke` = smoke-hub + smoke-borne + smoke-preview), requis car
-`docker-compose.hub.yml` est dans le diff (PREVIEW_BACKEND_IMAGE/HUB_URL_INTERNAL/
-TECH_PASSWORD_PREVIEW) :
-- smoke-hub : ÉCHEC — `statut draft→preview → attendu 200, reçu 400`
-- smoke-borne : 16/16 ok
-- smoke-preview : ÉCHEC — `statut → preview → attendu 200, reçu 400`
-
-**Diagnostic (pour info, pas une correction faite par moi) :** ces deux échecs ne sont PAS
-liés au diff de ce sous-lot. `docker/smoke-hub.sh` et `docker/smoke-preview.sh` sont
-inchangés depuis `base_commit` (`git diff base_commit --stat` : aucune ligne pour ces
-fichiers). Les deux scripts tentent une transition manuelle de statut vers `'preview'`
-(`PUT /api/events/:id/status {"status":"preview"}`), en supposant qu'un événement fraîchement
-créé est en statut `draft`. Or le statut `draft` a été supprimé par une migration
-antérieure à `base_commit` (`remove_draft_status`, commit `e82a439`) : un événement démarre
-désormais directement en `preview` (`apps/hub/server/src/registry.js:372-373`). La table
-`MANUAL_TRANSITIONS` (`apps/hub/server/src/routes/events.js:162-165`, inchangée dans ce
-diff) n'autorise que `preview→ready` et `ready→preview` — pas `preview→preview` — d'où le
-400. Contrairement à la review VPS (pas de Docker rapide, smoke non lancés), c'est la
-première fois que ces deux smoke scripts tournent depuis la suppression de `draft` ; le
-décalage script/produit était donc invisible jusqu'ici. `docker-compose.hub.yml` lui-même
-(le vrai objet de l'infra touchée par ce sous-lot) n'est pas en cause : le stack démarre,
-le SPA est servi, l'auth et le flux events/questions/users fonctionnent jusqu'à cette ligne
-précise dans les deux scripts.
-
-Nettoyage : les 3 stacks smoke (hub/borne/preview) ont été correctement démontés en fin de
-script (`docker ps -a` vide pour les 3 projets après coup) malgré l'échec en cours de route.
-
-## Échecs
-
-- smoke-hub › `docker/smoke-hub.sh:95` : `expect PUT "$BASE/api/events/$EID/status" 200
-  "statut draft→preview" "$TOKEN" '{"status":"preview"}'` → `✗ statut draft→preview →
-  attendu 200, reçu 400`
-- smoke-preview › `docker/smoke-preview.sh:122` : `expect PUT
-  "$BASE/api/events/$CREATED_EID/status" 200 "statut → preview" "$TOKEN"
-  '{"status":"preview"}'` → `✗ statut → preview → attendu 200, reçu 400`
+- [x] ❌ `PROJET.md:548` et `PROJET.md:1165` — le verrou de `POST /sync/onboarding/pair` y est décrit comme un « OU de **deux** signaux » alors que `apps/borne/server/src/routes/sync.js:262` en teste **trois** (`paired_at`, `local_events`, `getSetting('borne_token')`). Réécrire §6, §6bis et §11.30 avec les trois signaux.
+- [x] ❌ `PROJET.md` §6bis (« Le formulaire de l'écran d'onboarding est une **alternative** ») — l'affirmation « une borne dont le `BORNE_TOKEN` d'env n'a jamais mené à un pull réussi reste protégée par le **second** signal — présence d'au moins un `local_events` » est fausse : dans ce cas précis il n'y a aucune ligne `local_events`, c'est le 3ᵉ signal (`borne_token` persisté) qui protège. Corriger la phrase.
+- [x] ❌ `docker-compose.hub.yml:10` et `:44` — `JWT_SECRET=${JWT_SECRET:-change-me}` (secret publiquement connu comme défaut dans un compose versionné) alors que `NODE_ENV` n'est posé **nulle part** pour le Hub (ni compose, ni `apps/hub/server/Dockerfile`) : `validateConfig(config, process.env.NODE_ENV)` (`apps/hub/server/src/index.js:90`) n'est jamais `strict` en production, donc le garde-fou ne se déclenche pas. Ajouter `NODE_ENV=production` aux services `backend` et `worker`, retirer le défaut `change-me`, et traiter la chaîne vide comme faible dans `apps/hub/server/src/config.js:23`.
+- [x] ⚠️ `apps/borne/server/src/routes/sync.js:271-281` — `hubUrl` provient d'une requête **non authentifiée** et est passé tel quel à `hubFetch` sans validation de schéma/hôte (SSRF depuis le LAN ; le statut et le `body.error` distants reviennent dans `pull.error`). Valider par `new URL()` : schéma `https:` exigé (`http:` toléré uniquement pour `localhost`/`127.0.0.1`), rejeter le reste en 400, et ne pas réfléchir le message d'erreur distant tel quel.
+- [x] ⚠️ `apps/borne/server/src/borneIdentity.js:54-58` — `resolveJwtSecret()` fait primer la valeur persistée sur l'env **sans échappatoire** : une rotation de `JWT_SECRET` n'a plus aucun effet après le premier boot. Sur une borne preview (qui reçoit le `JWT_SECRET` **du Hub** via `provisioner.js:146,200`), cela fige le secret Hub sur disque et empêche toute révocation des JWT `general` déjà signés. Faire primer une valeur d'env **non faible** sur la valeur persistée (et la persister), ne retomber sur persisté/généré que si l'env est vide/valeur d'exemple.
+- [x] ⚠️ `apps/borne/server/src/routes/sync.js:83` vs `:262` — `hasToken` et le verrou d'appairage n'évaluent pas le même prédicat « appairée » (le verrou ignore `boxToken`, `hasToken` ignore `paired_at`/`local_events`). Conséquence a) borne réelle appairée par **token d'événement** : rien n'est persisté → au redémarrage `hasToken:false` remet l'`OnboardingScreen` devant le kiosque **et** `/borne`, alors que la route répond 403 → plus aucun écran atteignable après expiration du `tech_token` 24 h. Extraire un prédicat « appairée » unique partagé par les deux routes, et persister le token d'événement (ou refuser explicitement l'appairage par token d'événement depuis l'onboarding).
+- [x] ⚠️ `apps/borne/server/src/routes/sync.js:262` — symétrique du point précédent : le verrou n'a pas de signal pour `boxToken`. Une borne réelle seedée avec `BOX_TOKEN` et sans pull abouti annonce `hasToken:true` (aucun formulaire proposé) mais laisse `POST /sync/onboarding/pair` **ouverte sans auth** sur le LAN — un tiers peut réappairer la machine sur son propre Hub et récupérer un JWT `tech_borne`. Ajouter le signal manquant (ou persister le `boxToken`).
+- [x] ⚠️ `.env.example-rasp:39` et `README.md` (Étape 4, « les deux chemins sont équivalents ») — faux depuis le 3ᵉ signal du verrou, et contredit par PROJET.md §6bis. Un `BORNE_TOKEN` mal recopié dans le `.env` est persisté au boot sans validation → `hasToken:true` (pas de formulaire) **et** `POST /sync/onboarding/pair` → 403 : borne réparable seulement par SSH, sans qu'aucun PIN n'ait existé. Remplacer « équivalents » par un avertissement explicite.
+- [x] ⚠️ `docker-compose.hub.yml:26-27` — `ports: "3001:3001"` publie l'API Hub en clair sur l'hôte, court-circuitant l'edge (pas de TLS, ni HSTS/CSP/X-Frame, ni filtrage par `Host`). Combiné à `app.set('trust proxy', 1)` (`apps/hub/server/src/index.js:36`), une connexion directe permet de falsifier `X-Forwarded-For` et de contourner `express-rate-limit` sur `/api/auth/login`. Le chemin légitime est `edge → hub-frontend → backend:3001` sur `kapsule_hub_net` : retirer le bloc `ports` ou le binder sur `127.0.0.1`.
+- [x] ⚠️ `rapports/securite.md:22` et `:71-75` — les annotations « ✅ Résolu » ne précisent pas que `resolveJwtSecret()` est **borne-only** : lues telles quelles, elles laissent croire que le défaut `change-me` du Hub est traité. Scoper explicitement à la Borne et laisser le point Hub ouvert.
+- [x] ⚠️ `docker-compose.preview.yml:16-19` — la note sur `JWT_SECRET` ne dit pas que sans lui les liens `preview/token` **signés par le Hub** seront rejetés par la borne (pas seulement « sessions invalidées »). Compléter.

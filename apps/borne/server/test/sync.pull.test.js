@@ -607,6 +607,23 @@ describe('pull — assets du design', () => {
     assert.equal(raw, undefined);
   });
 
+  // Régression : POST /sync/onboarding/pair (routes/sync.js) verrouille aussi
+  // sur "au moins une ligne local_events" (second signal, en plus de
+  // borne_settings.paired_at — couvre une borne mise à niveau). Si pullEvent()
+  // insérait la ligne AVANT les assets de design, un premier appairage dont le
+  // pull échoue sur un checksum laisserait une ligne orpheline : le second
+  // essai (avec un token corrigé) recevrait 403 alors qu'aucun PIN n'a jamais
+  // existé — verrouillage sans issue. La ligne ne doit donc apparaître qu'APRÈS
+  // un pull complet et réussi.
+  it('un checksum invalide ne laisse aucune ligne local_events (pas de verrouillage sans issue)', async () => {
+    mockHub(bundleWith([{ filename: LOGO, size: PNG.length, checksum: PNG_SHA }], designWithLogo), { corrupt: true });
+
+    await assert.rejects(() => pullEvent('hub-ev-1', dir), /[Cc]hecksum/);
+
+    const row = getRegistry().prepare('SELECT 1 FROM local_events WHERE id = ?').get('hub-ev-1');
+    assert.equal(row, undefined);
+  });
+
   it('un bundle sans design_assets (Hub non migré) ne casse pas le pull', async () => {
     globalThis.fetch = async () => ({
       ok: true, status: 200,

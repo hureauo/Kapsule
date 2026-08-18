@@ -20,11 +20,15 @@ export const config = {
 };
 
 export function validateConfig(cfg, nodeEnv) {
-  if (cfg.jwtSecret === 'change-me') {
+  // '' ET 'change-me' sont faibles — pas seulement 'change-me' : un compose qui
+  // retire le défaut public (docker-compose.hub.yml, JWT_SECRET=${JWT_SECRET:-})
+  // laisse passer une chaîne vide si l'opérateur ne l'a pas renseignée, qui
+  // sinon traverserait cette garde sans même un warning.
+  if (!cfg.jwtSecret || cfg.jwtSecret === 'change-me') {
     if (nodeEnv === 'production') {
-      throw new Error('[hub] JWT_SECRET est "change-me" — refus de démarrer en production. Définissez JWT_SECRET.');
+      throw new Error('[hub] JWT_SECRET absent ou "change-me" — refus de démarrer en production. Définissez JWT_SECRET.');
     }
-    console.warn('[hub] ⚠️  JWT_SECRET non configuré (valeur par défaut "change-me") — acceptable en dev/test uniquement.');
+    console.warn('[hub] ⚠️  JWT_SECRET non configuré (absent ou valeur par défaut "change-me") — acceptable en dev/test uniquement.');
   }
   // adminPassword vide = seed automatique désactivé (voir index.js) : rien à valider.
   // Non vide + valeur d'exemple = un superuser Internet-facing serait créé avec un

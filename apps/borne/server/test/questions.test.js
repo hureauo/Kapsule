@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
+import jwt from 'jsonwebtoken';
 import { createApp } from '../src/index.js';
 import { closeRegistry, insertEvent, setActiveEvent } from '../src/registry.js';
 import { closeEventDb } from '../src/eventDb.js';
@@ -272,10 +273,13 @@ describe('GET /api/questions/all', () => {
     closeEventDb(); closeRegistry();
     try {
       const app2 = createApp(dir2, { ...TEST_CFG, dataDir: dir2 });
-      const loginRes2 = await request(app2).post('/api/admin/login').send({ password: 'tech-test' });
+      // Pas d'événement actif → aucun PIN à comparer, /api/admin/login refuse
+      // tout (§11.30 : plus de fallback password). Signe directement un JWT
+      // tech_borne pour tester le comportement de la route, pas l'auth.
+      const token = jwt.sign({ roles: ['tech_borne'] }, TEST_CFG.jwtSecret, { expiresIn: '1h' });
       const res = await request(app2)
         .get('/api/questions/all')
-        .set('Authorization', `Bearer ${loginRes2.body.token}`);
+        .set('Authorization', `Bearer ${token}`);
       assert.equal(res.status, 404);
     } finally {
       closeEventDb(); closeRegistry();
